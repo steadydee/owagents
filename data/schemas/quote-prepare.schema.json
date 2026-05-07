@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cotiza Quote Prepare Input",
+  "type": "object",
+  "required": ["raw_text"],
+  "properties": {
+    "raw_text": { "type": "string" },
+    "source_metadata": { "type": "object", "additionalProperties": true },
+    "prior_context": { "type": ["object", "null"], "additionalProperties": true },
+    "user_overrides": { "type": ["object", "null"], "additionalProperties": true },
+    "parsed_intent": { "type": ["object", "null"], "additionalProperties": true },
+    "mode": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}
+

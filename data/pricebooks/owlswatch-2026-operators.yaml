@@ -1,0 +1,47 @@
+version: owlswatch-2026-operators
+currency: COP
+source: Pricing 2026 - OPERATORS.docx
+notes:
+  - Operations remains the pricing authority for production calculations.
+  - Historical quotes are examples only and are not current pricing authority.
+lodging:
+  forest_cabin:
+    rack_rate_cop_per_night: 840000
+    operator_net_rate_cop_per_night: 756000
+    included_guests: 2
+    includes_breakfast: true
+  salon_cabin:
+    rack_rate_cop_per_night: 840000
+    operator_net_rate_cop_per_night: 756000
+    included_guests: 2
+    includes_breakfast: true
+  extra_person:
+    rate_cop_per_person_per_night: 110000
+    children_under_two_free: true
+  guide_room:
+    operator_net_rate_cop_per_person_per_night: 316000
+    includes_breakfast: true
+birding:
+  photography_and_bird_tour:
+    rack_rate_cop_per_person: 150000
+    label: Bird Tour
+  afternoon_extension:
+    rate_cop_per_person: 100000
+  bilingual_guide:
+    approximate_half_day_cop: 200000
+    approximate_full_day_cop: 300000
+    advance_notice_days: 7
+restaurant:
+  breakfast_cop: 55000
+  lunch_cop: 65000
+  dinner_cop: 65000
+guide_driver_meals:
+  breakfast_cop: 0
+  lunch_cop: 25000
+transport:
+  internal_4x4_included: false
+  notes: Requires separate coordination and cost when needed.
+operator_discount_display:
+  cabin_discount_percent: 10
+  tour_only_discount_percent: 10
+

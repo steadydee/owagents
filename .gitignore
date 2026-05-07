@@ -1,0 +1,46 @@
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.p8
+secrets/
+**/secrets/
+**/*credentials*.json
+**/*service-account*.json
+**/google-service-account*.json
+
+# OpenClaw runtime state
+.openclaw/
+.openclaw-*/
+**/.openclaw/
+**/sessions/
+**/spool/
+**/memory/
+**/mock/quotes/
+**/mock/drive/
+**/MEMORY.md
+**/auth-profiles.json
+**/auth-state.json
+
+# Customer/business artifacts
+receipts/
+quote-archive-cache/
+gmail-cache/
+drive-cache/
+exports/
+*.xlsx
+*.xls
+*.pdf
+
+# Local/editor/build artifacts
+.DS_Store
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+dist/
+build/
+

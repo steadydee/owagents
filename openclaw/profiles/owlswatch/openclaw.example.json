@@ -1,0 +1,161 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace-owlswatch",
+      "model": {
+        "primary": "openai-codex/gpt-5.5"
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "name": "Cuenta",
+        "workspace": "~/.openclaw/workspace-owlswatch",
+        "skills": ["intake-receipt"],
+        "tools": {
+          "profile": "minimal",
+          "alsoAllow": [
+            "owlswatch_operations_upload_attachment",
+            "owlswatch_operations_create_expense_draft",
+            "owlswatch_telegram_get_file",
+            "owlswatch_telegram_download_file",
+            "owlswatch_telegram_send_message",
+            "owlswatch_telegram_send_chat_action",
+            "owlswatch_vision_extract_receipt",
+            "owlswatch_album_buffer_check",
+            "owlswatch_album_buffer_store",
+            "owlswatch_memory_log"
+          ],
+          "deny": [
+            "exec",
+            "browser",
+            "gateway",
+            "cron",
+            "nodes",
+            "canvas",
+            "group:fs",
+            "group:web",
+            "bundle-mcp"
+          ]
+        }
+      },
+      {
+        "id": "cotiza",
+        "name": "Cotiza",
+        "workspace": "~/.openclaw/workspace-owlswatch-cotiza",
+        "skills": ["quote-draft"],
+        "tools": {
+          "profile": "minimal",
+          "alsoAllow": [
+            "owlswatch_gmail_search_quote_threads",
+            "owlswatch_gmail_read_thread",
+            "owlswatch_quote_prepare",
+            "owlswatch_quote_create_draft",
+            "owlswatch_quote_revise_draft",
+            "owlswatch_telegram_send_message",
+            "owlswatch_cotiza_memory_log"
+          ],
+          "deny": [
+            "exec",
+            "browser",
+            "gateway",
+            "cron",
+            "nodes",
+            "canvas",
+            "group:fs",
+            "group:web",
+            "bundle-mcp"
+          ]
+        }
+      }
+    ]
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 19001,
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "<runtime-generated-token-not-committed>"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "<telegram-bot-token-runtime-only>",
+      "dmPolicy": "allowlist",
+      "allowFrom": ["<dennis_chat_id>", "<adriana_chat_id>"],
+      "groupPolicy": "allowlist",
+      "groups": {
+        "<owl_watch_ops_group_id>": {
+          "requireMention": false,
+          "topics": {
+            "<quotes_topic_id>": {
+              "agentId": "cotiza",
+              "requireMention": false,
+              "groupPolicy": "open",
+              "ingest": true
+            },
+            "<receipts_topic_id>": {
+              "agentId": "main",
+              "requireMention": false,
+              "groupPolicy": "open",
+              "ingest": true
+            }
+          },
+          "groupPolicy": "open",
+          "ingest": true
+        }
+      },
+      "groupAllowFrom": ["<dennis_chat_id>", "<adriana_chat_id>"]
+    }
+  },
+  "mcp": {
+    "servers": {
+      "owlswatch_intake": {
+        "command": "python3",
+        "args": ["~/.openclaw/workspace-owlswatch/tools/owlswatch_intake/server.py"],
+        "env": {
+          "OWLSWATCH_WORKSPACE": "~/.openclaw/workspace-owlswatch",
+          "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
+          "OPERATIONS_API_BASE_URL": "https://operations.owlswatch.com",
+          "EXPENSE_INTAKE_API_TOKEN": "<runtime-only>",
+          "OWLSWATCH_VISION_MODEL": "gpt-4o-mini",
+          "OPENAI_API_KEY": "<runtime-only>"
+        }
+      },
+      "owlswatch_quotes": {
+        "command": "python3",
+        "args": ["~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes/server.py"],
+        "env": {
+          "OWLSWATCH_COTIZA_WORKSPACE": "~/.openclaw/workspace-owlswatch-cotiza",
+          "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
+          "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
+          "QUOTE_INTAKE_API_TOKEN": "<runtime-only>",
+          "OWLSWATCH_GMAIL_ACCOUNT": "info@owlswatch.com",
+          "GOOGLE_DRIVE_QUOTES_FOLDER_ID": "<quote-folder-id>",
+          "GOOGLE_APPLICATION_CREDENTIALS": "~/.openclaw-owlswatch/secrets/google-service-account.json",
+          "OWLSWATCH_QUOTES_MOCKS": "0",
+          "OWLSWATCH_GMAIL_QUOTE_LABEL": "*"
+        }
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "owlswatch-intake": {
+        "enabled": true
+      },
+      "owlswatch-quotes": {
+        "enabled": true
+      }
+    },
+    "load": {
+      "paths": [
+        "~/.openclaw/workspace-owlswatch/tools/owlswatch_intake",
+        "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes"
+      ]
+    }
+  }
+}
+

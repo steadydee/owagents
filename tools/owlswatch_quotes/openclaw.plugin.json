@@ -1,0 +1,25 @@
+{
+  "id": "owlswatch-quotes",
+  "name": "Owl's Watch Quote Tools",
+  "description": "Narrow first-class tools for Cotiza quote drafting.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "owlswatch_gmail_search_quote_threads",
+      "owlswatch_gmail_read_thread",
+      "owlswatch_quote_prepare",
+      "owlswatch_quote_calculate",
+      "owlswatch_quote_create_draft",
+      "owlswatch_quote_revise_draft",
+      "owlswatch_quote_update_drive",
+      "owlswatch_drive_create_quote_sheet",
+      "owlswatch_cotiza_memory_log"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

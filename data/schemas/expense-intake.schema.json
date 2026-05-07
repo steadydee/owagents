@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cuenta Expense Intake Draft",
+  "type": "object",
+  "required": ["idempotencyKey", "propertyId", "source", "attachments", "agent"],
+  "properties": {
+    "idempotencyKey": { "type": "string" },
+    "propertyId": { "type": "string", "const": "owlswatch" },
+    "source": { "type": "string" },
+    "sourceMessageId": { "type": ["string", "number", "null"] },
+    "submittedBy": { "type": ["string", "null"] },
+    "expense": { "type": "object", "additionalProperties": true },
+    "attachments": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "agent": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}
+

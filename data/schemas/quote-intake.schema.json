@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cotiza Quote Intake Draft",
+  "type": "object",
+  "required": ["sourceType", "sourceId", "audience", "requestSummary", "calculation", "idempotencyKey"],
+  "properties": {
+    "sourceType": { "type": "string" },
+    "sourceId": { "type": "string" },
+    "agencyName": { "type": ["string", "null"] },
+    "clientName": { "type": ["string", "null"] },
+    "audience": { "type": "string", "enum": ["OPERATOR", "DIRECT"] },
+    "arrivalDate": { "type": ["string", "null"] },
+    "departureDate": { "type": ["string", "null"] },
+    "nights": { "type": ["integer", "null"] },
+    "guestCount": { "type": ["integer", "null"] },
+    "requestSummary": { "type": "string" },
+    "requestedServices": { "type": "object", "additionalProperties": true },
+    "calculation": { "type": "object", "additionalProperties": true },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "missingFields": { "type": "array", "items": { "type": "string" } },
+    "agentMetadata": { "type": "object", "additionalProperties": true },
+    "idempotencyKey": { "type": "string" },
+    "status": { "type": "string", "enum": ["DRAFTED", "NEEDS_INFO"] }
+  },
+  "additionalProperties": true
+}
+

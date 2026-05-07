@@ -1,0 +1,26 @@
+{
+  "id": "owlswatch-intake",
+  "name": "Owl's Watch Intake Tools",
+  "description": "Narrow first-class tools for Cuenta receipt intake.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "owlswatch_telegram_get_file",
+      "owlswatch_telegram_download_file",
+      "owlswatch_telegram_send_message",
+      "owlswatch_telegram_send_chat_action",
+      "owlswatch_album_buffer_store",
+      "owlswatch_album_buffer_check",
+      "owlswatch_operations_upload_attachment",
+      "owlswatch_operations_create_expense_draft",
+      "owlswatch_vision_extract_receipt",
+      "owlswatch_memory_log"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}
