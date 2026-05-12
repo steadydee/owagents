@@ -23,3 +23,13 @@ openclaw --profile owlswatch gateway restart
 
 Frontier/Lumen uses a different profile and gateway port. Do not restart it for Owl's Watch deploys.
 
+## Telegram Watchdog
+
+Install the watchdog so Telegram polling is restarted if it stops inside an otherwise healthy gateway:
+
+```sh
+./scripts/install-telegram-watchdog.sh
+```
+
+See `docs/runbooks/telegram-watchdog.md`.
+
