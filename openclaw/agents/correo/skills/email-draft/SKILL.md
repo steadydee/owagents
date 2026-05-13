@@ -323,10 +323,18 @@ For polling scans, send a Telegram notification only for:
 
 Keep notifications short. Do not paste full email drafts into Telegram.
 
+For a successfully created Operations review task, start the Telegram alert with:
+
+```text
+New email draft
+```
+
+Do not use phrases like "Email review task created" in Telegram; that sounds internal.
+
 Example:
 
 ```text
-[Email] Draft ready
+New email draft
 
 From: Maria Rodriguez
 Subject: July family visit
