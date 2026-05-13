@@ -39,3 +39,5 @@ Spanish drafts use formal `usted`.
 ## Alerts
 
 Telegram is for short notifications only. Do not paste full draft bodies into Telegram unless explicitly asked. Link to Operations Email Desk when available.
+
+For Email Desk task alerts, start with `New email draft`. Do not prefix with `Correo:` and do not say generic `needs human review`; all email drafts require review.

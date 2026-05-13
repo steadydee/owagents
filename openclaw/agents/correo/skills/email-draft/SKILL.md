@@ -317,43 +317,50 @@ If Gmail draft creation returns `gmail_drafts_disabled`, continue with an Operat
 For polling scans, send a Telegram notification only for:
 
 - draft ready
-- human review needed
 - quote/payment/complaint/operator inquiry
 - errors that block drafting
 
 Keep notifications short. Do not paste full email drafts into Telegram.
 
-For a successfully created Operations review task, start the Telegram alert with:
+All email drafts require human review, so do not spend a line saying that the draft needs human review. Only mention a review blocker when there is a specific decision needed, such as payment status, availability, complaint sensitivity, or missing information.
 
-```text
-New email draft
-```
-
-Do not use phrases like "Email review task created" in Telegram; that sounds internal.
-
-Example:
+For a successfully created Operations review task, use this exact Telegram shape:
 
 ```text
 New email draft
 
 From: Maria Rodriguez
 Subject: July family visit
-Category: quote_request
-Status: draft_ready
 
 Review: {taskUrl}
 ```
 
+Optional fourth line only when useful:
+
+```text
+Note: availability not confirmed
+```
+
+Do not use phrases like:
+
+- `Correo:`
+- `Email review task created`
+- `New Email Desk draft task`
+- `needs human review`
+- `human review needed`
+- `Needs review for...`
+- `Draft task created`
+- `Task ready`
+
 If no Operations URL exists:
 
 ```text
-[Email] Draft staged locally
+New email draft
 
 From: Maria Rodriguez
 Subject: July family visit
-Status: draft_ready
 
-Operations Email Desk is not configured yet.
+Operations link unavailable.
 ```
 
 ## Step 12 - Daily Summary
