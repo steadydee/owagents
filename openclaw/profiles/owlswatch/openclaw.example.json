@@ -181,7 +181,7 @@
           "OWLSWATCH_EMAIL_WORKSPACE": "~/.openclaw/workspace-owlswatch-correo",
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
           "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
-          "EMAIL_AGENT_API_TOKEN": "<runtime-only>",
+          "EMAIL_AGENT_API_TOKEN_FILE": "~/.openclaw-owlswatch/secrets/email-agent-token.tmp",
           "LUNA_BASE_URL": "https://luna.owlswatch.com",
           "OW_AGENT_TOKEN_SECRET": "<runtime-only>",
           "GOOGLE_APPLICATION_CREDENTIALS": "~/.openclaw-owlswatch/secrets/google-service-account.json",

@@ -21,7 +21,7 @@ Configured values live in `~/.openclaw-owlswatch/openclaw.json` under `mcp.serve
 Required when live:
 
 - `OW_AGENT_TOKEN_SECRET`
-- `EMAIL_AGENT_API_TOKEN`
+- `EMAIL_AGENT_API_TOKEN_FILE=~/.openclaw-owlswatch/secrets/email-agent-token.tmp`
 - `OPERATIONS_BASE_URL=https://operations.owlswatch.com`
 - `LUNA_BASE_URL=https://luna.owlswatch.com`
 - `GOOGLE_APPLICATION_CREDENTIALS`

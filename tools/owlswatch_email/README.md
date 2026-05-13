@@ -25,7 +25,7 @@ Required for Luna context:
 Required for Operations Email Desk:
 
 - `OPERATIONS_BASE_URL`
-- `EMAIL_AGENT_API_TOKEN`
+- `EMAIL_AGENT_API_TOKEN_FILE=~/.openclaw-owlswatch/secrets/email-agent-token.tmp`
 
 Optional:
 

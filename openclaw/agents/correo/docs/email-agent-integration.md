@@ -23,7 +23,7 @@ Correo should never call send.
 The Mac mini needs these runtime values. Do not commit them.
 
 - `OW_AGENT_TOKEN_SECRET`
-- `EMAIL_AGENT_API_TOKEN`
+- `EMAIL_AGENT_API_TOKEN_FILE=~/.openclaw-owlswatch/secrets/email-agent-token.tmp`
 - `GOOGLE_APPLICATION_CREDENTIALS`
 
 ## Gmail Scopes

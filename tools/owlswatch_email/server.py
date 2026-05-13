@@ -187,6 +187,14 @@ def operations_email_token(config: dict[str, Any]) -> str:
     token = cfg_env(config, "EMAIL_AGENT_API_TOKEN")
     if token:
         return token
+    token_file = cfg_env(config, "EMAIL_AGENT_API_TOKEN_FILE")
+    if token_file:
+        try:
+            token = Path(token_file).expanduser().read_text().strip()
+        except FileNotFoundError as exc:
+            raise ToolError("config_missing", "Operations Email Desk agent token file is missing from runtime storage.") from exc
+        if token:
+            return token
     raise ToolError("config_missing", "Operations Email Desk agent token is missing from tool environment/config.")
 
 
