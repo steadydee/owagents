@@ -122,7 +122,7 @@ Build the Operations intake payload from:
 - user caption
 - agent metadata identifying `Cuenta`
 
-Use `propertyId: "owlswatch"` unless a trusted Operations-specific config provides a different property id. Operations requires an expense date; if extraction cannot read one, use the Telegram submission date and include a clear flag such as `expense_date_used_submission_date`. Do not present that date as extracted from the receipt.
+Do not invent, change, or retry alternate Operations property ids. The intake tool owns the configured Operations property id. Operations requires an expense date; if extraction cannot read one, use the Telegram submission date and include a clear flag such as `expense_date_used_submission_date`. Do not present that date as extracted from the receipt.
 
 Use this idempotency key:
 
@@ -139,7 +139,6 @@ Use this minimal payload shape:
 
 ```json
 {
-  "propertyId": "owlswatch",
   "source": "telegram",
   "sourceMessageId": "telegram-{chat_id}-{message_id}",
   "submittedBy": "Telegram receipt submitter",

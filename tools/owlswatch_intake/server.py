@@ -118,6 +118,78 @@ def operations_property_id(config: dict[str, Any]) -> str:
     return raw
 
 
+def first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def set_first_present(target: dict[str, Any], key: str, *values: Any) -> None:
+    value = first_present(*values)
+    if value is not None:
+        target[key] = value
+
+
+def normalize_submitted_by(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    name = first_present(value.get("name"), value.get("label"), value.get("username"))
+    user_id = first_present(value.get("telegramUserId"), value.get("telegram_user_id"), value.get("id"))
+    if name and user_id:
+        return f"{name} ({user_id})"
+    return name or user_id
+
+
+def normalize_expense_draft_payload(config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    # Property ownership lives in the tool layer so the model cannot create
+    # drafts under a property the Operations UI does not read.
+    normalized.pop("property_id", None)
+    normalized["propertyId"] = operations_property_id(config)
+
+    expense = dict(normalized.get("expense") or {})
+    set_first_present(
+        expense,
+        "expense_date",
+        expense.get("expense_date"),
+        expense.get("expenseDate"),
+        expense.get("date"),
+    )
+    set_first_present(
+        expense,
+        "vendor_name",
+        expense.get("vendor_name"),
+        expense.get("vendorName"),
+        expense.get("vendor_name_raw"),
+        expense.get("vendorNameRaw"),
+        expense.get("vendor"),
+    )
+    set_first_present(expense, "total_amount", expense.get("total_amount"), expense.get("totalAmount"), expense.get("total"))
+    set_first_present(expense, "tax_amount", expense.get("tax_amount"), expense.get("taxAmount"))
+    set_first_present(expense, "subtotal_amount", expense.get("subtotal_amount"), expense.get("subtotalAmount"))
+    set_first_present(expense, "tip_amount", expense.get("tip_amount"), expense.get("tipAmount"))
+    set_first_present(
+        expense,
+        "notes",
+        expense.get("notes"),
+        expense.get("description"),
+        expense.get("business_purpose"),
+        expense.get("businessPurpose"),
+    )
+    normalized["expense"] = expense
+
+    submitted_by = normalize_submitted_by(normalized.get("submittedBy", normalized.get("submitted_by")))
+    if submitted_by is not None:
+        normalized.pop("submitted_by", None)
+        normalized["submittedBy"] = submitted_by
+
+    agent = normalized.get("agent")
+    if isinstance(agent, str):
+        normalized["agent"] = {"name": agent}
+    return normalized
+
+
 def vision_config(config: dict[str, Any]) -> tuple[str | None, str | None]:
     return (
         cfg_env(config, "OWLSWATCH_VISION_API_KEY") or cfg_env(config, "OPENAI_API_KEY"),
@@ -559,6 +631,7 @@ def tool_operations_create_expense_draft(args: dict[str, Any]) -> dict[str, Any]
         if payload:
             raise ToolError("invalid_input", "Put all draft fields inside payload; do not pass root-level draft fields.")
         payload = root_payload
+    payload = normalize_expense_draft_payload(config, payload)
     idempotency_key = payload.get("idempotencyKey")
     if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 256:
         raise ToolError("invalid_input", "payload.idempotencyKey is required.")
@@ -672,7 +745,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
     "owlswatch_album_buffer_store": ("Store one album photo arrival in durable spool state.", {"type": "object", "properties": {"media_group_id": {"type": "string"}, "chat_id": {"type": ["string", "number"]}, "file_id": {"type": "string"}, "caption_if_present": {"type": ["string", "null"]}, "source_message_id": {"type": ["string", "number"]}}, "required": ["media_group_id", "chat_id", "file_id"], "additionalProperties": False}, tool_album_buffer_store),
     "owlswatch_album_buffer_check": ("Check album quiet period and atomically claim if complete.", {"type": "object", "properties": {"media_group_id": {"type": "string"}, "chat_id": {"type": ["string", "number"]}, "claim_owner": {"type": "string"}, "quiet_seconds": {"type": "number", "minimum": 0, "maximum": 30}}, "required": ["media_group_id", "chat_id"], "additionalProperties": False}, tool_album_buffer_check),
     "owlswatch_operations_upload_attachment": ("Upload spooled receipt photos to Operations intake attachment endpoint.", {"type": "object", "properties": {"local_paths": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10}}, "required": ["local_paths"], "additionalProperties": False}, tool_operations_upload_attachment),
-    "owlswatch_operations_create_expense_draft": ("Create an Operations expense draft with idempotency. Prefer arguments shaped exactly as { payload: { idempotencyKey, propertyId, source, sourceMessageId, submittedBy, expense, attachments, agent } }.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": True}, tool_operations_create_expense_draft),
+    "owlswatch_operations_create_expense_draft": ("Create an Operations expense draft with idempotency. The tool owns the Operations property id and normalizes common receipt field names; prefer arguments shaped exactly as { payload: { idempotencyKey, source, sourceMessageId, submittedBy, expense, attachments, agent } }.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": True}, tool_operations_create_expense_draft),
     "owlswatch_vision_extract_receipt": ("Extract receipt fields from uploaded blobs using configured vision provider.", {"type": "object", "properties": {"blob_urls": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10}, "user_caption_if_present": {"type": ["string", "null"]}}, "required": ["blob_urls"], "additionalProperties": False}, tool_vision_extract_receipt),
     "owlswatch_memory_log": ("Append one intake summary line to Cuenta memory.", {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"], "additionalProperties": False}, tool_memory_log),
 }
