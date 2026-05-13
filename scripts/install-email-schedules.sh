@@ -5,12 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ACTION="${1:-install}"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 ENABLED_FILE="$HOME/.openclaw-owlswatch/email-agent.enabled"
-
-declare -A LABELS=(
-  [poll]="ai.openclaw.owlswatch.email-poll"
-  [daily]="ai.openclaw.owlswatch.email-daily-summary"
-  [unanswered]="ai.openclaw.owlswatch.email-unanswered"
-)
+POLL_LABEL="ai.openclaw.owlswatch.email-poll"
+DAILY_LABEL="ai.openclaw.owlswatch.email-daily-summary"
+UNANSWERED_LABEL="ai.openclaw.owlswatch.email-unanswered"
 
 unload_one() {
   local label="$1"
@@ -20,7 +17,7 @@ unload_one() {
 }
 
 if [ "$ACTION" = "uninstall" ]; then
-  for label in "${LABELS[@]}"; do
+  for label in "$POLL_LABEL" "$DAILY_LABEL" "$UNANSWERED_LABEL"; do
     unload_one "$label"
   done
   rm -f "$ENABLED_FILE"
@@ -43,12 +40,12 @@ mkdir -p "$PLIST_DIR" "$(dirname "$ENABLED_FILE")" /tmp/openclaw
 chmod +x "$ROOT/scripts/run-correo-poll.sh" "$ROOT/scripts/run-correo-daily-summary.sh" "$ROOT/scripts/run-correo-unanswered.sh"
 touch "$ENABLED_FILE"
 
-cat > "$PLIST_DIR/${LABELS[poll]}.plist" <<PLIST
+cat > "$PLIST_DIR/$POLL_LABEL.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${LABELS[poll]}</string>
+  <key>Label</key><string>$POLL_LABEL</string>
   <key>ProgramArguments</key><array><string>$ROOT/scripts/run-correo-poll.sh</string></array>
   <key>StartInterval</key><integer>1800</integer>
   <key>RunAtLoad</key><true/>
@@ -58,12 +55,12 @@ cat > "$PLIST_DIR/${LABELS[poll]}.plist" <<PLIST
 </plist>
 PLIST
 
-cat > "$PLIST_DIR/${LABELS[daily]}.plist" <<PLIST
+cat > "$PLIST_DIR/$DAILY_LABEL.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${LABELS[daily]}</string>
+  <key>Label</key><string>$DAILY_LABEL</string>
   <key>ProgramArguments</key><array><string>$ROOT/scripts/run-correo-daily-summary.sh</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
@@ -74,12 +71,12 @@ cat > "$PLIST_DIR/${LABELS[daily]}.plist" <<PLIST
 </plist>
 PLIST
 
-cat > "$PLIST_DIR/${LABELS[unanswered]}.plist" <<PLIST
+cat > "$PLIST_DIR/$UNANSWERED_LABEL.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${LABELS[unanswered]}</string>
+  <key>Label</key><string>$UNANSWERED_LABEL</string>
   <key>ProgramArguments</key><array><string>$ROOT/scripts/run-correo-unanswered.sh</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
@@ -90,7 +87,7 @@ cat > "$PLIST_DIR/${LABELS[unanswered]}.plist" <<PLIST
 </plist>
 PLIST
 
-for label in "${LABELS[@]}"; do
+for label in "$POLL_LABEL" "$DAILY_LABEL" "$UNANSWERED_LABEL"; do
   plist="$PLIST_DIR/$label.plist"
   launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$plist"
