@@ -19,6 +19,7 @@ secrets/
 **/sessions/
 **/spool/
 **/memory/
+**/tasks/email/
 **/mock/quotes/
 **/mock/drive/
 **/MEMORY.md
@@ -43,4 +44,3 @@ __pycache__/
 node_modules/
 dist/
 build/
-

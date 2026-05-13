@@ -8,6 +8,7 @@ This repo manages Owl's Watch OpenClaw agents.
 - Do not broaden an agent's tool access without updating `docs/security-boundaries.md`.
 - Do not give Cuenta approval, modification, or deletion authority over expenses.
 - Do not give Cotiza email-sending, booking, availability, or final quote status authority.
+- Do not give Correo final email-send authority or Gmail mutation tools beyond explicitly enabled draft creation.
 - Operations app changes belong in the Operations repo, not here.
 
 ## Before Committing
@@ -18,7 +19,7 @@ Run:
 ./scripts/check-no-secrets.sh
 ./scripts/smoke-cuenta.sh
 ./scripts/smoke-cotiza.sh
+./scripts/smoke-correo.sh
 ```
 
 Record which agent changed, which tools changed, whether credentials changed, and the smoke-test result.
-

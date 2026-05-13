@@ -8,10 +8,11 @@ This repo is source and deployment scaffolding. It is not a copy of the live `~/
 
 - `Cuenta`: Telegram receipt intake clerk. Creates expense drafts only.
 - `Cotiza`: quote drafting clerk. Reads quote requests, creates Operations draft rows, and creates Google Drive quote sheets.
+- `Correo`: operational email drafting clerk. Reads Gmail, uses Luna context, creates Email Desk draft tasks, and never sends final email.
 
 ## Boundaries
 
-- Operations is the source of truth for expenses and quotes.
+- Operations is the source of truth for expenses, quotes, and Email Desk tasks.
 - Agents are clerks only.
 - Tokens stay inside narrow tools.
 - Skills define workflow; tools perform side effects.
@@ -34,8 +35,8 @@ cd /Users/agent/code/owlswatch/owlswatch-agents
 ./scripts/deploy-to-mac-mini.sh
 openclaw --profile owlswatch config validate
 openclaw --profile owlswatch skills check --agent cotiza
+openclaw --profile owlswatch skills check --agent correo
 openclaw --profile owlswatch gateway restart
 ```
 
 The deploy script copies source files into the live OpenClaw workspaces and leaves runtime state untouched.
-

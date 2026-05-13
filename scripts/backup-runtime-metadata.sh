@@ -4,6 +4,7 @@ set -euo pipefail
 PROFILE_DIR="${PROFILE_DIR:-$HOME/.openclaw-owlswatch}"
 CUENTA_WORKSPACE="${CUENTA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch}"
 COTIZA_WORKSPACE="${COTIZA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-cotiza}"
+CORREO_WORKSPACE="${CORREO_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-correo}"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Backups/owlswatch-agents/runtime}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$BACKUP_ROOT/$STAMP"
@@ -35,12 +36,12 @@ if [ -f "$PROFILE_DIR/openclaw.json" ]; then
   redact_json "$PROFILE_DIR/openclaw.json" "$OUT/openclaw.redacted.json"
 fi
 
-mkdir -p "$OUT/cuenta" "$OUT/cotiza"
+mkdir -p "$OUT/cuenta" "$OUT/cotiza" "$OUT/correo"
 rsync -a --exclude 'memory' --exclude 'spool' --exclude '.openclaw' --exclude '.git' "$CUENTA_WORKSPACE/" "$OUT/cuenta/"
 rsync -a --exclude 'memory' --exclude 'spool' --exclude 'mock' --exclude '.openclaw' "$COTIZA_WORKSPACE/" "$OUT/cotiza/"
+rsync -a --exclude 'memory' --exclude 'tasks' --exclude '.openclaw' "$CORREO_WORKSPACE/" "$OUT/correo/" 2>/dev/null || true
 
 tar -C "$BACKUP_ROOT" -czf "$BACKUP_ROOT/$STAMP.tar.gz" "$STAMP"
 rm -rf "$OUT"
 
 echo "Runtime metadata backup written to $BACKUP_ROOT/$STAMP.tar.gz"
-

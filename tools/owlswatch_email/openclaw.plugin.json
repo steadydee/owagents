@@ -1,0 +1,27 @@
+{
+  "id": "owlswatch-email",
+  "name": "Owl's Watch Email Tools",
+  "description": "Narrow first-class tools for Correo email triage and draft preparation.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "owlswatch_email_search_recent_threads",
+      "owlswatch_email_search_unanswered_threads",
+      "owlswatch_email_read_thread",
+      "owlswatch_luna_get_email_response_context",
+      "owlswatch_email_submit_operations_intake",
+      "owlswatch_email_submit_scan_run",
+      "owlswatch_email_upsert_task",
+      "owlswatch_email_list_open_tasks",
+      "owlswatch_email_create_gmail_draft",
+      "owlswatch_email_send_telegram_message",
+      "owlswatch_email_memory_log"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

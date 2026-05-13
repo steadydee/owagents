@@ -67,6 +67,41 @@
             "bundle-mcp"
           ]
         }
+      },
+      {
+        "id": "correo",
+        "name": "Correo",
+        "workspace": "~/.openclaw/workspace-owlswatch-correo",
+        "skills": ["email-draft"],
+        "tools": {
+          "profile": "minimal",
+          "alsoAllow": [
+            "owlswatch_email_search_recent_threads",
+            "owlswatch_email_search_unanswered_threads",
+            "owlswatch_email_read_thread",
+            "owlswatch_email_resolve_gmail_url",
+            "owlswatch_luna_get_email_response_context",
+            "owlswatch_email_submit_operations_intake",
+            "owlswatch_email_submit_scan_run",
+            "owlswatch_email_upsert_task",
+            "owlswatch_email_list_open_tasks",
+            "owlswatch_email_create_gmail_draft",
+            "owlswatch_email_send_telegram_message",
+            "owlswatch_email_memory_log",
+            "owlswatch_quote_prepare"
+          ],
+          "deny": [
+            "exec",
+            "browser",
+            "gateway",
+            "cron",
+            "nodes",
+            "canvas",
+            "group:fs",
+            "group:web",
+            "bundle-mcp"
+          ]
+        }
       }
     ]
   },
@@ -138,6 +173,23 @@
           "OWLSWATCH_QUOTES_MOCKS": "0",
           "OWLSWATCH_GMAIL_QUOTE_LABEL": "*"
         }
+      },
+      "owlswatch_email": {
+        "command": "python3",
+        "args": ["~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email/server.py"],
+        "env": {
+          "OWLSWATCH_EMAIL_WORKSPACE": "~/.openclaw/workspace-owlswatch-correo",
+          "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
+          "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
+          "EMAIL_AGENT_API_TOKEN": "<runtime-only>",
+          "LUNA_BASE_URL": "https://luna.owlswatch.com",
+          "OW_AGENT_TOKEN_SECRET": "<runtime-only>",
+          "GOOGLE_APPLICATION_CREDENTIALS": "~/.openclaw-owlswatch/secrets/google-service-account.json",
+          "OWLSWATCH_GMAIL_ACCOUNT": "info@owlswatch.com",
+          "OWLSWATCH_EMAIL_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
+          "OWLSWATCH_EMAIL_NOTIFY_THREAD_ID": "<optional_email_topic_id>",
+          "OWLSWATCH_GMAIL_DRAFTS_ENABLED": "0"
+        }
       }
     }
   },
@@ -148,14 +200,17 @@
       },
       "owlswatch-quotes": {
         "enabled": true
+      },
+      "owlswatch-email": {
+        "enabled": true
       }
     },
     "load": {
       "paths": [
         "~/.openclaw/workspace-owlswatch/tools/owlswatch_intake",
-        "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes"
+        "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes",
+        "~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email"
       ]
     }
   }
 }
-

@@ -43,3 +43,21 @@ Forbidden:
 - Use historical quote prices as pricing authority.
 - Edit Drive alone as the hidden source of truth.
 
+## Correo
+
+Allowed:
+
+- Search/read the configured Owl's Watch Gmail account.
+- Fetch guest-shareable Luna context through `get_email_response_context`.
+- Submit Email Desk draft tasks and scan summaries to Operations.
+- Create Gmail drafts only when compose scope and config explicitly enable it.
+- Send short Telegram notifications.
+
+Forbidden:
+
+- Send final email.
+- Delete, archive, label, or mark Gmail messages read/unread.
+- Promise availability or confirm reservations.
+- Invent prices, policies, access details, payment details, or booking rules.
+- Use Luna broad prompt snapshots or direct database reads.
+- Manage marketing campaigns or outreach sequences.
