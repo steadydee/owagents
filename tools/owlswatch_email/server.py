@@ -423,7 +423,15 @@ def http_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeou
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        raise ToolError("http_error", f"Upstream request failed with HTTP {exc.code}.", retryable=500 <= exc.code < 600) from exc
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        detail = re.sub(r"\s+", " ", body).strip()[:500]
+        message = f"Upstream request failed with HTTP {exc.code}."
+        if detail:
+            message = f"{message} {detail}"
+        raise ToolError("http_error", message, retryable=500 <= exc.code < 600) from exc
     except urllib.error.URLError as exc:
         raise ToolError("network_error", "Network request failed.", retryable=True) from exc
 
@@ -435,6 +443,83 @@ def operations_post(config: dict[str, Any], path: str, payload: dict[str, Any]) 
         {"Authorization": f"Bearer {operations_email_token(config)}"},
         timeout=30,
     )
+
+
+def list_from_maybe(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def normalize_operations_intake_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(payload.get("gmail"), dict) and isinstance(payload.get("thread"), dict) and isinstance(payload.get("draft"), dict):
+        return payload
+
+    draft = payload.get("draft") if isinstance(payload.get("draft"), dict) else {}
+    thread_id = payload.get("threadId") or payload.get("gmailThreadId") or payload.get("gmail_thread_id")
+    if not thread_id:
+        return payload
+
+    from_email = payload.get("clientEmail") or payload.get("from") or payload.get("fromEmail")
+    client_name = payload.get("customerName") or payload.get("clientName")
+    subject = payload.get("subject") or draft.get("subject")
+    summary = payload.get("summary") or payload.get("originalSummary")
+    status = payload.get("status") or draft.get("status") or "draft_ready"
+    body = draft.get("body") or payload.get("draftBody") or payload.get("body")
+    messages = payload.get("messages") if isinstance(payload.get("messages"), list) else []
+
+    return {
+        "propertyId": payload.get("propertyId") or "owlswatch",
+        "agentId": payload.get("agentId") or payload.get("createdBy") or "correo",
+        "sourceApp": payload.get("sourceApp") or "email_agent",
+        "gmail": {
+            "account": payload.get("gmailAccount") or DEFAULT_GMAIL_ACCOUNT,
+            "threadId": str(thread_id),
+            "sourceMessageId": payload.get("gmailSourceMessageId") or payload.get("sourceMessageId") or str(thread_id),
+            "lastMessageId": payload.get("gmailLastMessageId") or payload.get("lastMessageId") or str(thread_id),
+        },
+        "thread": {
+            "subject": subject,
+            "clientName": client_name,
+            "clientEmail": from_email,
+            "participants": payload.get("participants") or [{"name": client_name, "email": from_email, "role": "external"}],
+            "detectedLanguage": payload.get("detectedLanguage") or payload.get("language") or "en",
+            "category": payload.get("category") or "new_guest_inquiry",
+            "priority": payload.get("priority") or "normal",
+            "lastExternalMessageAt": payload.get("lastExternalMessageAt"),
+            "lastStaffMessageAt": payload.get("lastStaffMessageAt"),
+            "summary": summary,
+            "messages": messages,
+        },
+        "draft": {
+            "status": status,
+            "confidence": payload.get("confidence") or "medium",
+            "detectedLanguage": payload.get("detectedLanguage") or payload.get("language") or "en",
+            "toAddresses": list_from_maybe(draft.get("to") or draft.get("toAddresses") or from_email),
+            "ccAddresses": list_from_maybe(draft.get("cc") or draft.get("ccAddresses")),
+            "bccAddresses": list_from_maybe(draft.get("bcc") or draft.get("bccAddresses")),
+            "subject": subject,
+            "body": body,
+        },
+        "context": {
+            "originalClientQuestion": payload.get("originalClientQuestion") or summary,
+            "missingInformationFlags": payload.get("missingInformationFlags") or [],
+            "warningFlags": payload.get("warningFlags") or [],
+            "boundaries": payload.get("boundaries") or payload.get("reviewNotes") or [],
+            "lunaRequest": payload.get("lunaRequest") or {},
+            "lunaSources": payload.get("lunaSources") or {},
+            "lunaContextSummary": payload.get("lunaContextSummary"),
+            "quoteId": payload.get("quoteId"),
+            "agentNotes": payload.get("agentNotes") or "\n".join(payload.get("reviewNotes") or []),
+        },
+        "options": {
+            "createGmailDraft": False,
+            "notifyTelegram": False,
+        },
+    }
 
 
 def tool_gmail_search_recent_threads(args: dict[str, Any]) -> dict[str, Any]:
@@ -628,6 +713,7 @@ def tool_operations_email_intake(args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ToolError("invalid_input", "payload must be an object.")
     config = load_config()
+    payload = normalize_operations_intake_payload(payload)
     data = operations_post(config, "/api/emails/intake", payload)
     if data.get("success") is False or data.get("ok") is False:
         raise ToolError("operations_error", "Operations Email Desk intake returned an error.", retryable=False)

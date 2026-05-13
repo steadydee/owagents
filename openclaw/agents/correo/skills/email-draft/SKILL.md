@@ -220,6 +220,77 @@ Build the `/api/emails/intake` payload from:
 
 Call `owlswatch_email_submit_operations_intake`.
 
+The payload must use the nested Operations Email Desk shape:
+
+```json
+{
+  "propertyId": "owlswatch",
+  "agentId": "correo",
+  "gmail": {
+    "account": "info@owlswatch.com",
+    "threadId": "<gmail_thread_id>",
+    "sourceMessageId": "<latest_message_id>",
+    "lastMessageId": "<latest_message_id>"
+  },
+  "thread": {
+    "subject": "<subject>",
+    "clientName": "<name or null>",
+    "clientEmail": "<email>",
+    "participants": [],
+    "detectedLanguage": "en",
+    "category": "new_guest_inquiry",
+    "priority": "normal",
+    "lastExternalMessageAt": "<iso timestamp>",
+    "lastStaffMessageAt": null,
+    "summary": "<short summary>",
+    "messages": [
+      {
+        "gmailMessageId": "<message_id>",
+        "rfc822MessageId": "<message-id header>",
+        "direction": "external",
+        "fromName": "<name or null>",
+        "fromEmail": "<email>",
+        "toAddresses": ["info@owlswatch.com"],
+        "ccAddresses": [],
+        "subject": "<subject>",
+        "snippet": "<short snippet>",
+        "bodyText": "<plain text>",
+        "sentAt": "<iso timestamp>",
+        "hasAttachments": false,
+        "attachments": []
+      }
+    ]
+  },
+  "draft": {
+    "status": "draft_ready",
+    "confidence": "medium",
+    "detectedLanguage": "en",
+    "toAddresses": ["<recipient email>"],
+    "ccAddresses": [],
+    "bccAddresses": [],
+    "subject": "Re: <subject>",
+    "body": "<draft body>"
+  },
+  "context": {
+    "originalClientQuestion": "<current ask>",
+    "missingInformationFlags": [],
+    "warningFlags": [],
+    "boundaries": [],
+    "lunaRequest": {},
+    "lunaSources": {},
+    "lunaContextSummary": "<summary>",
+    "quoteId": null,
+    "agentNotes": "<notes>"
+  },
+  "options": {
+    "createGmailDraft": false,
+    "notifyTelegram": false
+  }
+}
+```
+
+Do not submit the simpler local fallback task shape to Operations. The tool can recover from some legacy fields, but use the nested shape above.
+
 If Operations Email Desk is not configured or the endpoint is not ready, call `owlswatch_email_upsert_task` with the same task data as a local fallback and mark `operationsSyncStatus: "pending"`.
 
 Do not claim the task is in Operations unless the Operations tool returned a task URL or task id.
