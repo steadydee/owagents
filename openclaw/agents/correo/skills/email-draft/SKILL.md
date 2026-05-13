@@ -87,6 +87,12 @@ Ignore:
 - promotions
 - social notifications
 - automated marketing
+- no-reply notifications
+- finance notifications such as Bold payments/closures
+- electronic invoices and receipt notifications
+- booking-system notifications such as Little Hotelier unless the user explicitly asks for booking monitoring
+- calendar/system notifications such as meeting cancellations
+- threads where the latest meaningful message is from Owl's Watch staff, unless the user explicitly asks for follow-up tracking
 - spam
 - obvious no-reply system messages
 - unrelated personal email

@@ -15,7 +15,8 @@ const toolSchemas = {
       properties: {
         hours: { type: "integer", minimum: 1, maximum: 168 },
         query: { type: ["string", "null"] },
-        maxResults: { type: "integer", minimum: 1, maximum: 25 }
+        maxResults: { type: "integer", minimum: 1, maximum: 25 },
+        includeHandled: { type: "boolean" }
       },
       additionalProperties: false
     }

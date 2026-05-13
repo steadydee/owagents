@@ -47,9 +47,41 @@ LOW_VALUE_MARKERS = (
     "promo",
     "noreply",
     "no-reply",
+    "no responder",
+    "no-responder",
+    "donotreply",
+    "do-not-reply",
+    "notificaciones",
     "notification",
     "google alerts",
+    "cierre de ventas",
+    "compra por $",
+    "link de pago bold",
+    "bold",
+    "factura electrónica",
+    "factura electronica",
+    "documento electrónico",
+    "documento electronico",
+    "efactura",
+    "dian",
+    "little hotelier",
+    "booking for",
+    "thebookingbutton",
+    "bookingbutton",
+    "mail-cotelco.org",
+    "cotelco - comunicaciones",
+    "cotelco - estudios",
+    "programa de formación",
+    "programa de formacion",
+    "monitor del mercado laboral",
+    "afiliados cotelco",
+    "canceled event",
+    "cancelled event",
+    "this event has been canceled",
+    "this event has been cancelled",
+    "google meet",
 )
+STAFF_DOMAINS = ("owlswatch.com",)
 
 
 class ToolError(Exception):
@@ -313,11 +345,20 @@ def is_low_value_message(message: dict[str, Any]) -> bool:
     return any(marker in haystack for marker in LOW_VALUE_MARKERS)
 
 
+def is_staff_sender(sender: str, account: str) -> bool:
+    sender = (sender or "").lower()
+    account = (account or "").lower()
+    if not sender:
+        return False
+    if sender == account:
+        return True
+    return any(sender.endswith(f"@{domain}") for domain in STAFF_DOMAINS)
+
+
 def latest_external_message(messages: list[dict[str, Any]], account: str) -> dict[str, Any] | None:
-    account = account.lower()
     for message in reversed(messages):
         sender = str(message.get("fromEmail") or "").lower()
-        if sender and sender != account and not is_low_value_message(message):
+        if sender and not is_staff_sender(sender, account) and not is_low_value_message(message):
             return message
     return None
 
@@ -530,12 +571,17 @@ def tool_gmail_search_recent_threads(args: dict[str, Any]) -> dict[str, Any]:
     max_results = int(args.get("maxResults") or 10)
     if not 1 <= max_results <= 25:
         raise ToolError("invalid_input", "maxResults must be between 1 and 25.")
+    include_handled = bool(args.get("includeHandled"))
     query = validate_text("query", args.get("query"), max_len=1000) or default_recent_query(hours)
     service = google_build_service(config, ["https://www.googleapis.com/auth/gmail.readonly"])
     account = gmail_account(config)
     matches = []
     for item in list_threads(service, query, max_results):
         thread = get_thread(service, item["id"], fmt="full")
+        messages = thread_messages(thread)
+        latest = latest_meaningful_message(messages)
+        if latest and is_staff_sender(str(latest.get("fromEmail") or ""), account) and not include_handled:
+            continue
         match = thread_match_from_thread(thread, account)
         if match and not is_low_value_message({"from": match.get("from"), "subject": match.get("subject"), "bodyText": match.get("snippet")}):
             matches.append(match)
@@ -561,7 +607,7 @@ def tool_gmail_search_unanswered_threads(args: dict[str, Any]) -> dict[str, Any]
         if not latest:
             continue
         last_sender = str(latest.get("fromEmail") or "").lower()
-        if last_sender and last_sender != account and not is_low_value_message(latest):
+        if last_sender and not is_staff_sender(last_sender, account) and not is_low_value_message(latest):
             match = thread_match_from_thread(thread, account)
             if match:
                 match["reason"] = "latest_meaningful_message_from_external_sender"
@@ -789,7 +835,7 @@ def tool_email_memory_log(args: dict[str, Any]) -> dict[str, Any]:
 
 
 TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    "owlswatch_email_search_recent_threads": ("Search recent Owl's Watch Gmail threads read-only.", {"type": "object", "properties": {"hours": {"type": "integer", "minimum": 1, "maximum": 168}, "query": {"type": ["string", "null"]}, "maxResults": {"type": "integer", "minimum": 1, "maximum": 25}}, "additionalProperties": False}, tool_gmail_search_recent_threads),
+    "owlswatch_email_search_recent_threads": ("Search recent Owl's Watch Gmail threads read-only.", {"type": "object", "properties": {"hours": {"type": "integer", "minimum": 1, "maximum": 168}, "query": {"type": ["string", "null"]}, "maxResults": {"type": "integer", "minimum": 1, "maximum": 25}, "includeHandled": {"type": "boolean"}}, "additionalProperties": False}, tool_gmail_search_recent_threads),
     "owlswatch_email_search_unanswered_threads": ("Find recent Gmail threads whose latest meaningful message appears external/unanswered.", {"type": "object", "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 30}, "query": {"type": ["string", "null"]}, "maxResults": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": False}, tool_gmail_search_unanswered_threads),
     "owlswatch_email_read_thread": ("Read one Owl's Watch Gmail thread read-only.", {"type": "object", "properties": {"threadId": {"type": "string"}}, "required": ["threadId"], "additionalProperties": False}, tool_gmail_read_thread),
     "owlswatch_email_resolve_gmail_url": ("Resolve a Gmail web URL to a readable Gmail thread when Gmail exposes a compatible API id.", {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"], "additionalProperties": False}, tool_gmail_resolve_url),
