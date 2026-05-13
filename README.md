@@ -34,6 +34,7 @@ cd /Users/agent/code/owlswatch/owlswatch-agents
 ./scripts/check-no-secrets.sh
 ./scripts/deploy-to-mac-mini.sh
 openclaw --profile owlswatch config validate
+openclaw --profile owlswatch skills check --agent main
 openclaw --profile owlswatch skills check --agent cotiza
 openclaw --profile owlswatch skills check --agent correo
 openclaw --profile owlswatch gateway restart
