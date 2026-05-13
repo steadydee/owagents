@@ -300,6 +300,17 @@ def parsed_email_address(value: str) -> str:
     return email.utils.parseaddr(value or "")[1].lower()
 
 
+def parsed_email_name(value: str) -> str | None:
+    name = email.utils.parseaddr(value or "")[0].strip().strip('"')
+    return name or None
+
+
+def parsed_email_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [addr.lower() for _, addr in email.utils.getaddresses([value]) if addr]
+
+
 def message_to_summary(message: dict[str, Any]) -> dict[str, Any]:
     headers = headers_map(message)
     internal_ms = int(message.get("internalDate") or 0)
@@ -308,8 +319,11 @@ def message_to_summary(message: dict[str, Any]) -> dict[str, Any]:
         "id": message.get("id"),
         "threadId": message.get("threadId"),
         "from": headers.get("from"),
+        "fromName": parsed_email_name(headers.get("from", "")),
         "fromEmail": parsed_email_address(headers.get("from", "")),
         "to": headers.get("to"),
+        "toEmails": parsed_email_list(headers.get("to")),
+        "ccEmails": parsed_email_list(headers.get("cc")),
         "subject": headers.get("subject", ""),
         "date": date_iso,
         "messageIdHeader": headers.get("message-id"),
@@ -495,6 +509,64 @@ def list_from_maybe(value: Any) -> list[str]:
     return [text] if text else []
 
 
+def infer_signature_name(body: str | None) -> str | None:
+    if not body:
+        return None
+    lines = [line.strip() for line in body.replace("\r", "").split("\n") if line.strip()]
+    for line in reversed(lines[-6:]):
+        clean = re.sub(r"^(thanks|thank you|best|regards|kind regards|sincerely|saludos|gracias)[,!. ]*$", "", line, flags=re.I).strip()
+        if not clean:
+            continue
+        if 1 <= len(clean) <= 80 and re.match(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ .'-]{0,79}$", clean):
+            if "@" not in clean and not clean.lower().startswith(("http", "www.")):
+                return clean
+    return None
+
+
+def message_to_operations_snapshot(message: dict[str, Any], account: str) -> dict[str, Any]:
+    sender = str(message.get("fromEmail") or "")
+    return {
+        "gmailMessageId": message.get("id"),
+        "rfc822MessageId": message.get("messageIdHeader"),
+        "direction": "staff" if is_staff_sender(sender, account) else "external",
+        "fromName": message.get("fromName"),
+        "fromEmail": sender,
+        "toAddresses": message.get("toEmails") or list_from_maybe(message.get("to")),
+        "ccAddresses": message.get("ccEmails") or [],
+        "bccAddresses": [],
+        "subject": message.get("subject"),
+        "snippet": (message.get("bodyText") or "")[:500],
+        "bodyText": message.get("bodyText"),
+        "sentAt": message.get("date"),
+        "hasAttachments": False,
+        "attachments": [],
+    }
+
+
+def compact_summary_from_message(message: dict[str, Any] | None) -> str | None:
+    if not message:
+        return None
+    body = re.sub(r"\s+", " ", str(message.get("bodyText") or "")).strip()
+    if not body:
+        return None
+    return body[:500]
+
+
+def is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    if isinstance(value, (list, dict)) and not value:
+        return True
+    return False
+
+
+def set_if_blank(target: dict[str, Any], key: str, value: Any) -> None:
+    if is_blank(target.get(key)) and not is_blank(value):
+        target[key] = value
+
+
 def normalize_operations_intake_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(payload.get("gmail"), dict) and isinstance(payload.get("thread"), dict) and isinstance(payload.get("draft"), dict):
         return payload
@@ -561,6 +633,80 @@ def normalize_operations_intake_payload(payload: dict[str, Any]) -> dict[str, An
             "notifyTelegram": False,
         },
     }
+
+
+def enrich_operations_intake_payload(config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    gmail = payload.get("gmail")
+    thread_payload = payload.get("thread")
+    draft = payload.get("draft")
+    context = payload.get("context")
+    if not isinstance(gmail, dict) or not isinstance(thread_payload, dict) or not isinstance(draft, dict):
+        return payload
+    if not isinstance(context, dict):
+        context = {}
+        payload["context"] = context
+
+    thread_id = gmail.get("threadId") or gmail.get("thread_id")
+    if not thread_id:
+        return payload
+
+    try:
+        account = gmail_account(config)
+        service = google_build_service(config, ["https://www.googleapis.com/auth/gmail.readonly"])
+        thread = get_thread(service, str(thread_id))
+        messages = thread_messages(thread)
+    except Exception:
+        return payload
+
+    if not messages:
+        return payload
+
+    latest = messages[-1]
+    latest_external = latest_external_message(messages, account) or latest
+    snapshots = [message_to_operations_snapshot(message, account) for message in messages if message.get("id")]
+
+    gmail.setdefault("account", account)
+    gmail.setdefault("sourceMessageId", latest_external.get("id") or latest.get("id"))
+    gmail.setdefault("lastMessageId", latest.get("id"))
+
+    set_if_blank(thread_payload, "subject", latest.get("subject") or latest_external.get("subject"))
+    set_if_blank(thread_payload, "clientEmail", latest_external.get("fromEmail"))
+    set_if_blank(
+        thread_payload,
+        "clientName",
+        latest_external.get("fromName") or infer_signature_name(latest_external.get("bodyText")),
+    )
+    existing_participants = thread_payload.get("participants")
+    has_real_participant = any((item.get("email") or item.get("name")) for item in existing_participants) if isinstance(existing_participants, list) else False
+    if not has_real_participant:
+        participants: list[dict[str, Any]] = []
+        client_email = thread_payload.get("clientEmail")
+        if client_email:
+            participants.append({"name": thread_payload.get("clientName"), "email": client_email, "role": "external"})
+        participants.append({"name": "Owl's Watch", "email": account, "role": "staff"})
+        thread_payload["participants"] = participants
+    set_if_blank(thread_payload, "lastExternalMessageAt", latest_external.get("date"))
+    staff_dates = [m.get("date") for m in messages if is_staff_sender(str(m.get("fromEmail") or ""), account) and m.get("date")]
+    if "lastStaffMessageAt" not in thread_payload or thread_payload.get("lastStaffMessageAt") is None:
+        thread_payload["lastStaffMessageAt"] = staff_dates[-1] if staff_dates else None
+    set_if_blank(thread_payload, "summary", context.get("originalSummary") or compact_summary_from_message(latest_external))
+    if not isinstance(thread_payload.get("messages"), list) or not thread_payload.get("messages"):
+        thread_payload["messages"] = snapshots
+
+    set_if_blank(draft, "toAddresses", list_from_maybe(thread_payload.get("clientEmail")))
+    if "ccAddresses" not in draft:
+        draft["ccAddresses"] = []
+    if "bccAddresses" not in draft:
+        draft["bccAddresses"] = []
+    set_if_blank(draft, "subject", f"Re: {thread_payload.get('subject')}" if thread_payload.get("subject") else None)
+
+    set_if_blank(context, "originalClientQuestion", latest_external.get("bodyText"))
+    if "lunaSources" not in context:
+        context["lunaSources"] = {}
+    if not context.get("originalSummary") and thread_payload.get("summary"):
+        context["originalSummary"] = thread_payload.get("summary")
+
+    return payload
 
 
 def tool_gmail_search_recent_threads(args: dict[str, Any]) -> dict[str, Any]:
@@ -760,6 +906,7 @@ def tool_operations_email_intake(args: dict[str, Any]) -> dict[str, Any]:
         raise ToolError("invalid_input", "payload must be an object.")
     config = load_config()
     payload = normalize_operations_intake_payload(payload)
+    payload = enrich_operations_intake_payload(config, payload)
     data = operations_post(config, "/api/emails/intake", payload)
     if data.get("success") is False or data.get("ok") is False:
         raise ToolError("operations_error", "Operations Email Desk intake returned an error.", retryable=False)
