@@ -31,7 +31,45 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2026-05-06-no-checkout-lunch-v1"
+QUOTE_RULE_VERSION = "2027-operator-rates-v1"
+QUOTE_RATES = {
+    2026: {
+        "pricebook_version": "2026-operators",
+        "cabin_rack": 840000,
+        "cabin_operator_net": 756000,
+        "extra_person": 110000,
+        "guide_room": 316000,
+        "bird_tour_rack": 150000,
+        "bird_tour_operator_net": None,
+        "afternoon_extension": 100000,
+        "bilingual_half_day": 200000,
+        "bilingual_full_day": 300000,
+        "breakfast": 55000,
+        "lunch": 65000,
+        "dinner": 65000,
+        "guide_driver_breakfast": 0,
+        "guide_driver_lunch": 25000,
+        "guide_driver_dinner": 25000,
+    },
+    2027: {
+        "pricebook_version": "2027-operators",
+        "cabin_rack": 880000,
+        "cabin_operator_net": 792000,
+        "extra_person": 120000,
+        "guide_room": 350000,
+        "bird_tour_rack": 160000,
+        "bird_tour_operator_net": 144000,
+        "afternoon_extension": 110000,
+        "bilingual_half_day": 220000,
+        "bilingual_full_day": 320000,
+        "breakfast": 60000,
+        "lunch": 70000,
+        "dinner": 70000,
+        "guide_driver_breakfast": 0,
+        "guide_driver_lunch": 35000,
+        "guide_driver_dinner": 35000,
+    },
+}
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\\-]{1,220}$")
 TEXT_RE = re.compile(r"^[\s\S]{0,20000}$")
@@ -339,6 +377,35 @@ def date_value(value: Any) -> str | None:
         return None
     normalized = text.replace("/", "-")
     return normalized if DATE_RE.match(normalized) else text
+
+
+def year_from_iso_date(value: Any) -> int | None:
+    text = date_value(value)
+    if not text or not DATE_RE.match(text):
+        return None
+    return int(text[:4])
+
+
+def rate_year_from_payload(payload: dict[str, Any], calc: dict[str, Any] | None = None) -> int:
+    explicit = coerce_int(first_value(payload, "year", "rateYear", "rate_year"), None)
+    if explicit:
+        return explicit
+    arrival_year = year_from_iso_date(first_value(payload, "arrivalDate", "arrival_date", "arrival", "startDate", "start_date", "date", "visitDate", "visit_date", "checkIn", "check_in"))
+    if arrival_year:
+        return arrival_year
+    departure_year = year_from_iso_date(first_value(payload, "departureDate", "departure_date", "departure", "endDate", "end_date", "date", "visitDate", "visit_date", "checkOut", "check_out"))
+    if departure_year:
+        return departure_year
+    version = string_value(calc.get("pricebookVersion")) if isinstance(calc, dict) else None
+    if version:
+        match = re.search(r"\b(20\d{2})\b", version)
+        if match:
+            return int(match.group(1))
+    return 2026
+
+
+def quote_rates_for_year(year: int) -> dict[str, Any]:
+    return QUOTE_RATES.get(year, QUOTE_RATES[2026])
 
 
 def infer_audience(payload: dict[str, Any], summary: str) -> str | None:
@@ -825,7 +892,7 @@ def normalize_calculate_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     normalized: dict[str, Any] = {
         "propertyId": string_value(first_value(payload, "propertyId", "property_id")) or "owlswatch",
-        "year": coerce_int(first_value(payload, "year", "rateYear", "rate_year"), 2026) or 2026,
+        "year": rate_year_from_payload({**payload, "arrivalDate": arrival, "departureDate": departure}),
     }
     audience = infer_audience(payload, summary)
     if audience:
@@ -1859,6 +1926,8 @@ def create_revision_draft(payload: dict[str, Any], config: dict[str, Any]) -> tu
 
 def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
     summary = request_summary(payload).lower()
+    year = rate_year_from_payload(payload)
+    rates = quote_rates_for_year(year)
     guests_payload = object_value(payload, "guests")
     meals_payload = object_value(payload, "meals")
     birding_payload = object_value(payload, "birding")
@@ -1905,7 +1974,7 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
         dinners = dinners or 0
     breakfasts = coerce_int(meals_payload.get("breakfasts"), None) or 0
 
-    lodging_rate = 756000 if audience == "operator" else 840000
+    lodging_rate = rates["cabin_operator_net"] if audience == "operator" else rates["cabin_rack"]
     cabin_count = coerce_int(lodging_payload.get("cabinCount"), 1) or 1
     lodging_requested = lodging_payload.get("requested") is not False and cabin_count > 0
     line_items: list[dict[str, Any]] = []
@@ -1913,7 +1982,7 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
         line_items.append({
             "description": "Cabin lodging",
             "notes": "Rate is for two people and includes breakfast.",
-            "sourceRule": "2026 cabin operator net" if audience == "operator" else "2026 cabin rack",
+            "sourceRule": f"{year} cabin operator net" if audience == "operator" else f"{year} cabin rack",
             "unitPriceCop": lodging_rate,
             "quantity": nights * cabin_count,
             "totalCop": lodging_rate * nights * cabin_count,
@@ -1924,10 +1993,10 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
         line_items.append({
             "description": "Extra person",
             "notes": "Children under two are free.",
-            "sourceRule": "2026 extra person",
-            "unitPriceCop": 110000,
+            "sourceRule": f"{year} extra person",
+            "unitPriceCop": rates["extra_person"],
             "quantity": qty,
-            "totalCop": 110000 * qty,
+            "totalCop": rates["extra_person"] * qty,
         })
 
     if breakfasts:
@@ -1935,10 +2004,10 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
         line_items.append({
             "description": "Breakfast",
             "notes": "Client breakfast.",
-            "sourceRule": "2026 breakfast",
-            "unitPriceCop": 55000,
+            "sourceRule": f"{year} breakfast",
+            "unitPriceCop": rates["breakfast"],
             "quantity": qty,
-            "totalCop": 55000 * qty,
+            "totalCop": rates["breakfast"] * qty,
         })
 
     if lunches:
@@ -1946,10 +2015,10 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
         line_items.append({
             "description": "Lunch",
             "notes": "Lunch is not included with lodging.",
-            "sourceRule": "2026 lunch",
-            "unitPriceCop": 65000,
+            "sourceRule": f"{year} lunch",
+            "unitPriceCop": rates["lunch"],
             "quantity": qty,
-            "totalCop": 65000 * qty,
+            "totalCop": rates["lunch"] * qty,
         })
 
     if dinners:
@@ -1957,21 +2026,26 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
         line_items.append({
             "description": "Dinner",
             "notes": "Dinner is not included with lodging.",
-            "sourceRule": "2026 dinner",
-            "unitPriceCop": 65000,
+            "sourceRule": f"{year} dinner",
+            "unitPriceCop": rates["dinner"],
             "quantity": qty,
-            "totalCop": 65000 * qty,
+            "totalCop": rates["dinner"] * qty,
         })
 
     if birding_days:
         qty = guests * birding_days
+        bird_tour_rate = rates["bird_tour_rack"]
+        bird_tour_source = f"{year} bird tour rack"
+        if audience == "operator" and not lodging_requested and rates.get("bird_tour_operator_net"):
+            bird_tour_rate = rates["bird_tour_operator_net"]
+            bird_tour_source = f"{year} bird tour operator net"
         line_items.append({
-            "description": "Photography and bird tour",
+            "description": "Bird Tour",
             "notes": "Morning birding per person.",
-            "sourceRule": "2026 photography and bird tour",
-            "unitPriceCop": 150000,
+            "sourceRule": bird_tour_source,
+            "unitPriceCop": bird_tour_rate,
             "quantity": qty,
-            "totalCop": 150000 * qty,
+            "totalCop": bird_tour_rate * qty,
         })
 
     total = sum(int(item["totalCop"]) for item in line_items)
@@ -1986,7 +2060,7 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
         "mock": True,
-        "pricebookVersion": "2026-operators",
+        "pricebookVersion": rates["pricebook_version"],
         "audience": audience,
         "currency": "COP",
         "lineItems": line_items,
@@ -2649,6 +2723,11 @@ def copy_line_with_total(item: dict[str, Any], unit_price: int | None = None, to
     return copied
 
 
+def item_uses_operator_net_rate(item: dict[str, Any]) -> bool:
+    text = line_text(item)
+    return "operatornetratecop" in text.replace("_", "").replace(".", "").replace(" ", "") or "operator net" in text
+
+
 def apply_operator_discount_policy(payload: dict[str, Any], calc: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(calc, dict) or not operator_context(payload, calc):
         return calc
@@ -2674,7 +2753,7 @@ def apply_operator_discount_policy(payload: dict[str, Any], calc: dict[str, Any]
         original_total = line_total(item)
         unit = money_value(item.get("unitPriceCop"))
         qty = quantity_value(item.get("quantity")) or 1
-        if idx in discount_indexes and cabin_indexes:
+        if idx in discount_indexes and (cabin_indexes or item_uses_operator_net_rate(item)):
             rack_unit = int(round(unit / 0.9)) if unit else 0
             rack_total = int(round(rack_unit * qty)) if rack_unit else int(round(original_total / 0.9))
             subtotal += rack_total
@@ -2684,7 +2763,7 @@ def apply_operator_discount_policy(payload: dict[str, Any], calc: dict[str, Any]
             subtotal += original_total
             display_items.append(copy_line_with_total(item, unit or None, original_total))
 
-    if not cabin_indexes:
+    if not cabin_indexes and discount == 0:
         tour_basis = sum(line_total(items[idx]) for idx in discount_indexes)
         discount = int(round(tour_basis * 0.10))
 
@@ -2715,17 +2794,19 @@ def apply_staff_meal_policy(payload: dict[str, Any], calc: dict[str, Any]) -> di
     staff_count = infer_staff_count(payload, "guide") + infer_staff_count(payload, "driver")
     if staff_count <= 0:
         return calc
+    year = rate_year_from_payload(payload, calc)
+    rates = quote_rates_for_year(year)
     days = infer_staff_meal_days(payload)
     quantity = staff_count * days
-    lunch_total = 25000 * quantity
-    updated_items = [
-        *items,
+    lunch_rate = rates["guide_driver_lunch"]
+    lunch_total = lunch_rate * quantity
+    added_items = [
         {
             "serviceCode": "guide_driver_breakfast",
             "description": "Guide/Driver Breakfast",
             "category": "staff_meal",
             "unit": "person_meal",
-            "unitPriceCop": 0,
+            "unitPriceCop": rates["guide_driver_breakfast"],
             "quantity": quantity,
             "sourceRule": "guide_driver.breakfast.free",
             "notes": "Breakfast for guides/drivers is complimentary.",
@@ -2736,21 +2817,43 @@ def apply_staff_meal_policy(payload: dict[str, Any], calc: dict[str, Any]) -> di
             "description": "Guide/Driver Lunch",
             "category": "staff_meal",
             "unit": "person_meal",
-            "unitPriceCop": 25000,
+            "unitPriceCop": lunch_rate,
             "quantity": quantity,
             "sourceRule": "guide_driver.lunch.rateCop",
             "notes": "Discounted guide/driver lunch.",
             "totalCop": lunch_total,
         },
     ]
+    dinner_total = 0
+    if requests_dinner(payload, request_summary(payload)):
+        dinner_rate = rates["guide_driver_dinner"]
+        dinner_total = dinner_rate * quantity
+        added_items.append({
+            "serviceCode": "guide_driver_dinner",
+            "description": "Guide/Driver Dinner",
+            "category": "staff_meal",
+            "unit": "person_meal",
+            "unitPriceCop": dinner_rate,
+            "quantity": quantity,
+            "sourceRule": "guide_driver.dinner.rateCop",
+            "notes": "Discounted guide/driver dinner.",
+            "totalCop": dinner_total,
+        })
+    added_total = lunch_total + dinner_total
+    updated_items = [
+        *items,
+        *added_items,
+    ]
     updated = dict(calc)
     updated["lineItems"] = updated_items
     current_subtotal = money_value(calc.get("subtotalCop")) or sum(line_total(item) for item in items)
     current_total = money_value(calc.get("totalCop")) or (current_subtotal - money_value(calc.get("discountCop")))
-    updated["subtotalCop"] = current_subtotal + lunch_total
-    updated["totalCop"] = current_total + lunch_total
+    updated["subtotalCop"] = current_subtotal + added_total
+    updated["totalCop"] = current_total + added_total
     assumptions = updated.get("assumptions")
-    note = "Guide/driver meals: breakfast is free; lunch is COP 25,000 per guide/driver."
+    note = f"Guide/driver meals: breakfast is free; lunch is COP {lunch_rate:,} per guide/driver."
+    if dinner_total:
+        note = f"{note} Dinner is COP {rates['guide_driver_dinner']:,} per guide/driver."
     if isinstance(assumptions, list) and note not in assumptions:
         updated["assumptions"] = [*assumptions, note]
     return updated
@@ -2784,15 +2887,16 @@ def apply_trip_leader_meal_policy(payload: dict[str, Any], calc: dict[str, Any])
     if trip_leaders <= 0:
         return calc
     summary = request_summary(payload)
+    rates = quote_rates_for_year(rate_year_from_payload(payload, calc))
     days = infer_staff_meal_days(payload)
     quantity = trip_leaders * days
     additional: list[dict[str, Any]] = []
     if requests_breakfast(payload, summary):
-        additional.append(add_meal_line(items, "trip_leader_breakfast", "Trip Leader Breakfast", 55000, quantity, "restaurant.breakfast.operatorNetRateCop", "Trip leaders are billed as client-side participants for meals."))
+        additional.append(add_meal_line(items, "trip_leader_breakfast", "Trip Leader Breakfast", rates["breakfast"], quantity, "restaurant.breakfast.operatorNetRateCop", "Trip leaders are billed as client-side participants for meals."))
     if requests_lunch(payload, summary):
-        additional.append(add_meal_line(items, "trip_leader_lunch", "Trip Leader Lunch", 65000, quantity, "restaurant.lunch.operatorNetRateCop", "Trip leaders are billed as client-side participants for meals."))
+        additional.append(add_meal_line(items, "trip_leader_lunch", "Trip Leader Lunch", rates["lunch"], quantity, "restaurant.lunch.operatorNetRateCop", "Trip leaders are billed as client-side participants for meals."))
     if requests_dinner(payload, summary):
-        additional.append(add_meal_line(items, "trip_leader_dinner", "Trip Leader Dinner", 65000, quantity, "restaurant.dinner.operatorNetRateCop", "Trip leaders are billed as client-side participants for meals."))
+        additional.append(add_meal_line(items, "trip_leader_dinner", "Trip Leader Dinner", rates["dinner"], quantity, "restaurant.dinner.operatorNetRateCop", "Trip leaders are billed as client-side participants for meals."))
     if not additional:
         return calc
 

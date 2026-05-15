@@ -1,0 +1,64 @@
+version: owlswatch-2027-operators
+currency: COP
+source: Owls_Watch_Operator_Rates.pdf
+notes:
+  - Operations remains the pricing authority for production calculations.
+  - Historical quotes are examples only and are not current pricing authority.
+  - Bird tour operator net applies only when booked independently without accommodation.
+lodging:
+  cabin:
+    rack_rate_cop_per_night: 880000
+    operator_net_rate_cop_per_night: 792000
+    available: 2
+    included_guests: 2
+    includes_breakfast: true
+  forest_cabin:
+    rack_rate_cop_per_night: 880000
+    operator_net_rate_cop_per_night: 792000
+    included_guests: 2
+    includes_breakfast: true
+  salon_cabin:
+    rack_rate_cop_per_night: 880000
+    operator_net_rate_cop_per_night: 792000
+    included_guests: 2
+    includes_breakfast: true
+  extra_person:
+    rate_cop_per_person_per_night: 120000
+    children_under_two_free: true
+  guide_room:
+    operator_net_rate_cop_per_person_per_night: 350000
+    includes_breakfast: true
+    complimentary_policy: One guide room may be offered at no charge when an operator books both cabins for at least two consecutive nights, subject to availability.
+birding:
+  photography_and_bird_tour:
+    rack_rate_cop_per_person: 160000
+    operator_net_rate_cop_per_person: 144000
+    label: Bird Tour
+    time: 6:30 a.m. - 12:00 p.m.
+    includes:
+      - local Spanish-speaking guide
+      - coffee
+      - snacks
+  afternoon_extension:
+    rack_rate_cop_per_person: 110000
+    operator_net_rate_cop_per_person: 110000
+    time: 2:00 p.m. - 5:00 p.m.
+  bilingual_guide:
+    approximate_half_day_cop: 220000
+    approximate_full_day_cop: 320000
+    advance_notice_days: 7
+    requires_confirmation: true
+restaurant:
+  breakfast_cop: 60000
+  lunch_cop: 70000
+  dinner_cop: 70000
+guide_driver_meals:
+  breakfast_cop: 0
+  lunch_cop: 35000
+  dinner_cop: 35000
+transport:
+  internal_4x4_included: false
+  notes: Requires separate coordination and cost when needed.
+operator_discount_display:
+  cabin_discount_percent: 10
+  tour_only_discount_percent: 10

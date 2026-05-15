@@ -37,6 +37,22 @@ def test_day_trip_meal_plan_includes_client_breakfast_and_no_lodging():
     assert normalized["birding"]["morningTourDays"] == 1
 
 
+def test_rate_year_uses_quote_dates():
+    normalized = server.normalize_calculate_payload(
+        {
+            "quoteType": "operator",
+            "agencyName": "Colombia 57",
+            "arrivalDate": "2027-01-10",
+            "departureDate": "2027-01-12",
+            "guestCount": 2,
+            "lodging": {"requested": True, "cabinCount": 1},
+            "requestSummary": "Operator quote for Jan 10-12, 2027.",
+        }
+    )
+
+    assert normalized["year"] == 2027
+
+
 def test_cabin_full_board_excludes_checkout_lunch_by_default():
     normalized = server.normalize_calculate_payload(
         {
@@ -134,6 +150,64 @@ def test_day_trip_display_total_includes_staff_meals_and_operator_tour_discount(
     descriptions = [item["description"] for item in displayed["lineItems"]]
     assert "Guide/Driver Breakfast" in descriptions
     assert "Guide/Driver Lunch" in descriptions
+
+
+def test_2027_day_trip_display_uses_2027_operator_rates_and_staff_meals():
+    payload = {
+        **juan_manuel_payload(),
+        "arrivalDate": "2027-02-05",
+        "departureDate": "2027-02-05",
+        "year": 2027,
+        "requestSummary": (
+            "February 05/2027. 5 clients. operator Juan Manuel. "
+            "1 Guide. Breakfast and lunch please. Birding tour day trip."
+        ),
+    }
+    calc = {
+        "currency": "COP",
+        "pricebookVersion": "Owl's Watch 2027 Operator Rates",
+        "lineItems": [
+            {
+                "serviceCode": "breakfast",
+                "description": "Breakfast",
+                "category": "restaurant",
+                "unitPriceCop": 60000,
+                "quantity": 5,
+                "totalCop": 300000,
+            },
+            {
+                "serviceCode": "lunch",
+                "description": "Lunch",
+                "category": "restaurant",
+                "unitPriceCop": 70000,
+                "quantity": 5,
+                "totalCop": 350000,
+            },
+            {
+                "serviceCode": "bird_tour",
+                "description": "Bird Tour",
+                "category": "activity",
+                "sourceRule": "bird_tour.operatorNetRateCop",
+                "unitPriceCop": 144000,
+                "quantity": 5,
+                "totalCop": 720000,
+            },
+        ],
+        "subtotalCop": 1370000,
+        "discountCop": 0,
+        "totalCop": 1370000,
+        "assumptions": [],
+    }
+
+    displayed = server.apply_quote_display_policies(payload, calc)
+
+    assert displayed["subtotalCop"] == 1485000
+    assert displayed["discountCop"] == 80000
+    assert displayed["totalCop"] == 1405000
+    bird_tour = next(item for item in displayed["lineItems"] if item["serviceCode"] == "bird_tour")
+    guide_lunch = next(item for item in displayed["lineItems"] if item["serviceCode"] == "guide_driver_lunch")
+    assert bird_tour["unitPriceCop"] == 160000
+    assert guide_lunch["unitPriceCop"] == 35000
 
 
 def test_incomplete_draft_blocks_before_operations_row():
@@ -370,15 +444,15 @@ def test_sheet_values_group_cabin_quote_by_day_without_checkout_lunch():
     day_rows = [row[0] for row in quote_rows if server.is_day_header_row(row)]
 
     assert day_rows == ["Dec 28 2026", "Dec 29 2026", "Dec 30 2026", "Dec 31 2026"]
-    dec29_index = next(i for i, row in enumerate(quote_rows) if row[0] == "Dec 29 2026")
+    dec29_index = next(i for i, row in enumerate(quote_rows) if row and row[0] == "Dec 29 2026")
     assert quote_rows[dec29_index + 1][0] == "Client Breakfast"
     assert quote_rows[dec29_index + 1][2] == 0
     assert quote_rows[dec29_index + 1][4] == 0
     assert quote_rows[dec29_index + 2][0] == "Client Lunch"
     assert quote_rows[dec29_index + 2][3] == 2
-    dec31_index = next(i for i, row in enumerate(quote_rows) if row[0] == "Dec 31 2026")
+    dec31_index = next(i for i, row in enumerate(quote_rows) if row and row[0] == "Dec 31 2026")
     assert quote_rows[dec31_index + 1][0] == "Client Breakfast"
-    assert all(row[0] != "Client Lunch" for row in quote_rows[dec31_index + 1:dec31_index + 3])
+    assert all(not row or row[0] != "Client Lunch" for row in quote_rows[dec31_index + 1:dec31_index + 3])
 
 
 def test_revise_mock_draft_removes_two_lunches_and_creates_new_revision():

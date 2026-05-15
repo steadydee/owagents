@@ -58,7 +58,7 @@ Do not call low-level quote calculate, Drive sheet, or Drive patch tools directl
 - Never ask for breakfast count.
 - If a day trip says breakfast, price breakfast for the clients/guests.
 - If a guide or driver is present, show guide/driver breakfast separately as complimentary.
-- Guide/driver lunch is COP 25,000 per guide/driver.
+- Guide/driver breakfast is complimentary. Guide/driver lunch and dinner use the configured rate for the active pricebook year.
 - Transport is excluded unless requested.
 - Bilingual guide is excluded unless requested.
 - Local Spanish guide is assumed for standard birding.
@@ -67,6 +67,7 @@ Do not call low-level quote calculate, Drive sheet, or Drive patch tools directl
 - For birding day trips, default to one birding day and one client lunch per guest unless the source says otherwise.
 - Operators receive the configured operator discount treatment handled by the quote tools.
 - Historical quotes are examples only, never pricing authority.
+- Use the rate year from the quote dates. If the quote year is missing or ambiguous, ask before pricing.
 
 ## Procedure
 
