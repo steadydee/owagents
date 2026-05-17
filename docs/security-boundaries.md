@@ -1,12 +1,30 @@
 # Security Boundaries
 
-## Shared Rules
+Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegram remain the systems of record or transport.
 
-- Agents never receive raw API tokens as tool parameters.
-- Tools read tokens from runtime environment/config only.
-- Broad shell, browser, filesystem, web, gateway, cron, and automation access should remain denied.
-- Side effects go through narrow `owlswatch_*` tools.
-- Operations is the source of truth.
+## Agent Authority
+
+- `main`: conductor only. No business side-effect tools.
+- `cuenta`: creates expense drafts only.
+- `cotiza`: creates quote drafts and Drive quote sheets only.
+- `correo`: creates Email Desk tasks and Gmail drafts only. It does not send final emails.
+
+## Main
+
+Allowed:
+
+- Explain the Owl's Watch agent setup.
+- Route people to the right Telegram topic or specialist.
+- Answer lightweight operational questions about which agent handles what.
+
+Forbidden:
+
+- Create, approve, modify, reject, or delete expenses.
+- Create quote drafts, revise quote sheets, or change pricing.
+- Create, update, or send email drafts.
+- Access Operations, Luna, Gmail, Drive, or Telegram side-effect tools.
+- Use shell, browser, filesystem, gateway, cron, node, or web tools.
+- Claim to have changed agent code/config/routing. System changes belong in this repo and are deployed by Codex.
 
 ## Cuenta
 
@@ -61,3 +79,31 @@ Forbidden:
 - Invent prices, policies, access details, payment details, or booking rules.
 - Use Luna broad prompt snapshots or direct database reads.
 - Manage marketing campaigns or outreach sequences.
+
+## Tool Policy
+
+Each agent uses `tools.profile: "minimal"` plus explicit `alsoAllow` entries for narrow `owlswatch_*` tools.
+
+Broad tools stay denied by default:
+
+- `exec`
+- `browser`
+- `gateway`
+- `cron`
+- `nodes`
+- `canvas`
+- `group:fs`
+- `group:web`
+- `bundle-mcp`
+
+Any change that broadens tools must include:
+
+- the reason
+- the exact agent
+- the exact tool names
+- a smoke test
+- a review of whether a narrower `owlswatch_*` tool would be safer
+
+## Secrets
+
+Never commit tokens, service-account JSON, auth profiles, runtime sessions, memory logs, receipt spools, raw Gmail content, or generated quote sheets.

@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+MAIN_WORKSPACE="${MAIN_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-main}"
 CUENTA_WORKSPACE="${CUENTA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch}"
 COTIZA_WORKSPACE="${COTIZA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-cotiza}"
 CORREO_WORKSPACE="${CORREO_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-correo}"
@@ -23,6 +24,13 @@ backup_path() {
 }
 
 echo "Backing up current live agent source to $BACKUP_DIR"
+backup_path "$MAIN_WORKSPACE/AGENTS.md" main
+backup_path "$MAIN_WORKSPACE/IDENTITY.md" main
+backup_path "$MAIN_WORKSPACE/SOUL.md" main
+backup_path "$MAIN_WORKSPACE/README.md" main
+backup_path "$MAIN_WORKSPACE/TOOLS.md" main
+backup_path "$MAIN_WORKSPACE/HEARTBEAT.md" main
+
 backup_path "$CUENTA_WORKSPACE/AGENTS.md" cuenta
 backup_path "$CUENTA_WORKSPACE/IDENTITY.md" cuenta
 backup_path "$CUENTA_WORKSPACE/SOUL.md" cuenta
@@ -47,6 +55,16 @@ backup_path "$CORREO_WORKSPACE/README.md" correo
 backup_path "$CORREO_WORKSPACE/TOOLS.md" correo
 backup_path "$CORREO_WORKSPACE/skills/email-draft" correo-skills
 backup_path "$CORREO_WORKSPACE/tools/owlswatch_email" correo-tools
+
+echo "Deploying main conductor source"
+mkdir -p "$MAIN_WORKSPACE"
+rsync -a "$ROOT/openclaw/agents/main/AGENTS.md" "$ROOT/openclaw/agents/main/IDENTITY.md" "$ROOT/openclaw/agents/main/SOUL.md" "$ROOT/openclaw/agents/main/README.md" "$ROOT/openclaw/agents/main/TOOLS.md" "$ROOT/openclaw/agents/main/HEARTBEAT.md" "$MAIN_WORKSPACE/"
+if [ ! -f "$MAIN_WORKSPACE/USER.md" ]; then
+  cp "$ROOT/openclaw/agents/main/USER.example.md" "$MAIN_WORKSPACE/USER.md"
+fi
+if [ ! -f "$MAIN_WORKSPACE/MEMORY.md" ]; then
+  cp "$ROOT/openclaw/agents/main/MEMORY.template.md" "$MAIN_WORKSPACE/MEMORY.md"
+fi
 
 echo "Deploying Cuenta source"
 mkdir -p "$CUENTA_WORKSPACE/skills/intake-receipt" "$CUENTA_WORKSPACE/tools/owlswatch_intake"
@@ -83,6 +101,8 @@ python3 -m py_compile "$CUENTA_WORKSPACE/tools/owlswatch_intake/server.py"
 python3 -m py_compile "$COTIZA_WORKSPACE/tools/owlswatch_quotes/server.py"
 python3 -m py_compile "$CORREO_WORKSPACE/tools/owlswatch_email/server.py"
 openclaw --profile "$PROFILE" config validate
+openclaw --profile "$PROFILE" skills check --agent main
+openclaw --profile "$PROFILE" skills check --agent cuenta
 openclaw --profile "$PROFILE" skills check --agent cotiza
 openclaw --profile "$PROFILE" skills check --agent correo
 

@@ -1,7 +1,8 @@
 {
   "agents": {
     "defaults": {
-      "workspace": "~/.openclaw/workspace-owlswatch",
+      "workspace": "~/.openclaw/workspace-owlswatch-main",
+      "skills": [],
       "models": {
         "openai/gpt-5.5": {
           "agentRuntime": {
@@ -16,6 +17,35 @@
     "list": [
       {
         "id": "main",
+        "name": "Owl's Watch Ops",
+        "default": true,
+        "model": "openai/gpt-5.5",
+        "models": {
+          "openai/gpt-5.5": {
+            "agentRuntime": {
+              "id": "codex"
+            }
+          }
+        },
+        "workspace": "~/.openclaw/workspace-owlswatch-main",
+        "skills": [],
+        "tools": {
+          "profile": "minimal",
+          "deny": [
+            "exec",
+            "browser",
+            "gateway",
+            "cron",
+            "nodes",
+            "canvas",
+            "group:fs",
+            "group:web",
+            "bundle-mcp"
+          ]
+        }
+      },
+      {
+        "id": "cuenta",
         "name": "Cuenta",
         "model": "openai/gpt-5.5",
         "models": {
@@ -26,6 +56,7 @@
           }
         },
         "workspace": "~/.openclaw/workspace-owlswatch",
+        "agentDir": "~/.openclaw-owlswatch/agents/cuenta/agent",
         "skills": ["intake-receipt"],
         "tools": {
           "profile": "minimal",
@@ -163,6 +194,12 @@
               "ingest": true
             },
             "<receipts_topic_id>": {
+              "agentId": "cuenta",
+              "requireMention": false,
+              "groupPolicy": "open",
+              "ingest": true
+            },
+            "1": {
               "agentId": "main",
               "requireMention": false,
               "groupPolicy": "open",
