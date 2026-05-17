@@ -10,6 +10,7 @@
       "owlswatch_email_search_recent_threads",
       "owlswatch_email_search_unanswered_threads",
       "owlswatch_email_read_thread",
+      "owlswatch_email_resolve_gmail_url",
       "owlswatch_luna_get_email_response_context",
       "owlswatch_email_submit_operations_intake",
       "owlswatch_email_submit_scan_run",

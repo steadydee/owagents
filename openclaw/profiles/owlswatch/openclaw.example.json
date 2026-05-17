@@ -2,14 +2,29 @@
   "agents": {
     "defaults": {
       "workspace": "~/.openclaw/workspace-owlswatch",
+      "models": {
+        "openai/gpt-5.5": {
+          "agentRuntime": {
+            "id": "codex"
+          }
+        }
+      },
       "model": {
-        "primary": "openai-codex/gpt-5.5"
+        "primary": "openai/gpt-5.5"
       }
     },
     "list": [
       {
         "id": "main",
         "name": "Cuenta",
+        "model": "openai/gpt-5.5",
+        "models": {
+          "openai/gpt-5.5": {
+            "agentRuntime": {
+              "id": "codex"
+            }
+          }
+        },
         "workspace": "~/.openclaw/workspace-owlswatch",
         "skills": ["intake-receipt"],
         "tools": {
@@ -42,6 +57,14 @@
       {
         "id": "cotiza",
         "name": "Cotiza",
+        "model": "openai/gpt-5.5",
+        "models": {
+          "openai/gpt-5.5": {
+            "agentRuntime": {
+              "id": "codex"
+            }
+          }
+        },
         "workspace": "~/.openclaw/workspace-owlswatch-cotiza",
         "skills": ["quote-draft"],
         "tools": {
@@ -71,6 +94,14 @@
       {
         "id": "correo",
         "name": "Correo",
+        "model": "openai/gpt-5.5",
+        "models": {
+          "openai/gpt-5.5": {
+            "agentRuntime": {
+              "id": "codex"
+            }
+          }
+        },
         "workspace": "~/.openclaw/workspace-owlswatch-correo",
         "skills": ["email-draft"],
         "tools": {
@@ -195,6 +226,12 @@
   },
   "plugins": {
     "entries": {
+      "openai": {
+        "enabled": true
+      },
+      "codex": {
+        "enabled": true
+      },
       "owlswatch-intake": {
         "enabled": true
       },
@@ -211,6 +248,11 @@
         "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes",
         "~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email"
       ]
+    }
+  },
+  "messages": {
+    "groupChat": {
+      "visibleReplies": "message_tool"
     }
   }
 }
