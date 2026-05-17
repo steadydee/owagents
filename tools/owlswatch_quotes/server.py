@@ -31,7 +31,7 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2027-cabin-first-daily-layout-v1"
+QUOTE_RULE_VERSION = "2027-cabin-first-daily-layout-v2"
 QUOTE_RATES = {
     2026: {
         "pricebook_version": "2026-operators",
@@ -2803,8 +2803,15 @@ def line_text(item: dict[str, Any]) -> str:
     ).lower()
 
 
+def item_identity_text(item: dict[str, Any]) -> str:
+    return " ".join(
+        str(item.get(key) or "")
+        for key in ("serviceCode", "description", "name", "category")
+    ).lower()
+
+
 def is_guide_room_item(item: dict[str, Any]) -> bool:
-    text = line_text(item)
+    text = item_identity_text(item)
     return (
         "guide_room" in text
         or "guide room" in text
@@ -2813,7 +2820,7 @@ def is_guide_room_item(item: dict[str, Any]) -> bool:
 
 
 def is_cabin_item(item: dict[str, Any]) -> bool:
-    text = line_text(item)
+    text = item_identity_text(item)
     return (
         "cabin" in text
         or "caba" in text
