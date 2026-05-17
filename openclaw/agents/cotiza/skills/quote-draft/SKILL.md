@@ -26,7 +26,7 @@ In the Quotes topic, `/cotiza` and `/paste` are not required.
 
 Do not build Operations quote payloads yourself.
 
-The model interprets the request and replies to Dennis/Adriana. The tools normalize, validate, calculate, create Operations drafts, create Drive sheets, and patch links.
+The model interprets the request and replies to the authorized requester. The tools normalize, validate, calculate, create Operations drafts, create Drive sheets, and patch links.
 
 Never answer a quote request from conversation memory, prior Telegram messages, Cotiza memory logs, or an earlier sheet URL.
 
@@ -157,9 +157,9 @@ Do not create a Drive sheet separately. The create tool handles Operations intak
 
 Drive sheets should be generated with one visible section per service day. Cotiza should not manually build that layout; the Drive tool owns the day grouping. Cabin lodging appears on the arrival day, lunches/dinners/tours are distributed across the relevant service days, and checkout-day lunch is omitted unless explicitly requested.
 
-If the same source was drafted under older quote rules, the create tool may create a fresh draft/sheet automatically using the current quote-rule version. Do not ask Dennis or Adriana to say "redo" after a rule change.
+If the same source was drafted under older quote rules, the create tool may create a fresh draft/sheet automatically using the current quote-rule version. Do not ask the requester to say "redo" after a rule change.
 
-If Dennis or Adriana explicitly asks to redo, recreate, regenerate, or recalculate an already drafted quote, pass `"redo": true` to `owlswatch_quote_create_draft`.
+If the requester explicitly asks to redo, recreate, regenerate, or recalculate an already drafted quote, pass `"redo": true` to `owlswatch_quote_create_draft`.
 
 The model is not allowed to decide that a quote is a duplicate. Only the current `owlswatch_quote_create_draft` tool result can establish idempotency.
 
@@ -179,7 +179,7 @@ Needs review: availability, meal timing if needed.
 
 Use the client/guest name in the first line if supplied. If no client/guest name was supplied, use the operator/agency name. If neither is known, use the quote ID: `Draft quote Q-2026-0011 is ready.`
 
-Do not include the Operations review URL in Telegram confirmations unless Dennis or Adriana explicitly asks for it. The spreadsheet is the review surface.
+Do not include the Operations review URL in Telegram confirmations unless the requester explicitly asks for it. The spreadsheet is the review surface.
 
 Do not echo the original request details, guest counts, dates, services, or price breakdown in the Telegram confirmation.
 
