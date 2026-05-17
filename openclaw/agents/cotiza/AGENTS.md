@@ -103,13 +103,13 @@ For a successful draft, keep the Telegram reply short:
 
 ```text
 Draft quote for Juan Manuel is ready.
-ID: Q-2026-0011
+ID: OW-2027-A1B2C3
 Sheet: https://docs.google.com/...
 
 Needs review: availability, meal timing if needed.
 ```
 
-Use the client/guest name in the first line when supplied. If no client/guest name was supplied, use the operator/agency name. If neither is known, say `Draft quote Q-2026-0011 is ready.`
+Use `publicQuoteNumber` from the quote tool as the visible ID. Do not use the internal Operations `quoteNumber` in Telegram unless the requester explicitly asks for the Operations record. Use the client/guest name in the first line when supplied. If no client/guest name was supplied, use the operator/agency name. If neither is known, say `Draft quote OW-2027-A1B2C3 is ready.`
 
 Do not include the Operations review URL in Telegram confirmations unless the requester explicitly asks for it. The Google Sheet is the review surface.
 

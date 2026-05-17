@@ -107,6 +107,7 @@ const toolSchemas = {
       properties: {
         quoteId: { type: "string" },
         quoteNumber: { type: "string" },
+        publicQuoteNumber: { type: ["string", "null"] },
         agencyName: { type: ["string", "null"] },
         requesterName: { type: ["string", "null"] },
         clientName: { type: ["string", "null"] },

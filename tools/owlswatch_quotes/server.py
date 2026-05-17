@@ -1753,6 +1753,7 @@ def create_drive_for_draft(row: dict[str, Any], payload: dict[str, Any]) -> tupl
     drive_args = {
         "quoteId": quote_id,
         "quoteNumber": quote_number,
+        "publicQuoteNumber": public_quote_number({**payload, "quoteId": quote_id, "quoteNumber": quote_number}),
         "agencyName": payload.get("agencyName"),
         "requesterName": payload.get("requesterName"),
         "clientName": payload.get("clientName"),
@@ -2615,6 +2616,7 @@ def tool_quote_create_draft(args: dict[str, Any]) -> dict[str, Any]:
     total = money_value((payload.get("calculation") or {}).get("totalCop"))
     result = {
         **row,
+        "publicQuoteNumber": public_quote_number({**payload, **row}),
         "totalCop": total,
         "redo": bool_value((payload.get("agentMetadata") or {}).get("redo")) if isinstance(payload.get("agentMetadata"), dict) else False,
         "assumptions": list_value(payload.get("assumptions")),
@@ -2674,6 +2676,7 @@ def tool_quote_revise_draft(args: dict[str, Any]) -> dict[str, Any]:
     total = money_value((payload.get("calculation") or {}).get("totalCop"))
     result = {
         **row,
+        "publicQuoteNumber": public_quote_number({**payload, **row}),
         "revisionOfQuoteId": string_value(quote.get("id") or quote.get("quoteId")),
         "revisionOfQuoteNumber": string_value(quote.get("quoteNumber")),
         "revisionInstruction": instruction,
@@ -2733,12 +2736,26 @@ def formatted_date_range(arrival: Any, departure: Any) -> str:
     return " - ".join(str(value or "") for value in (arrival, departure)).strip()
 
 
+def public_quote_number(data: dict[str, Any]) -> str:
+    explicit = string_value(data.get("publicQuoteNumber") or data.get("public_quote_number"))
+    if explicit:
+        return explicit
+    year = year_from_iso_date(data.get("arrivalDate")) or rate_year_from_payload(data)
+    seed = (
+        string_value(data.get("quoteId") or data.get("quote_id") or data.get("id"))
+        or string_value(data.get("quoteNumber") or data.get("quote_number"))
+        or json_dumps(data)
+    )
+    digest = hashlib.sha256(seed.encode()).hexdigest()[:6].upper()
+    return f"OW-{year}-{digest}"
+
+
 def quote_file_name(data: dict[str, Any]) -> str:
     agency = safe_sheet_name(data.get("agencyName") or "Operator")
     client_name = string_value(data.get("clientName"))
     client = safe_sheet_name(client_name) if client_name else ""
     dates = safe_sheet_name(formatted_date_range(data.get("arrivalDate"), data.get("departureDate")) or "Dates")
-    quote_id = safe_sheet_name(validate_text("quoteNumber", data.get("quoteNumber"), required=True, max_len=80) or "ID")
+    quote_id = safe_sheet_name(public_quote_number(data))
     return " - ".join(part for part in [agency, client, dates, quote_id] if part)
 
 
@@ -3337,7 +3354,7 @@ def sheet_values(data: dict[str, Any], logo_url: str | None = None) -> dict[str,
         ["OWL'S WATCH", "", "", "", image_formula(logo_url)],
         ["NATURE RETREAT"],
         [],
-        ["ID", data.get("quoteNumber") or ""],
+        ["ID", public_quote_number(data)],
         ["Date", date_label],
         ["Client", client],
         ["Operator", operator],
@@ -3901,6 +3918,7 @@ def tool_drive_create_quote_sheet(args: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "quoteId",
         "quoteNumber",
+        "publicQuoteNumber",
         "agencyName",
         "requesterName",
         "clientName",
@@ -3918,6 +3936,7 @@ def tool_drive_create_quote_sheet(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     quote_id = validate_safe_id("quoteId", args.get("quoteId"))
     validate_safe_id("quoteNumber", args.get("quoteNumber"))
+    validate_safe_id("publicQuoteNumber", public_quote_number(args))
     validate_object("calculation", args.get("calculation"))
     validate_sheet_ready(args)
     title = quote_file_name(args)

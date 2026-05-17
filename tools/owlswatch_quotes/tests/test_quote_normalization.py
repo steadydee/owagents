@@ -248,6 +248,7 @@ def test_incomplete_draft_blocks_before_operations_row():
 
 
 def test_quote_file_name_skips_missing_client():
+    public_id = server.public_quote_number({"arrivalDate": "2026-02-05", "quoteNumber": "Q-2026-0011"})
     assert (
         server.quote_file_name(
             {
@@ -258,7 +259,7 @@ def test_quote_file_name_skips_missing_client():
                 "departureDate": "2026-02-05",
             }
         )
-        == "Juan Manuel - Feb 5 2026 - Q-2026-0011"
+        == f"Juan Manuel - Feb 5 2026 - {public_id}"
     )
 
 
