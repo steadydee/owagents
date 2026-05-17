@@ -445,11 +445,14 @@ def test_sheet_values_group_cabin_quote_by_day_without_checkout_lunch():
 
     assert day_rows == ["Dec 28 2026", "Dec 29 2026", "Dec 30 2026", "Dec 31 2026"]
     dec29_index = next(i for i, row in enumerate(quote_rows) if row and row[0] == "Dec 29 2026")
-    assert quote_rows[dec29_index + 1][0] == "Client Breakfast"
-    assert quote_rows[dec29_index + 1][2] == 0
-    assert quote_rows[dec29_index + 1][4] == 0
-    assert quote_rows[dec29_index + 2][0] == "Client Lunch"
-    assert quote_rows[dec29_index + 2][3] == 2
+    dec29_rows = quote_rows[dec29_index + 1 : next(i for i, row in enumerate(quote_rows) if i > dec29_index and row and row[0] == "Dec 30 2026")]
+    breakfast = next(row for row in dec29_rows if row[0] == "Client Breakfast")
+    lunch = next(row for row in dec29_rows if row[0] == "Client Lunch")
+    cabin = next(row for row in dec29_rows if row[0] == "Forest Cabin")
+    assert breakfast[2] == 0
+    assert breakfast[4] == 0
+    assert lunch[3] == 2
+    assert cabin[3] == 1
     dec31_index = next(i for i, row in enumerate(quote_rows) if row and row[0] == "Dec 31 2026")
     assert quote_rows[dec31_index + 1][0] == "Client Breakfast"
     assert all(not row or row[0] != "Client Lunch" for row in quote_rows[dec31_index + 1:dec31_index + 3])
@@ -530,17 +533,23 @@ def test_sheet_values_show_lodging_breakfasts_and_no_unrequested_guide_lunch_or_
     feb5 = day_descriptions("Feb 5 2027")
     feb6 = day_descriptions("Feb 6 2027")
 
+    assert feb4.count("Forest Cabin") == 1
+    assert feb4.count("Guide room") == 1
     assert "Client Breakfast" not in feb4
     assert "Guide Breakfast" not in feb4
     assert "Guide Lunch (Discounted)" not in feb4
     assert all("Driver" not in item for item in feb4 + feb5 + feb6)
 
+    assert feb5.count("Forest Cabin") == 1
+    assert feb5.count("Guide room") == 1
     assert "Client Breakfast" in feb5
     assert "Guide Breakfast" in feb5
     assert "Client Dinner" in feb5
     assert "Guide Dinner" in feb5
     assert "Guide Lunch (Discounted)" not in feb5
 
+    assert "Forest Cabin" not in feb6
+    assert "Guide room" not in feb6
     assert "Client Breakfast" in feb6
     assert "Guide Breakfast" in feb6
     assert "Client Dinner" not in feb6

@@ -159,7 +159,7 @@ If `owlswatch_quote_prepare` returns `status: "ready_preview"` and the user is a
 
 Do not create a Drive sheet separately. The create tool handles Operations intake, Drive creation, and Drive-link patching.
 
-Drive sheets should be generated with one visible section per service day. Cotiza should not manually build that layout; the Drive tool owns the day grouping. Cabin lodging appears on the arrival day, lunches/dinners/tours are distributed across the relevant service days, and checkout-day lunch is omitted unless explicitly requested.
+Drive sheets should be generated with one visible section per service day. Cotiza should not manually build that layout; the Drive tool owns the day grouping. Cabin and guide-room lodging appears once per overnight date, not as a multi-night total on arrival day. Lunches/dinners/tours are distributed across the relevant service days, and checkout-day lunch is omitted unless explicitly requested.
 
 If the same source was drafted under older quote rules, the create tool may create a fresh draft/sheet automatically using the current quote-rule version. Do not ask the requester to say "redo" after a rule change.
 

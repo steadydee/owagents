@@ -31,7 +31,7 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2027-lodging-meal-defaults-v1"
+QUOTE_RULE_VERSION = "2027-nightly-lodging-layout-v1"
 QUOTE_RATES = {
     2026: {
         "pricebook_version": "2026-operators",
@@ -2803,9 +2803,26 @@ def line_text(item: dict[str, Any]) -> str:
     ).lower()
 
 
+def is_guide_room_item(item: dict[str, Any]) -> bool:
+    text = line_text(item)
+    return (
+        "guide_room" in text
+        or "guide room" in text
+        or ("habitaci" in text and "gu" in text)
+    )
+
+
 def is_cabin_item(item: dict[str, Any]) -> bool:
     text = line_text(item)
-    return "cabin" in text or "caba" in text or item.get("category") == "lodging"
+    return (
+        "cabin" in text
+        or "caba" in text
+        or (item.get("category") == "lodging" and not is_guide_room_item(item))
+    )
+
+
+def is_overnight_lodging_item(item: dict[str, Any]) -> bool:
+    return is_cabin_item(item) or is_guide_room_item(item)
 
 
 def is_tour_item(item: dict[str, Any]) -> bool:
@@ -3129,8 +3146,9 @@ def day_indexes_for_item(data: dict[str, Any], dates: list[dt.date], item: dict[
     day_count = min(len(dates), inferred_item_day_count(data, item))
     meal_type = meal_item_type(item)
 
-    if is_cabin_item(item):
-        return [0]
+    if is_overnight_lodging_item(item):
+        overnight_count = nights or day_count
+        return list(range(0, min(max(1, overnight_count), max(1, len(dates) - 1))))
     if day_trip:
         return [0]
     if meal_type == "dinner":
