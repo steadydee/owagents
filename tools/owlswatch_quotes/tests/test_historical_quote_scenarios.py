@@ -118,6 +118,31 @@ def test_operator_cabin_with_two_cabins_guide_room_meals_and_birding():
     assert "Guide Lunch" in descriptions(result)
 
 
+def test_operator_reservation_form_without_operator_name_can_draft():
+    result = prepare(
+        "HOTEL Owl Watch\n"
+        "ESTADO Reservacion\n"
+        "REFERENCIA - Turrian\n"
+        "2 PAX  + Guia\n"
+        "FECHA IN - 04 febrero 2027\n"
+        "FECHA OUT - 06 febrero 2027 (2 noches)\n"
+        "SERVICIO - 1 habitacion matrimonial para pasajero + "
+        "1 habitacion single para Guia + desayunos + cenas"
+    )
+
+    assert_ready(result)
+    canonical = result["canonicalPayload"]
+    assert canonical["audience"] == "operator"
+    assert result["preparedQuote"]["intent"]["clientName"] == "Turrian"
+    assert canonical["arrivalDate"] == "2027-02-04"
+    assert canonical["departureDate"] == "2027-02-06"
+    assert canonical["lodging"]["guideRoomCount"] == 1
+    assert "Guide room" in descriptions(result)
+    assert "Guide Lunch" not in descriptions(result)
+    assert "Driver" not in " ".join(descriptions(result))
+    assert "operator name" in result["missingOptional"]
+
+
 def test_bilingual_no_cabin_quote_does_not_turn_into_lodging():
     result = prepare(
         "Operator The Colombian Project. Client Kaye Westmark. July 3-6 2026. "

@@ -1015,11 +1015,20 @@ def normalize_calculate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         lodging_cabins = coerce_int(lodging_payload.get("cabins"), None)
         lodging_nights = coerce_int(lodging_payload.get("nights"), None)
         lodging_requested = not (day_trip or lodging_cabins == 0 or lodging_nights == 0)
+    guide_room_count = coerce_int(lodging_payload.get("guideRoomCount"), None)
+    if guide_room_count is None:
+        guide_room_count = coerce_int(lodging_payload.get("guide_room_count"), None)
+    if guide_room_count is None:
+        guide_room_count = coerce_int(first_value(payload, "guideRoomCount", "guide_room_count"), None)
+    if guide_room_count is None and lodging_requested and requests_guide_room(payload, summary):
+        guide_room_count = 1
     normalized["lodging"] = {
         "requested": lodging_requested,
         "cabinCount": 0 if not lodging_requested else cabin_count,
         "cabinPreference": string_value(lodging_payload.get("cabinPreference") or lodging_payload.get("cabin_preference")) or "forest",
     }
+    if guide_room_count:
+        normalized["lodging"]["guideRoomCount"] = max(0, guide_room_count)
 
     lunches = nested_meal_count(meals_payload, "lunch")
     if lunches is None:
@@ -1402,6 +1411,8 @@ def raw_text_quote_intent(raw_text: str) -> dict[str, Any]:
         intent["departureDate"] = departure
 
     audience = infer_audience({}, raw_text)
+    if not audience and re.search(r"\bestado\s+reservaci[oó]n\b|\breferencia\b.{0,80}\bservicio\b|\bhotel\s+owl", raw_text, re.I):
+        audience = "operator"
     if audience:
         intent["audience"] = audience
 
@@ -1479,8 +1490,6 @@ def quote_prepare_missing(intent: dict[str, Any], normalized: dict[str, Any]) ->
     audience = infer_audience(intent, summary)
     if not audience:
         missing.append("operator/direct")
-    elif audience == "operator" and not string_value(first_value(intent, "agencyName", "agency_name", "operatorName", "operator_name")):
-        missing.append("operator")
     if not date_value(normalized.get("arrivalDate")):
         missing.append("dates/year")
     if infer_guest_count(intent, summary) is None:
@@ -1549,6 +1558,10 @@ def build_prepared_quote(args: dict[str, Any]) -> dict[str, Any]:
     calculation = tool_quote_calculate({"payload": intent})
     if not calculation.get("ok"):
         return {"ok": True, "status": "calculation_failed", "error": calculation.get("error")}
+    if infer_audience(intent, request_summary(intent)) == "operator" and not string_value(first_value(intent, "agencyName", "agency_name", "operatorName", "operator_name")):
+        missing_fields = list_value(calculation.get("missingFields"))
+        if "operator name" not in [str(item).lower() for item in missing_fields]:
+            calculation = {**calculation, "missingFields": [*missing_fields, "operator name"]}
     line_items = calculation.get("lineItems")
     if not isinstance(line_items, list) or not line_items:
         return {
@@ -2090,6 +2103,20 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
             "unitPriceCop": lodging_rate,
             "quantity": nights * cabin_count,
             "totalCop": lodging_rate * nights * cabin_count,
+        })
+    guide_room_count = coerce_int(lodging_payload.get("guideRoomCount"), None)
+    if guide_room_count is None:
+        guide_room_count = coerce_int(lodging_payload.get("guide_room_count"), 0) or 0
+    if lodging_requested and guide_room_count > 0:
+        line_items.append({
+            "serviceCode": "guide_room",
+            "description": "Guide room",
+            "notes": "Breakfast included.",
+            "category": "lodging",
+            "sourceRule": f"{year} guide room operator net",
+            "unitPriceCop": rates["guide_room"],
+            "quantity": nights * guide_room_count,
+            "totalCop": rates["guide_room"] * nights * guide_room_count,
         })
 
     if lodging_requested and guests > 2 * cabin_count:
@@ -3718,8 +3745,6 @@ def sheet_blocking_missing_details(data: dict[str, Any]) -> list[str]:
     def flagged(*terms: str) -> bool:
         return any(term in missing_text for term in terms)
 
-    if operator and not string_value(data.get("agencyName")):
-        missing.append("operator")
     if not date_value(data.get("arrivalDate")):
         missing.append("dates/year")
     if data.get("guestCount") is None:

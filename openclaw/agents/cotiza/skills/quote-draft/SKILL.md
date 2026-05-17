@@ -136,6 +136,8 @@ Use `user_overrides` only for obvious operator/direct/date corrections supplied 
 
 If `owlswatch_quote_prepare` returns `status: "needs_info"`, ask exactly the returned `question` and stop.
 
+Never replace the tool's specific question with a generic line like "I need more information before drafting this quote."
+
 Do not add extra questions.
 
 Do not ask for client name or breakfast count if the tool did not ask.
