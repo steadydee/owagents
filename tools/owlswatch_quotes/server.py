@@ -31,7 +31,7 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2027-clean-breakfast-notes-v1"
+QUOTE_RULE_VERSION = "2027-cabin-first-daily-layout-v1"
 QUOTE_RATES = {
     2026: {
         "pricebook_version": "2026-operators",
@@ -3247,6 +3247,21 @@ def display_notes(item: dict[str, Any]) -> str:
     return notes
 
 
+def day_display_sort_key(entry: tuple[int, dict[str, Any]]) -> tuple[int, int, int]:
+    original_index, item = entry
+    meal_type = meal_item_type(item)
+    if is_cabin_item(item):
+        return (0, 0, original_index)
+    if is_guide_room_item(item):
+        return (1, 0, original_index)
+    if meal_type:
+        meal_order = {"breakfast": 0, "lunch": 1, "dinner": 2}.get(meal_type, 9)
+        return (2, meal_order, original_index)
+    if is_tour_item(item):
+        return (3, 0, original_index)
+    return (4, 0, original_index)
+
+
 def daily_quote_line_rows(data: dict[str, Any], line_items: list[Any]) -> list[list[Any]]:
     items = [item for item in line_items if isinstance(item, dict)]
     dates = quote_date_sequence(data)
@@ -3270,7 +3285,7 @@ def daily_quote_line_rows(data: dict[str, Any], line_items: list[Any]) -> list[l
         if not day_items:
             continue
         rows.append([f"::day::{day_heading(date)}", "", "", "", ""])
-        rows.extend(quote_line_row(item) for item in day_items)
+        rows.extend(quote_line_row(item) for _, item in sorted(enumerate(day_items), key=day_display_sort_key))
     return rows
 
 

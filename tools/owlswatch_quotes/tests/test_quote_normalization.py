@@ -449,6 +449,7 @@ def test_sheet_values_group_cabin_quote_by_day_without_checkout_lunch():
     breakfast = next(row for row in dec29_rows if row[0] == "Client Breakfast")
     lunch = next(row for row in dec29_rows if row[0] == "Client Lunch")
     cabin = next(row for row in dec29_rows if row[0] == "Forest Cabin")
+    assert dec29_rows[0][0] == "Forest Cabin"
     assert breakfast[2] == 0
     assert breakfast[4] == 0
     assert lunch[3] == 2
@@ -535,6 +536,7 @@ def test_sheet_values_show_lodging_breakfasts_and_no_unrequested_guide_lunch_or_
 
     assert feb4.count("Forest Cabin") == 1
     assert feb4.count("Guide room") == 1
+    assert feb4[:2] == ["Forest Cabin", "Guide room"]
     assert "Client Breakfast" not in feb4
     assert "Guide Breakfast" not in feb4
     assert "Guide Lunch (Discounted)" not in feb4
@@ -542,6 +544,7 @@ def test_sheet_values_show_lodging_breakfasts_and_no_unrequested_guide_lunch_or_
 
     assert feb5.count("Forest Cabin") == 1
     assert feb5.count("Guide room") == 1
+    assert feb5[:2] == ["Forest Cabin", "Guide room"]
     assert "Client Breakfast" in feb5
     assert "Guide Breakfast" in feb5
     assert "Client Dinner" in feb5
