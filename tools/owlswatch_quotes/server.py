@@ -31,7 +31,7 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2027-nightly-lodging-layout-v1"
+QUOTE_RULE_VERSION = "2027-clean-breakfast-notes-v1"
 QUOTE_RATES = {
     2026: {
         "pricebook_version": "2026-operators",
@@ -3191,7 +3191,7 @@ def included_breakfast_item(data: dict[str, Any]) -> dict[str, Any]:
         "unitPriceCop": 0,
         "quantity": quantity,
         "sourceRule": "cabin.breakfast.included",
-        "notes": "Included with lodging.",
+        "notes": "",
         "totalCop": 0,
     }
 
@@ -3224,11 +3224,27 @@ def is_client_included_breakfast_item(item: dict[str, Any]) -> bool:
 def quote_line_row(item: dict[str, Any]) -> list[Any]:
     return [
         display_description(item.get("description") or item.get("name")),
-        item.get("notes") or "",
+        display_notes(item),
         present_value(item.get("unitPriceCop")),
         present_value(item.get("quantity")),
         present_value(item.get("totalCop") if item.get("totalCop") is not None else item.get("amountCop")),
     ]
+
+
+def display_notes(item: dict[str, Any]) -> str:
+    notes = string_value(item.get("notes")) or ""
+    text = line_text(item)
+    if meal_item_type(item) == "breakfast" and money_value(item.get("unitPriceCop")) == 0:
+        return ""
+    if is_overnight_lodging_item(item) and re.search(r"\bbreakfast\b.{0,40}\bincluded\b|\bincluded\b.{0,40}\bbreakfast\b", notes, re.I):
+        return ""
+    if re.search(r"\bbreakfast\b.{0,40}\bcomplimentary\b|\bcomplimentary\b.{0,40}\bbreakfast\b", notes, re.I):
+        return ""
+    if "desayuno" in notes.lower() and ("inclu" in notes.lower() or "cortes" in notes.lower() or "gratis" in notes.lower()):
+        return ""
+    if "breakfast" in text and money_value(item.get("unitPriceCop")) == 0:
+        return ""
+    return notes
 
 
 def daily_quote_line_rows(data: dict[str, Any], line_items: list[Any]) -> list[list[Any]]:
