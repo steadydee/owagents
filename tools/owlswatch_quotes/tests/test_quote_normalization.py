@@ -562,6 +562,68 @@ def test_sheet_values_show_lodging_breakfasts_and_no_unrequested_guide_lunch_or_
     assert total_row[4] == 2634000
 
 
+def test_sheet_values_keep_quote_tab_to_five_printable_columns():
+    data = {
+        "quoteNumber": "Q-2026-PRINT",
+        "agencyName": "Nature Experience",
+        "clientName": "Turrian",
+        "arrivalDate": "2027-02-04",
+        "departureDate": "2027-02-06",
+        "guestCount": 2,
+        "calculation": {
+            "currency": "COP",
+            "lineItems": [
+                {"serviceCode": "forest_cabin", "description": "Forest Cabin", "unitPriceCop": 880000, "quantity": 2, "totalCop": 1760000},
+                {"serviceCode": "dinner", "description": "Client Dinner", "unitPriceCop": 70000, "quantity": 4, "totalCop": 280000},
+            ],
+            "subtotalCop": 2040000,
+            "discountCop": 176000,
+            "totalCop": 1864000,
+        },
+    }
+
+    quote_rows = server.sheet_values(data, logo_url="https://example.com/logo.png")["Quote"]
+
+    assert max(len(row) for row in quote_rows) <= 5
+    assert quote_rows[0][4].startswith("=IMAGE(")
+
+
+def test_quote_xlsx_sets_one_page_print_layout():
+    data = {
+        "quoteNumber": "Q-2026-PRINT",
+        "agencyName": "Nature Experience",
+        "clientName": "Turrian",
+        "arrivalDate": "2027-02-04",
+        "departureDate": "2027-02-06",
+        "guestCount": 2,
+        "calculation": {
+            "currency": "COP",
+            "lineItems": [
+                {"serviceCode": "forest_cabin", "description": "Forest Cabin", "unitPriceCop": 880000, "quantity": 2, "totalCop": 1760000},
+                {"serviceCode": "dinner", "description": "Client Dinner", "unitPriceCop": 70000, "quantity": 4, "totalCop": 280000},
+            ],
+            "subtotalCop": 2040000,
+            "discountCop": 176000,
+            "totalCop": 1864000,
+        },
+    }
+
+    path = server.create_quote_xlsx(data, "unit-test-print-layout")
+    if path is None:
+        return
+
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(path)
+    quote = workbook["Quote"]
+
+    assert quote.page_setup.orientation == "landscape"
+    assert quote.page_setup.fitToWidth == 1
+    assert quote.page_setup.fitToHeight == 1
+    assert quote.sheet_properties.pageSetUpPr.fitToPage is True
+    assert quote.print_area == f"'Quote'!$A$1:$E${len(server.sheet_values(data)['Quote'])}"
+
+
 def test_revise_mock_draft_removes_two_lunches_and_creates_new_revision():
     previous = os.environ.get("OWLSWATCH_QUOTES_MOCKS")
     os.environ["OWLSWATCH_QUOTES_MOCKS"] = "1"

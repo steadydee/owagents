@@ -31,7 +31,7 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2027-cabin-first-daily-layout-v2"
+QUOTE_RULE_VERSION = "2027-one-page-quote-layout-v1"
 QUOTE_RATES = {
     2026: {
         "pricebook_version": "2026-operators",
@@ -3307,7 +3307,7 @@ def sheet_values(data: dict[str, Any], logo_url: str | None = None) -> dict[str,
     client = data.get("clientName") or ""
     operator = data.get("agencyName") or ""
     quote_rows: list[list[Any]] = [
-        ["OWL'S WATCH", "", "", "", "", image_formula(logo_url)],
+        ["OWL'S WATCH", "", "", "", image_formula(logo_url)],
         ["NATURE RETREAT"],
         [],
         ["ID", data.get("quoteNumber") or ""],
@@ -3428,6 +3428,7 @@ def quote_format_requests(sheet_ids: dict[str, int], values_by_tab: dict[str, li
     quote_id = sheet_ids["Quote"]
     quote_values = values_by_tab["Quote"]
     header_row, item_count, total_row = quote_row_counts(quote_values)
+    row_count = max(len(quote_values), total_row + 1)
     item_start = header_row + 1
     item_end = item_start + item_count
     item_end_safe = max(item_start, item_end)
@@ -3436,21 +3437,29 @@ def quote_format_requests(sheet_ids: dict[str, int], values_by_tab: dict[str, li
     requests: list[dict[str, Any]] = [
         {
             "updateSheetProperties": {
-                "properties": {"sheetId": quote_id, "gridProperties": {"hideGridlines": False, "frozenRowCount": 0, "frozenColumnCount": 0}},
-                "fields": "gridProperties.hideGridlines,gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+                "properties": {
+                    "sheetId": quote_id,
+                    "gridProperties": {
+                        "hideGridlines": False,
+                        "frozenRowCount": 0,
+                        "frozenColumnCount": 0,
+                        "rowCount": row_count,
+                        "columnCount": 5,
+                    },
+                },
+                "fields": "gridProperties.hideGridlines,gridProperties.frozenRowCount,gridProperties.frozenColumnCount,gridProperties.rowCount,gridProperties.columnCount",
             }
         },
         {"unmergeCells": {"range": {"sheetId": quote_id, "startRowIndex": 0, "endRowIndex": 2, "startColumnIndex": 0, "endColumnIndex": 3}}},
         {"unmergeCells": {"range": {"sheetId": quote_id, "startRowIndex": item_start, "endRowIndex": max(item_start + 1, item_end_safe), "startColumnIndex": 0, "endColumnIndex": 5}}},
         {"mergeCells": {"range": {"sheetId": quote_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 3}, "mergeType": "MERGE_ALL"}},
         {"mergeCells": {"range": {"sheetId": quote_id, "startRowIndex": 1, "endRowIndex": 2, "startColumnIndex": 0, "endColumnIndex": 3}, "mergeType": "MERGE_ALL"}},
-        dimension_request(quote_id, "COLUMNS", 0, 1, 230),
-        dimension_request(quote_id, "COLUMNS", 1, 2, 390),
-        dimension_request(quote_id, "COLUMNS", 2, 3, 120),
-        dimension_request(quote_id, "COLUMNS", 3, 4, 105),
-        dimension_request(quote_id, "COLUMNS", 4, 5, 140),
-        dimension_request(quote_id, "COLUMNS", 5, 6, 175),
-        dimension_request(quote_id, "ROWS", 0, 1, 130),
+        dimension_request(quote_id, "COLUMNS", 0, 1, 210),
+        dimension_request(quote_id, "COLUMNS", 1, 2, 340),
+        dimension_request(quote_id, "COLUMNS", 2, 3, 105),
+        dimension_request(quote_id, "COLUMNS", 3, 4, 90),
+        dimension_request(quote_id, "COLUMNS", 4, 5, 125),
+        dimension_request(quote_id, "ROWS", 0, 1, 105),
         dimension_request(quote_id, "ROWS", header_row, header_row + 1, 34),
     ]
     requests.extend([
@@ -3460,7 +3469,7 @@ def quote_format_requests(sheet_ids: dict[str, int], values_by_tab: dict[str, li
             1,
             0,
             3,
-            {"userEnteredFormat": {"textFormat": {"bold": True, "fontSize": 24, "foregroundColor": rgb("#3F2A22")}, "verticalAlignment": "MIDDLE"}},
+            {"userEnteredFormat": {"textFormat": {"bold": True, "fontSize": 22, "foregroundColor": rgb("#3F2A22")}, "verticalAlignment": "MIDDLE"}},
             "userEnteredFormat(textFormat,verticalAlignment)",
         ),
         repeat_cell(
@@ -3476,8 +3485,8 @@ def quote_format_requests(sheet_ids: dict[str, int], values_by_tab: dict[str, li
             quote_id,
             0,
             1,
+            4,
             5,
-            6,
             {"userEnteredFormat": {"horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE"}},
             "userEnteredFormat(horizontalAlignment,verticalAlignment)",
         ),
@@ -3743,6 +3752,7 @@ def create_quote_xlsx(data: dict[str, Any], title: str) -> Path | None:
         from openpyxl import Workbook
         from openpyxl.drawing.image import Image
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.worksheet.properties import PageSetupProperties
     except ImportError:
         return None
 
@@ -3763,13 +3773,23 @@ def create_quote_xlsx(data: dict[str, Any], title: str) -> Path | None:
     quote.merge_cells("A1:C1")
     quote.merge_cells("A2:C2")
     quote.column_dimensions["A"].width = 26
-    quote.column_dimensions["B"].width = 44
-    quote.column_dimensions["C"].width = 14
-    quote.column_dimensions["D"].width = 12
-    quote.column_dimensions["E"].width = 16
-    quote.column_dimensions["F"].width = 19
-    quote.row_dimensions[1].height = 100
+    quote.column_dimensions["B"].width = 40
+    quote.column_dimensions["C"].width = 13
+    quote.column_dimensions["D"].width = 11
+    quote.column_dimensions["E"].width = 15
+    quote.row_dimensions[1].height = 78
     quote.row_dimensions[9].height = 26
+    quote.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    quote.page_setup.orientation = "landscape"
+    quote.page_setup.paperSize = quote.PAPERSIZE_LETTER
+    quote.page_setup.fitToWidth = 1
+    quote.page_setup.fitToHeight = 1
+    quote.page_margins.left = 0.25
+    quote.page_margins.right = 0.25
+    quote.page_margins.top = 0.25
+    quote.page_margins.bottom = 0.25
+    quote.print_area = f"A1:E{len(values_by_tab['Quote'])}"
+    quote.sheet_view.showGridLines = False
 
     dark = "3F2A22"
     tan = "E8D8C2"
@@ -3829,9 +3849,9 @@ def create_quote_xlsx(data: dict[str, Any], title: str) -> Path | None:
 
     if QUOTE_LOGO_PATH.is_file():
         logo = Image(str(QUOTE_LOGO_PATH))
-        logo.width = 132
-        logo.height = 148
-        quote.add_image(logo, "F1")
+        logo.width = 105
+        logo.height = 118
+        quote.add_image(logo, "E1")
 
     for tab in ("Internal Notes", "Source Trace", "Price Rules"):
         ws = wb[tab]
