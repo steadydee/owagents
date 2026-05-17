@@ -51,8 +51,8 @@ def test_operator_day_trip_no_client_with_guide_breakfast_lunch():
     assert_ready(result)
     assert result["canonicalPayload"]["lodging"]["requested"] is False
     assert result["canonicalPayload"]["guests"]["adults"] == 5
-    assert "Guide/Driver Breakfast" in descriptions(result)
-    assert "Guide/Driver Lunch" in descriptions(result)
+    assert "Guide Breakfast" in descriptions(result)
+    assert "Guide Lunch" in descriptions(result)
     assert result["calculation"]["totalCop"] == 1300000
 
 
@@ -64,7 +64,7 @@ def test_operator_day_trip_lunch_only_with_guide_and_driver():
 
     assert_ready(result)
     assert result["canonicalPayload"]["meals"] == {"breakfasts": 0, "lunches": 1, "dinners": 0}
-    assert "Guide/Driver Breakfast" in descriptions(result)
+    assert "Guide/Driver Breakfast" not in descriptions(result)
     assert "Guide/Driver Lunch" in descriptions(result)
     assert result["calculation"]["totalCop"] == 1050000
 
@@ -114,8 +114,8 @@ def test_operator_cabin_with_two_cabins_guide_room_meals_and_birding():
     assert canonical["guests"]["adults"] == 3
     assert canonical["guests"]["guides"] == 1
     assert canonical["birding"]["morningTourDays"] == 1
-    assert "Guide/Driver Breakfast" in descriptions(result)
-    assert "Guide/Driver Lunch" in descriptions(result)
+    assert "Guide Breakfast" in descriptions(result)
+    assert "Guide Lunch" in descriptions(result)
 
 
 def test_bilingual_no_cabin_quote_does_not_turn_into_lodging():

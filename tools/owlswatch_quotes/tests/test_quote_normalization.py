@@ -148,8 +148,8 @@ def test_day_trip_display_total_includes_staff_meals_and_operator_tour_discount(
     assert displayed["discountCop"] == 75000
     assert displayed["totalCop"] == 1300000
     descriptions = [item["description"] for item in displayed["lineItems"]]
-    assert "Guide/Driver Breakfast" in descriptions
-    assert "Guide/Driver Lunch" in descriptions
+    assert "Guide Breakfast" in descriptions
+    assert "Guide Lunch" in descriptions
 
 
 def test_2027_day_trip_display_uses_2027_operator_rates_and_staff_meals():
@@ -205,7 +205,7 @@ def test_2027_day_trip_display_uses_2027_operator_rates_and_staff_meals():
     assert displayed["discountCop"] == 80000
     assert displayed["totalCop"] == 1405000
     bird_tour = next(item for item in displayed["lineItems"] if item["serviceCode"] == "bird_tour")
-    guide_lunch = next(item for item in displayed["lineItems"] if item["serviceCode"] == "guide_driver_lunch")
+    guide_lunch = next(item for item in displayed["lineItems"] if item["serviceCode"] == "guide_lunch")
     assert bird_tour["unitPriceCop"] == 160000
     assert guide_lunch["unitPriceCop"] == 35000
 
@@ -453,6 +453,101 @@ def test_sheet_values_group_cabin_quote_by_day_without_checkout_lunch():
     dec31_index = next(i for i, row in enumerate(quote_rows) if row and row[0] == "Dec 31 2026")
     assert quote_rows[dec31_index + 1][0] == "Client Breakfast"
     assert all(not row or row[0] != "Client Lunch" for row in quote_rows[dec31_index + 1:dec31_index + 3])
+
+
+def test_sheet_values_show_lodging_breakfasts_and_no_unrequested_guide_lunch_or_driver():
+    data = {
+        "quoteNumber": "Q-2026-0019",
+        "agencyName": "Nature Experience",
+        "clientName": "Turrian",
+        "arrivalDate": "2027-02-04",
+        "departureDate": "2027-02-06",
+        "guestCount": 2,
+        "guideCount": 1,
+        "requestSummary": (
+            "HOTEL Owl Watch. ESTADO Reservacion. REFERENCIA - Turrian. "
+            "2 PAX + Guia. FECHA IN - 04 febrero 2027. "
+            "FECHA OUT - 06 febrero 2027 (2 noches). "
+            "SERVICIO - 1 habitacion matrimonial para pasajero + "
+            "1 habitacion single para Guia + desayunos + cenas"
+        ),
+        "requestedServices": {
+            "meals": {
+                "breakfasts": "included_with_lodging",
+                "lunches": 0,
+                "dinners": 2,
+            }
+        },
+        "calculation": {
+            "currency": "COP",
+            "pricebookVersion": "Owl's Watch 2027 Operator Rates",
+            "lineItems": [
+                {
+                    "serviceCode": "forest_cabin",
+                    "description": "Forest Cabin",
+                    "notes": "Breakfast included for two guests.",
+                    "unitPriceCop": 792000,
+                    "quantity": 2,
+                    "totalCop": 1584000,
+                    "sourceRule": "forest_cabin.operatorNetRateCop",
+                },
+                {
+                    "serviceCode": "guide_room",
+                    "description": "Guide room",
+                    "notes": "Breakfast included.",
+                    "category": "lodging",
+                    "unitPriceCop": 350000,
+                    "quantity": 2,
+                    "totalCop": 700000,
+                    "sourceRule": "guide_room.operatorNetRateCop",
+                },
+                {
+                    "serviceCode": "dinner",
+                    "description": "Client Dinner",
+                    "unitPriceCop": 70000,
+                    "quantity": 4,
+                    "totalCop": 280000,
+                    "sourceRule": "dinner.operatorNetRateCop",
+                },
+            ],
+            "subtotalCop": 2564000,
+            "discountCop": 0,
+            "totalCop": 2564000,
+            "assumptions": [],
+        },
+    }
+
+    quote_rows = server.sheet_values(data)["Quote"]
+    day_indexes = [i for i, row in enumerate(quote_rows) if row and server.is_day_header_row(row)]
+
+    def day_descriptions(day_label: str) -> list[str]:
+        start = next(i for i in day_indexes if quote_rows[i][0] == day_label)
+        later = [idx for idx in day_indexes if idx > start]
+        end = later[0] if later else len(quote_rows)
+        return [row[0] for row in quote_rows[start + 1 : end] if row and row[0]]
+
+    feb4 = day_descriptions("Feb 4 2027")
+    feb5 = day_descriptions("Feb 5 2027")
+    feb6 = day_descriptions("Feb 6 2027")
+
+    assert "Client Breakfast" not in feb4
+    assert "Guide Breakfast" not in feb4
+    assert "Guide Lunch (Discounted)" not in feb4
+    assert all("Driver" not in item for item in feb4 + feb5 + feb6)
+
+    assert "Client Breakfast" in feb5
+    assert "Guide Breakfast" in feb5
+    assert "Client Dinner" in feb5
+    assert "Guide Dinner" in feb5
+    assert "Guide Lunch (Discounted)" not in feb5
+
+    assert "Client Breakfast" in feb6
+    assert "Guide Breakfast" in feb6
+    assert "Client Dinner" not in feb6
+    assert "Guide Dinner" not in feb6
+
+    total_row = next(row for row in quote_rows if len(row) > 3 and row[3] == "TOTAL")
+    assert total_row[4] == 2634000
 
 
 def test_revise_mock_draft_removes_two_lunches_and_creates_new_revision():

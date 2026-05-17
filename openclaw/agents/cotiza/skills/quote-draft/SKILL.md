@@ -58,11 +58,15 @@ Do not call low-level quote calculate, Drive sheet, or Drive patch tools directl
 - Never ask for breakfast count.
 - If a day trip says breakfast, price breakfast for the clients/guests.
 - If a guide or driver is present, show guide/driver breakfast separately as complimentary.
-- Guide/driver breakfast is complimentary. Guide/driver lunch and dinner use the configured rate for the active pricebook year.
+- Never add a driver unless the request explicitly mentions a driver.
+- Guide/driver breakfast is complimentary. Guide/driver lunch and dinner use the configured rate for the active pricebook year only when lunch or dinner is requested.
+- Do not add guide/driver lunch when the request only asks for breakfast and dinner.
 - Transport is excluded unless requested.
 - Bilingual guide is excluded unless requested.
 - Local Spanish guide is assumed for standard birding.
 - Cabin stays include breakfast with lodging.
+- Breakfast included with cabin or guide-room lodging is shown on breakfast service days after check-in, not on the check-in day.
+- Show complimentary breakfast lines when breakfast is included or requested, because staff use the sheet as the visible quote.
 - For cabin stays, standard full board means dinner for each night and lunch only for non-checkout stay days. Do not include lunch on checkout day unless the source explicitly asks for checkout/departure lunch.
 - For birding day trips, default to one birding day and one client lunch per guest unless the source says otherwise.
 - Operators receive the configured operator discount treatment handled by the quote tools.

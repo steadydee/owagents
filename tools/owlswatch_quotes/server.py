@@ -31,7 +31,7 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2027-operator-rates-v1"
+QUOTE_RULE_VERSION = "2027-lodging-meal-defaults-v1"
 QUOTE_RATES = {
     2026: {
         "pricebook_version": "2026-operators",
@@ -565,6 +565,89 @@ def infer_staff_meal_days(payload: dict[str, Any]) -> int:
     return max(1, days or 1)
 
 
+def requested_services_meals(payload: dict[str, Any]) -> dict[str, Any]:
+    requested = object_value(payload, "requestedServices") or object_value(payload, "requested_services")
+    meals = object_value(requested, "meals")
+    if meals:
+        return meals
+    return object_value(payload, "meals")
+
+
+def staff_role_counts(payload: dict[str, Any]) -> tuple[int, int]:
+    return infer_staff_count(payload, "guide"), infer_staff_count(payload, "driver")
+
+
+def staff_role_label(payload: dict[str, Any]) -> str:
+    guides, drivers = staff_role_counts(payload)
+    if guides > 0 and drivers > 0:
+        return "Guide/Driver"
+    if drivers > 0:
+        return "Driver"
+    return "Guide"
+
+
+def has_guide_room_item(items: list[dict[str, Any]]) -> bool:
+    return any("guide room" in line_text(item) or "habitaci" in line_text(item) and "gu" in line_text(item) for item in items)
+
+
+def requests_guide_room(payload: dict[str, Any], summary: str) -> bool:
+    lodging = object_value(payload, "lodging")
+    if coerce_int(first_value(payload, "guideRoomCount", "guide_room_count"), None):
+        return True
+    if coerce_int(lodging.get("guideRoomCount"), None) or coerce_int(lodging.get("guide_room_count"), None):
+        return True
+    return bool(re.search(r"\bguide room\b|\bhabitaci[oó]n\b.{0,40}\bgu[ií]a\b|\bgu[ií]a\b.{0,40}\bhabitaci[oó]n\b", summary, re.I))
+
+
+def lodging_breakfast_days(payload: dict[str, Any], summary: str) -> int:
+    arrival = date_only(payload.get("arrivalDate"))
+    departure = date_only(payload.get("departureDate"))
+    nights = infer_nights(payload, arrival, departure, summary)
+    return max(0, nights or 0)
+
+
+def normalized_meal_day_count(payload: dict[str, Any], meal: str) -> int | None:
+    meals = requested_services_meals(payload)
+    for key in (f"{meal}s", meal):
+        value = meals.get(key)
+        count = coerce_int(value, None)
+        if count is not None:
+            return max(0, count)
+    return None
+
+
+def staff_meal_day_count(payload: dict[str, Any], meal: str, items: list[dict[str, Any]]) -> int:
+    summary = request_summary(payload)
+    normalized_count = normalized_meal_day_count(payload, meal)
+    if normalized_count is not None:
+        if meal == "breakfast" and normalized_count == 0:
+            return 0
+        return normalized_count
+
+    if meal == "breakfast":
+        meals = requested_services_meals(payload)
+        value = meals.get("breakfasts") or meals.get("breakfast")
+        if value == "included_with_lodging":
+            return lodging_breakfast_days(payload, summary) if (requests_breakfast(payload, summary) or has_guide_room_item(items) or requests_guide_room(payload, summary)) else 0
+        if requests_breakfast(payload, summary):
+            days = lodging_breakfast_days(payload, summary)
+            return days or 1
+        return 0
+
+    if meal == "lunch":
+        if requests_lunch(payload, summary):
+            return infer_staff_meal_days(payload)
+        return 0
+
+    if meal == "dinner":
+        if requests_dinner(payload, summary):
+            days = lodging_breakfast_days(payload, summary)
+            return days or infer_staff_meal_days(payload)
+        return 0
+
+    return 0
+
+
 def item_codes(payload: dict[str, Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for key in ("items", "lineItems", "services", "activities", "guidedTours", "birdingTours"):
@@ -773,7 +856,7 @@ def requests_dinner(payload: dict[str, Any], summary: str) -> bool:
     value = string_value(first_value(payload, "dinner", "dinners", "dinnerCount", "dinner_count"))
     if value and value.lower() not in {"no", "none", "excluded"}:
         return True
-    return bool(re.search(r"\b(dinner|cena|comida)\b", summary, re.I))
+    return bool(re.search(r"\b(dinners?|cenas?|comidas?)\b", summary, re.I))
 
 
 def is_day_trip_quote(payload: dict[str, Any], arrival: str | None, departure: str | None, nights: int | None, summary: str) -> bool:
@@ -1262,6 +1345,20 @@ def parse_text_dates(text: str) -> tuple[str | None, str | None]:
         if month:
             return dt.date(int(year), month, int(start_day)).isoformat(), dt.date(int(year), month, int(end_day)).isoformat()
 
+    day_month_dates: list[str] = []
+    for day, month_token, year in re.findall(
+        rf"\b(\d{{1,2}})\s+(?:de\s+)?({month_words})\.?(?:\s+de)?\s+(\d{{4}})\b",
+        text,
+        re.I,
+    ):
+        month = month_number(month_token)
+        if month:
+            day_month_dates.append(dt.date(int(year), month, int(day)).isoformat())
+    if len(day_month_dates) >= 2:
+        return day_month_dates[0], day_month_dates[1]
+    if len(day_month_dates) == 1:
+        return day_month_dates[0], day_month_dates[0]
+
     match = MONTH_NAME_RE.search(text)
     if match:
         month_token, start_day, end_day, year = match.groups()
@@ -1311,7 +1408,7 @@ def raw_text_quote_intent(raw_text: str) -> dict[str, Any]:
     agency = extract_named_value(raw_text, ("operator", "operador", "agency", "agencia"))
     if agency:
         intent["agencyName"] = agency
-    client = extract_named_value(raw_text, ("client", "cliente", "guest", "huesped", "huésped"))
+    client = extract_named_value(raw_text, ("client", "cliente", "guest", "huesped", "huésped", "referencia", "reference"))
     client_match = re.search(r"\bfor client\s+([^\n,.;]+)", raw_text, re.I)
     if client_match:
         client = compact_text(client_match.group(1))
@@ -1324,13 +1421,15 @@ def raw_text_quote_intent(raw_text: str) -> dict[str, Any]:
     guide_match = re.search(r"\b(\d{1,2})\s*(?:guides?|gu[ií]as?)\b", raw_text, re.I)
     if guide_match:
         intent["guideCount"] = int(guide_match.group(1))
+    elif re.search(r"(?:\+|plus|con)\s*(?:1\s*)?gu[ií]a\b|\bgu[ií]a\b", raw_text, re.I):
+        intent["guideCount"] = 1
     driver_match = re.search(r"\b(\d{1,2})\s*(?:drivers?|conductores?|chofer(?:es)?)\b", raw_text, re.I)
     if driver_match:
         intent["driverCount"] = int(driver_match.group(1))
 
     day_trip = bool(re.search(r"\b(birding day trip|bird(?:ing)? tour|day trip|day visit|tour de aves|avistamiento de aves|pajareo|pasad[ií]a)\b", raw_text, re.I))
     no_lodging = bool(re.search(r"\b(no cabin|no lodging|no hospedaje|sin caba[ñn]a|sin hospedaje)\b", raw_text, re.I))
-    cabin = bool(re.search(r"\b(cabin|caba[ñn]a|lodging|hospedaje|nights?|noches?)\b", raw_text, re.I)) and not no_lodging
+    cabin = bool(re.search(r"\b(cabin|caba[ñn]a|lodging|hospedaje|hotel|habitaci[oó]n|matrimonial|single|nights?|noches?)\b", raw_text, re.I)) and not no_lodging
     if day_trip and not cabin:
         intent["visitType"] = "birding_day_trip"
         intent["lodging"] = {"requested": False, "cabinCount": 0}
@@ -1340,6 +1439,8 @@ def raw_text_quote_intent(raw_text: str) -> dict[str, Any]:
     elif cabin:
         intent["visitType"] = "cabin"
         intent["lodging"] = {"requested": True, "cabinCount": infer_cabin_count({"requestSummary": raw_text}, raw_text)}
+        if requests_guide_room(intent, raw_text):
+            intent["lodging"]["guideRoomCount"] = 1
 
     meals: dict[str, Any] = {}
     if re.search(r"\b(full board|food included|meals included|comida incluida|pensi[oó]n completa|a?alimentaci[oó]n completa)\b", raw_text, re.I):
@@ -1351,7 +1452,7 @@ def raw_text_quote_intent(raw_text: str) -> dict[str, Any]:
             meals["breakfast"] = True
         if re.search(r"\b(lunch|almuerzo)\b", raw_text, re.I):
             meals["lunch"] = True
-        if re.search(r"\b(dinner|cena)\b", raw_text, re.I):
+        if re.search(r"\b(dinners?|cenas?)\b", raw_text, re.I):
             meals["dinner"] = True
     if meals:
         intent["meals"] = meals
@@ -1384,7 +1485,10 @@ def quote_prepare_missing(intent: dict[str, Any], normalized: dict[str, Any]) ->
         missing.append("dates/year")
     if infer_guest_count(intent, summary) is None:
         missing.append("guest count")
-    if not sheet_has_visit_type({**intent, "calculation": {"lineItems": []}}):
+    visit_type = string_value(first_value(intent, "visitType", "visit_type", "requestType", "request_type"))
+    lodging_requested = object_value(intent, "lodging").get("requested")
+    birding_days = coerce_int(object_value(normalized, "birding").get("morningTourDays"), 0) or 0
+    if not (visit_type or isinstance(lodging_requested, bool) or birding_days > 0 or sheet_has_visit_type({**intent, "calculation": {"lineItems": []}})):
         missing.append("cabin stay or birding day trip")
     if string_value(first_value(intent, "visitType", "visit_type")) == "cabin" and infer_nights(intent, normalized.get("arrivalDate"), normalized.get("departureDate"), summary) is None:
         missing.append("number of nights")
@@ -2636,6 +2740,13 @@ def display_description(value: Any) -> str:
         "bird photography and tour": "Bird Tour",
         "guide/driver breakfast": "Guide/Driver Breakfast",
         "guide/driver lunch": "Guide/Driver Lunch (Discounted)",
+        "guide/driver dinner": "Guide/Driver Dinner",
+        "guide breakfast": "Guide Breakfast",
+        "guide lunch": "Guide Lunch (Discounted)",
+        "guide dinner": "Guide Dinner",
+        "driver breakfast": "Driver Breakfast",
+        "driver lunch": "Driver Lunch (Discounted)",
+        "driver dinner": "Driver Dinner",
         "trip leader breakfast": "Trip Leader Breakfast",
         "trip leader lunch": "Trip Leader Lunch",
         "trip leader dinner": "Trip Leader Dinner",
@@ -2788,57 +2899,73 @@ def apply_staff_meal_policy(payload: dict[str, Any], calc: dict[str, Any]) -> di
     if not isinstance(raw_items, list):
         return calc
     items = [item for item in raw_items if isinstance(item, dict)]
-    if any(str(item.get("serviceCode") or "").startswith("guide_driver_") for item in items):
+    if any(str(item.get("category") or "") == "staff_meal" for item in items):
         return calc
 
-    staff_count = infer_staff_count(payload, "guide") + infer_staff_count(payload, "driver")
+    guide_count, driver_count = staff_role_counts(payload)
+    staff_count = guide_count + driver_count
     if staff_count <= 0:
         return calc
     year = rate_year_from_payload(payload, calc)
     rates = quote_rates_for_year(year)
-    days = infer_staff_meal_days(payload)
-    quantity = staff_count * days
-    lunch_rate = rates["guide_driver_lunch"]
-    lunch_total = lunch_rate * quantity
-    added_items = [
-        {
-            "serviceCode": "guide_driver_breakfast",
-            "description": "Guide/Driver Breakfast",
+    label = staff_role_label(payload)
+    service_prefix = "guide_driver" if guide_count > 0 and driver_count > 0 else ("driver" if driver_count > 0 else "guide")
+
+    breakfast_days = staff_meal_day_count(payload, "breakfast", items)
+    lunch_days = staff_meal_day_count(payload, "lunch", items)
+    dinner_days = staff_meal_day_count(payload, "dinner", items)
+
+    added_items: list[dict[str, Any]] = []
+    if breakfast_days > 0:
+        quantity = staff_count * breakfast_days
+        added_items.append({
+            "serviceCode": f"{service_prefix}_breakfast",
+            "description": f"{label} Breakfast",
             "category": "staff_meal",
             "unit": "person_meal",
             "unitPriceCop": rates["guide_driver_breakfast"],
             "quantity": quantity,
-            "sourceRule": "guide_driver.breakfast.free",
-            "notes": "Breakfast for guides/drivers is complimentary.",
+            "sourceRule": f"{service_prefix}.breakfast.free",
+            "notes": f"Breakfast for {label.lower()}s is complimentary.",
             "totalCop": 0,
-        },
-        {
-            "serviceCode": "guide_driver_lunch",
-            "description": "Guide/Driver Lunch",
+        })
+
+    lunch_rate = rates["guide_driver_lunch"]
+    lunch_total = 0
+    if lunch_days > 0:
+        quantity = staff_count * lunch_days
+        lunch_total = lunch_rate * quantity
+        added_items.append({
+            "serviceCode": f"{service_prefix}_lunch",
+            "description": f"{label} Lunch",
             "category": "staff_meal",
             "unit": "person_meal",
             "unitPriceCop": lunch_rate,
             "quantity": quantity,
-            "sourceRule": "guide_driver.lunch.rateCop",
-            "notes": "Discounted guide/driver lunch.",
+            "sourceRule": f"{service_prefix}.lunch.rateCop",
+            "notes": f"Discounted {label.lower()} lunch.",
             "totalCop": lunch_total,
-        },
-    ]
+        })
+
     dinner_total = 0
-    if requests_dinner(payload, request_summary(payload)):
+    if dinner_days > 0:
         dinner_rate = rates["guide_driver_dinner"]
+        quantity = staff_count * dinner_days
         dinner_total = dinner_rate * quantity
         added_items.append({
-            "serviceCode": "guide_driver_dinner",
-            "description": "Guide/Driver Dinner",
+            "serviceCode": f"{service_prefix}_dinner",
+            "description": f"{label} Dinner",
             "category": "staff_meal",
             "unit": "person_meal",
             "unitPriceCop": dinner_rate,
             "quantity": quantity,
-            "sourceRule": "guide_driver.dinner.rateCop",
-            "notes": "Discounted guide/driver dinner.",
+            "sourceRule": f"{service_prefix}.dinner.rateCop",
+            "notes": f"Discounted {label.lower()} dinner.",
             "totalCop": dinner_total,
         })
+    if not added_items:
+        return calc
+
     added_total = lunch_total + dinner_total
     updated_items = [
         *items,
@@ -2851,9 +2978,14 @@ def apply_staff_meal_policy(payload: dict[str, Any], calc: dict[str, Any]) -> di
     updated["subtotalCop"] = current_subtotal + added_total
     updated["totalCop"] = current_total + added_total
     assumptions = updated.get("assumptions")
-    note = f"Guide/driver meals: breakfast is free; lunch is COP {lunch_rate:,} per guide/driver."
+    note_parts = []
+    if breakfast_days > 0:
+        note_parts.append(f"{label} breakfast is complimentary.")
+    if lunch_days > 0:
+        note_parts.append(f"{label} lunch is COP {lunch_rate:,}.")
     if dinner_total:
-        note = f"{note} Dinner is COP {rates['guide_driver_dinner']:,} per guide/driver."
+        note_parts.append(f"{label} dinner is COP {rates['guide_driver_dinner']:,}.")
+    note = " ".join(note_parts)
     if isinstance(assumptions, list) and note not in assumptions:
         updated["assumptions"] = [*assumptions, note]
     return updated
@@ -3010,6 +3142,8 @@ def day_indexes_for_item(data: dict[str, Any], dates: list[dt.date], item: dict[
             start = 0
         return list(range(start, min(len(dates), start + day_count)))
     if meal_type == "breakfast":
+        if nights > 0 and not day_trip and money_value(item.get("unitPriceCop")) == 0:
+            return list(range(1, min(len(dates), 1 + day_count)))
         return list(range(0, min(len(dates), day_count)))
     if is_tour_item(item):
         start = 1 if nights > 0 and len(dates) > 1 else 0
@@ -3047,7 +3181,7 @@ def included_breakfast_item(data: dict[str, Any]) -> dict[str, Any]:
 def included_breakfast_day_indexes(data: dict[str, Any], dates: list[dt.date], items: list[dict[str, Any]]) -> list[int]:
     if not dates or not any(is_cabin_item(item) for item in items):
         return []
-    if any(meal_item_type(item) == "breakfast" and money_value(item.get("unitPriceCop")) == 0 for item in items):
+    if any(is_client_included_breakfast_item(item) for item in items):
         return []
     summary = request_summary(data)
     arrival = date_only(data.get("arrivalDate"))
@@ -3056,6 +3190,17 @@ def included_breakfast_day_indexes(data: dict[str, Any], dates: list[dt.date], i
     if not nights or nights <= 0:
         return []
     return list(range(1, min(len(dates), nights + 1)))
+
+
+def is_client_included_breakfast_item(item: dict[str, Any]) -> bool:
+    if meal_item_type(item) != "breakfast" or money_value(item.get("unitPriceCop")) != 0:
+        return False
+    text = line_text(item)
+    return (
+        item.get("serviceCode") == "included_lodging_breakfast"
+        or item.get("category") == "included_meal"
+        or ("client" in text and "breakfast" in text)
+    )
 
 
 def quote_line_row(item: dict[str, Any]) -> list[Any]:

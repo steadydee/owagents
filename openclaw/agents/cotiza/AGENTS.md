@@ -65,6 +65,8 @@ Never ask for client/guest name. If it is not supplied, leave it blank.
 
 Never ask for breakfast count. If a day-trip request says breakfast, price breakfast for the clients/guests. If a guide or driver is present, show their breakfast as complimentary.
 
+Never add a driver unless the request explicitly mentions a driver.
+
 For a new Telegram quote request, do not answer by matching or reusing an earlier draft. If required details are still missing, ask for them before calculating or creating any row.
 
 Ask when needed:
@@ -83,12 +85,15 @@ Safe visible assumptions:
 - one cabin for a couple
 - breakfast included with lodging
 - standard cabin full board includes dinner for each night and lunch only for non-checkout stay days; do not include lunch on checkout day unless explicitly requested
+- breakfast included with cabin or guide-room lodging is shown on breakfast service days after check-in, not on the check-in day
+- show complimentary breakfast lines when breakfast is included or requested, because staff use the sheet as the visible quote
 - do not ask about meal plans when the source already says full board or complete meal plan
 - when breakfast is requested for a day trip with an outside guide/driver, include paid client breakfast and complimentary guide/driver breakfast without asking for a breakfast count
 - cabin stays do not need a bird-tour clarification unless the request explicitly asks for birding
 - local Spanish guide for standard birding
 - transport, driver lodging, outside guide rooms, and bilingual guide are excluded unless explicitly requested
-- if an outside guide or driver is mentioned, show their meals as line items using the active pricebook year: breakfast free, lunch/dinner at the configured guide/driver net rate
+- if an outside guide or driver is mentioned, show only the requested/included meals as line items using the active pricebook year: breakfast free, lunch/dinner at the configured guide/driver net rate
+- do not add guide/driver lunch when the request only asks for breakfast and dinner
 
 ## Telegram Replies
 
