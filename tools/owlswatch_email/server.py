@@ -428,6 +428,44 @@ def task_path(task_id: str) -> Path:
     return TASK_DIR / f"{safe}.json"
 
 
+def parse_iso_datetime(value: Any) -> dt.datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def latest_task_message_time(task: dict[str, Any]) -> dt.datetime | None:
+    candidates: list[Any] = [
+        task.get("lastExternalMessageAt"),
+        task.get("latestExternalMessageAt"),
+    ]
+    thread = task.get("thread")
+    if isinstance(thread, dict):
+        candidates.extend([
+            thread.get("lastExternalMessageAt"),
+            thread.get("latestExternalMessageAt"),
+        ])
+        for message in thread.get("messages") or []:
+            if isinstance(message, dict):
+                candidates.append(message.get("sentAt") or message.get("date"))
+    messages = task.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if isinstance(message, dict):
+                candidates.append(message.get("sentAt") or message.get("date"))
+    parsed = [ts for ts in (parse_iso_datetime(value) for value in candidates) if ts]
+    return max(parsed) if parsed else None
+
+
 def task_id_from(payload: dict[str, Any]) -> str:
     explicit = payload.get("taskId") or payload.get("task_id")
     if explicit:
@@ -889,12 +927,29 @@ def tool_email_list_open_tasks(args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(statuses, list) or not all(isinstance(s, str) for s in statuses):
         raise ToolError("invalid_input", "statuses must be an array of strings.")
     limit = int(args.get("limit") or 25)
+    max_age_hours = args.get("maxAgeHours")
+    cutoff: dt.datetime | None = None
+    if max_age_hours is not None:
+        max_age_hours = int(max_age_hours)
+        if not 1 <= max_age_hours <= 720:
+            raise ToolError("invalid_input", "maxAgeHours must be between 1 and 720.")
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=max_age_hours)
+    require_recent_external = bool(args.get("requireRecentExternal"))
     TASK_DIR.mkdir(parents=True, exist_ok=True)
     tasks = []
     for path in sorted(TASK_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         task = read_task(path)
-        if task and task.get("status") in statuses:
-            tasks.append(task)
+        if not task or task.get("status") not in statuses:
+            continue
+        if cutoff:
+            message_time = latest_task_message_time(task)
+            if require_recent_external and not message_time:
+                continue
+            fallback_time = parse_iso_datetime(task.get("createdAt"))
+            relevant_time = message_time or fallback_time
+            if not relevant_time or relevant_time < cutoff:
+                continue
+        tasks.append(task)
         if len(tasks) >= limit:
             break
     return {"ok": True, "tasks": tasks}
@@ -988,7 +1043,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
     "owlswatch_email_resolve_gmail_url": ("Resolve a Gmail web URL to a readable Gmail thread when Gmail exposes a compatible API id.", {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"], "additionalProperties": False}, tool_gmail_resolve_url),
     "owlswatch_luna_get_email_response_context": ("Fetch approved guest-shareable Luna context for an email response.", {"type": "object", "properties": {"clientQuestion": {"type": "string"}, "language": {"type": ["string", "null"]}, "topics": {"type": "array", "items": {"type": "string"}}, "factLimit": {"type": "integer"}, "blockLimit": {"type": "integer"}, "mediaLimit": {"type": "integer"}}, "required": ["clientQuestion"], "additionalProperties": False}, tool_luna_get_email_response_context),
     "owlswatch_email_upsert_task": ("Create or update a durable local email draft/review task.", {"type": "object", "properties": {"task": {"type": "object", "additionalProperties": True}}, "required": ["task"], "additionalProperties": False}, tool_email_upsert_task),
-    "owlswatch_email_list_open_tasks": ("List durable local email tasks needing review or summary.", {"type": "object", "properties": {"statuses": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}, "additionalProperties": False}, tool_email_list_open_tasks),
+    "owlswatch_email_list_open_tasks": ("List durable local email tasks needing review or summary.", {"type": "object", "properties": {"statuses": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}, "maxAgeHours": {"type": "integer", "minimum": 1, "maximum": 720}, "requireRecentExternal": {"type": "boolean"}}, "additionalProperties": False}, tool_email_list_open_tasks),
     "owlswatch_email_submit_operations_intake": ("Submit an email draft task to Operations Email Desk. Requires EMAIL_AGENT_API_TOKEN. Does not send email.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": False}, tool_operations_email_intake),
     "owlswatch_email_submit_scan_run": ("Submit a daily/recent/unanswered email scan summary to Operations Email Desk. Requires EMAIL_AGENT_API_TOKEN.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": False}, tool_operations_scan_run),
     "owlswatch_email_create_gmail_draft": ("Create a Gmail draft in the original thread when compose scope is explicitly enabled. Never sends.", {"type": "object", "properties": {"threadId": {"type": "string"}, "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "inReplyTo": {"type": ["string", "null"]}}, "required": ["threadId", "to", "subject", "body"], "additionalProperties": False}, tool_gmail_create_draft),

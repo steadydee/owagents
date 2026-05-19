@@ -100,7 +100,9 @@ const toolSchemas = {
       type: "object",
       properties: {
         statuses: { type: "array", items: { type: "string" } },
-        limit: { type: "integer", minimum: 1, maximum: 100 }
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+        maxAgeHours: { type: "integer", minimum: 1, maximum: 720 },
+        requireRecentExternal: { type: "boolean" }
       },
       additionalProperties: false
     }

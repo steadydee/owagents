@@ -68,7 +68,20 @@ For `polling_30m`, call `owlswatch_email_search_recent_threads` with:
 
 Even though the job runs every 30 minutes, use a 24-hour search window so missed runs recover after downtime. De-duplication belongs to Operations/local task state.
 
-For `daily_summary`, call `owlswatch_email_list_open_tasks` first. If there are too few tasks, call `owlswatch_email_search_recent_threads` with `hours: 24`.
+For `daily_summary`, the Telegram message is a last-24-hours digest only. Do not include old open tasks just because they are unresolved.
+
+Call `owlswatch_email_list_open_tasks` with:
+
+- `maxAgeHours: 24`
+- `requireRecentExternal: true`
+- `limit: 50`
+
+Then call `owlswatch_email_search_recent_threads` with:
+
+- `hours: 24`
+- `maxResults: 25`
+
+Include only items whose latest external Gmail message or task message snapshot is inside the last 24 hours. Exclude tasks with no recent message timestamp from the daily summary. The `unanswered_7d` job is responsible for older unresolved threads.
 
 For `unanswered_7d`, call `owlswatch_email_search_unanswered_threads` with:
 
@@ -367,18 +380,21 @@ Operations link unavailable.
 
 For the daily summary:
 
-1. call `owlswatch_email_list_open_tasks`
+1. call `owlswatch_email_list_open_tasks` with `maxAgeHours: 24` and `requireRecentExternal: true`
 2. group tasks by:
    - Urgent
    - Drafts ready
    - Needs human decision
    - Waiting on quote/payment/availability
-   - Unanswered
-3. include only important items
-4. call `owlswatch_email_send_telegram_message`
-5. call `owlswatch_email_submit_scan_run` if Operations is configured; otherwise skip or local-log
+3. call `owlswatch_email_search_recent_threads` with `hours: 24`
+4. include only important items from the last 24 hours
+5. exclude older open tasks, old unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, and resolved items
+6. call `owlswatch_email_send_telegram_message`
+7. call `owlswatch_email_submit_scan_run` if Operations is configured; otherwise skip or local-log
 
 The daily summary should be concise.
+
+If there are no important emails from the last 24 hours, say exactly that. Do not fill the summary with older open tasks.
 
 ## Step 13 - Memory
 
