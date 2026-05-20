@@ -317,8 +317,8 @@
         "args": ["~/.openclaw/workspace-dennis-brain/tools/brain_intake/server.py"],
         "env": {
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
-          "BRAIN_API_BASE_URL": "http://127.0.0.1:3000",
-          "BRAIN_ADMIN_TOKEN": "<runtime-only-if-configured>"
+          "BRAIN_API_BASE_URL": "https://brain-five-kappa.vercel.app",
+          "BRAIN_API_TOKEN": "<runtime-only-openclaw-brain-token>"
         }
       }
     }

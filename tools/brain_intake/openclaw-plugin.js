@@ -3,8 +3,7 @@ import { spawn } from "node:child_process";
 
 const SERVER = "/Users/agent/.openclaw/workspace-dennis-brain/tools/brain_intake/server.py";
 const BASE_ENV = {
-  OPENCLAW_CONFIG_PATH: "/Users/agent/.openclaw-owlswatch/openclaw.json",
-  BRAIN_API_BASE_URL: "http://127.0.0.1:3000"
+  OPENCLAW_CONFIG_PATH: "/Users/agent/.openclaw-owlswatch/openclaw.json"
 };
 
 const toolSchemas = {
@@ -18,6 +17,8 @@ const toolSchemas = {
       type: "object",
       properties: {
         raw_text: { type: "string" },
+        chat_id: { type: ["string", "number"] },
+        external_source_id: { type: "string" },
         sender_name: { type: "string" },
         sender_id: { type: ["string", "number"] },
         chat_title: { type: "string" },
@@ -37,6 +38,7 @@ const toolSchemas = {
       properties: {
         raw_text: { type: "string" },
         chat_id: { type: ["string", "number"] },
+        external_source_id: { type: "string" },
         message_thread_id: { type: ["string", "number"] },
         reply_to_message_id: { type: ["string", "number"] },
         message_id: { type: ["string", "number"] },

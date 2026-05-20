@@ -142,8 +142,11 @@ def http_json_get(url: str, headers: dict[str, str], timeout: int = 15) -> dict[
 
 
 def brain_headers(config: dict[str, Any]) -> dict[str, str]:
-    token = cfg_env(config, "BRAIN_ADMIN_TOKEN")
-    return {"x-brain-admin-token": token} if token else {}
+    api_token = cfg_env(config, "BRAIN_API_TOKEN")
+    if api_token:
+        return {"Authorization": f"Bearer {api_token}"}
+    admin_token = cfg_env(config, "BRAIN_ADMIN_TOKEN")
+    return {"x-brain-admin-token": admin_token} if admin_token else {}
 
 
 def telegram_api(method: str, params: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
@@ -167,22 +170,30 @@ def build_intake_payload(args: dict[str, Any]) -> dict[str, Any]:
     raw_text = validate_text("raw_text", args.get("raw_text"), required=True)
     sender_name = validate_text("sender_name", args.get("sender_name")) or "Telegram"
     sender_id = validate_safe_id("sender_id", args.get("sender_id"), required=False)
+    chat_id = validate_safe_id("chat_id", args.get("chat_id"), required=False)
     chat_title = validate_text("chat_title", args.get("chat_title"))
     message_id = validate_safe_id("message_id", args.get("message_id"), required=False)
     message_thread_id = validate_safe_id("message_thread_id", args.get("message_thread_id"), required=False)
+    external_source_id = validate_safe_id("external_source_id", args.get("external_source_id"), required=False)
     project_hint = validate_text("project_hint", args.get("project_hint"))
     domain_hint = validate_text("domain_hint", args.get("domain_hint"))
     sender = f"{sender_name} ({sender_id})" if sender_id else sender_name
+    if external_source_id is None and chat_id and message_id:
+        thread_part = message_thread_id or "main"
+        external_source_id = f"telegram_openclaw:{chat_id}:{thread_part}:{message_id}"
     metadata = {
         "openclaw_profile": "owlswatch",
         "openclaw_route": "dennis_brain",
         "telegram_chat_title": chat_title,
+        "telegram_chat_id": chat_id,
         "telegram_message_id": message_id,
         "telegram_thread_id": message_thread_id,
+        "externalSourceId": external_source_id,
     }
     payload = {
         "raw_text": raw_text,
         "source": "telegram_openclaw",
+        "external_source_id": external_source_id,
         "channel": "telegram",
         "sender": sender,
         "timestamp": now_iso(),
