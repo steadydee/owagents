@@ -1,0 +1,20 @@
+{
+  "id": "brain-intake",
+  "name": "Brain Intake Tools",
+  "description": "Narrow tools for routing OpenClaw Telegram updates into Brain.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "brain_health_check",
+      "brain_submit_intake",
+      "brain_submit_telegram_update",
+      "brain_telegram_send_message"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}
