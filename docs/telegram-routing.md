@@ -42,3 +42,14 @@ openclaw --profile owlswatch config validate
 openclaw --profile owlswatch channels status --probe
 openclaw --profile owlswatch gateway restart
 ```
+
+To bind the Dennis Brain group after the bot has been added:
+
+1. Send a text message in the `Dennis Brain` Telegram group.
+2. Run:
+
+```sh
+WAIT_SECONDS=120 ./scripts/bind-dennis-brain-telegram.sh
+```
+
+The script scans local OpenClaw logs for the group title, patches the runtime-only group id into the live profile, validates config, and restarts the gateway without printing the numeric id.
