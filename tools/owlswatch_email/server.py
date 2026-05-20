@@ -64,10 +64,7 @@ LOW_VALUE_MARKERS = (
     "documento electronico",
     "efactura",
     "dian",
-    "little hotelier",
     "booking for",
-    "thebookingbutton",
-    "bookingbutton",
     "mail-cotelco.org",
     "cotelco - comunicaciones",
     "cotelco - estudios",
@@ -80,6 +77,11 @@ LOW_VALUE_MARKERS = (
     "this event has been canceled",
     "this event has been cancelled",
     "google meet",
+)
+IMPORTANT_SYSTEM_MARKERS = (
+    "[little hotelier] enquiry received",
+    "little hotelier] enquiry received",
+    "you have received an enquiry for:",
 )
 STAFF_DOMAINS = ("owlswatch.com",)
 
@@ -356,6 +358,8 @@ def thread_messages(thread: dict[str, Any]) -> list[dict[str, Any]]:
 
 def is_low_value_message(message: dict[str, Any]) -> bool:
     haystack = " ".join(str(message.get(k) or "") for k in ("from", "subject", "bodyText")).lower()
+    if any(marker in haystack for marker in IMPORTANT_SYSTEM_MARKERS):
+        return False
     return any(marker in haystack for marker in LOW_VALUE_MARKERS)
 
 

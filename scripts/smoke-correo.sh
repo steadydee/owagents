@@ -55,6 +55,17 @@ result = server.tool_email_list_open_tasks({
 })
 ids = {task["taskId"] for task in result["tasks"]}
 assert ids == {"recent"}, ids
+
+assert not server.is_low_value_message({
+    "from": "donotreply@app.thebookingbutton.com",
+    "subject": "[Little Hotelier] Enquiry received from: Miranda Davies",
+    "bodyText": "You have received an enquiry for: Owl's Watch",
+})
+assert server.is_low_value_message({
+    "from": "newsletter@example.com",
+    "subject": "Weekly newsletter",
+    "bodyText": "unsubscribe",
+})
 PY
 
 echo "Correo smoke passed."

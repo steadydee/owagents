@@ -23,6 +23,6 @@ fi
     --session-id correo-daily-summary \
     --thinking medium \
     --timeout 1200 \
-    --message "Scheduled run: daily_summary. Send one concise Telegram summary of only important Owl's Watch email whose latest external Gmail message is from the last 24 hours only. Do not include older open tasks, weekly unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, or resolved items. If there are no important emails from the last 24 hours, say exactly that."
+    --message "Scheduled run: daily_summary. Send one concise Telegram summary of only important Owl's Watch email whose latest external Gmail message is from the last 24 hours only. Do not include older open tasks, weekly unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, or resolved items. Exception: include Little Hotelier / BookingButton enquiry-received emails because they are guest inquiries, even if sent from a no-reply address. If there are no important emails from the last 24 hours, say exactly that."
   printf '%s daily summary end\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 } >> "$LOG_FILE" 2>&1

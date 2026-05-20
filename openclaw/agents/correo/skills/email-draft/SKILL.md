@@ -112,7 +112,7 @@ Ignore:
 - no-reply notifications
 - finance notifications such as Bold payments/closures
 - electronic invoices and receipt notifications
-- booking-system notifications such as Little Hotelier unless the user explicitly asks for booking monitoring
+- routine booking-system notifications unless the user explicitly asks for booking monitoring
 - calendar/system notifications such as meeting cancellations
 - threads where the latest meaningful message is from Owl's Watch staff, unless the user explicitly asks for follow-up tracking
 - spam
@@ -125,6 +125,7 @@ Important email includes:
 - quote requests
 - availability questions
 - existing reservation questions
+- Little Hotelier / BookingButton `enquiry received` messages from potential guests
 - payment or deposit questions
 - meal, dietary, logistics, access, or transportation questions
 - birding questions
@@ -398,6 +399,7 @@ For the daily summary:
 3. call `owlswatch_email_search_recent_threads` with `hours: 24`
 4. include only important items from the last 24 hours
 5. exclude older open tasks, old unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, and resolved items
+   - exception: include Little Hotelier / BookingButton `enquiry received` messages because they are guest inquiries, even if sent by a no-reply address
 6. call `owlswatch_email_send_telegram_message`
 7. call `owlswatch_email_submit_scan_run` if Operations is configured; otherwise skip or local-log
 
