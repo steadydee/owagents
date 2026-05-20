@@ -57,6 +57,15 @@ Classify the instruction as one of:
 - `manual_thread`
 - `manual_search`
 
+If the inbound message comes from Telegram, remember that Telegram delivery is
+tool-only for this agent. Do not rely on the final assistant response being
+posted to Telegram. Any user-visible Telegram answer must be sent with
+`owlswatch_email_send_telegram_message`.
+
+Treat short Telegram requests such as "check again", "anything new?", "email
+summary", or "today's email" as `daily_summary` unless they clearly ask for a
+specific thread or sender.
+
 If the instruction is unclear, ask one short operational question.
 
 ## Step 2 - Search Gmail
@@ -395,6 +404,10 @@ For the daily summary:
 The daily summary should be concise.
 
 If there are no important emails from the last 24 hours, say exactly that. Do not fill the summary with older open tasks.
+
+For a manual Telegram `daily_summary` request, send the same concise summary to
+Telegram with `owlswatch_email_send_telegram_message`. The final OpenClaw chat
+reply may be a one-line internal confirmation only.
 
 ## Step 13 - Memory
 

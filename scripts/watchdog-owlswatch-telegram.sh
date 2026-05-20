@@ -9,6 +9,8 @@ LOG_FILE="${LOG_FILE:-$LOG_DIR/owlswatch-telegram-watchdog.log}"
 LOCK_DIR="${LOCK_DIR:-/tmp/owlswatch-telegram-watchdog.lock}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-600}"
 STAMP_FILE="${STAMP_FILE:-/tmp/owlswatch-telegram-watchdog.last-restart}"
+OPENCLAW_LOG_FILE="${OPENCLAW_LOG_FILE:-$LOG_DIR/openclaw-$(date '+%Y-%m-%d').log}"
+ERROR_CURSOR_FILE="${ERROR_CURSOR_FILE:-/tmp/owlswatch-telegram-watchdog.log-cursor}"
 
 mkdir -p "$LOG_DIR"
 
@@ -29,7 +31,29 @@ fi
 
 status_output="$("$OPENCLAW_BIN" --profile "$PROFILE" channels status --probe 2>&1 || true)"
 
-if printf '%s\n' "$status_output" | grep -Eq 'Telegram .*: .*running.*connected'; then
+bot_init_error=0
+if [ -f "$OPENCLAW_LOG_FILE" ]; then
+  current_size="$(wc -c < "$OPENCLAW_LOG_FILE" | tr -d ' ')"
+  last_size=0
+  if [ -f "$ERROR_CURSOR_FILE" ]; then
+    last_size="$(cat "$ERROR_CURSOR_FILE" 2>/dev/null || echo 0)"
+  fi
+  case "$last_size" in
+    ''|*[!0-9]*) last_size=0 ;;
+  esac
+  if [ "$current_size" -lt "$last_size" ]; then
+    last_size=0
+  fi
+  if [ "$current_size" -gt "$last_size" ]; then
+    delta="$((current_size - last_size))"
+    if tail -c "$delta" "$OPENCLAW_LOG_FILE" 2>/dev/null | grep -q 'Bot not initialized'; then
+      bot_init_error=1
+    fi
+    printf '%s\n' "$current_size" > "$ERROR_CURSOR_FILE"
+  fi
+fi
+
+if [ "$bot_init_error" -eq 0 ] && printf '%s\n' "$status_output" | grep -Eq 'Telegram .*: .*running.*connected'; then
   log "ok: Telegram running and connected"
   exit 0
 fi
@@ -46,7 +70,11 @@ if [ "$((now - last_restart))" -lt "$COOLDOWN_SECONDS" ]; then
   exit 0
 fi
 
-log "unhealthy Telegram channel; restarting owlswatch gateway"
+if [ "$bot_init_error" -eq 1 ]; then
+  log "unhealthy Telegram handler: Bot not initialized error detected; restarting owlswatch gateway"
+else
+  log "unhealthy Telegram channel; restarting owlswatch gateway"
+fi
 printf '%s\n' "$status_output" | sed 's/^/  /' >> "$LOG_FILE"
 
 if "$OPENCLAW_BIN" --profile "$PROFILE" gateway restart >> "$LOG_FILE" 2>&1; then
