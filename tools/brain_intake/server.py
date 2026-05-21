@@ -106,6 +106,16 @@ def validate_safe_id(name: str, value: Any, required: bool = True) -> str | None
     return text
 
 
+def normalize_telegram_chat_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if value.startswith("telegram:group:"):
+        return value.removeprefix("telegram:group:")
+    if value.startswith("telegram:"):
+        return value.removeprefix("telegram:")
+    return value
+
+
 def validate_text(name: str, value: Any, required: bool = False) -> str | None:
     if value is None:
         if required:
@@ -170,7 +180,7 @@ def build_intake_payload(args: dict[str, Any]) -> dict[str, Any]:
     raw_text = validate_text("raw_text", args.get("raw_text"), required=True)
     sender_name = validate_text("sender_name", args.get("sender_name")) or "Telegram"
     sender_id = validate_safe_id("sender_id", args.get("sender_id"), required=False)
-    chat_id = validate_safe_id("chat_id", args.get("chat_id"), required=False)
+    chat_id = normalize_telegram_chat_id(validate_safe_id("chat_id", args.get("chat_id"), required=False))
     chat_title = validate_text("chat_title", args.get("chat_title"))
     message_id = validate_safe_id("message_id", args.get("message_id"), required=False)
     message_thread_id = validate_safe_id("message_thread_id", args.get("message_thread_id"), required=False)
