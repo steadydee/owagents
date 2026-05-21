@@ -252,7 +252,9 @@ def tool_brain_submit_intake(args: dict[str, Any]) -> dict[str, Any]:
 
 def tool_telegram_send_message(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
-    chat_id = validate_safe_id("chat_id", args.get("chat_id"))
+    chat_id = normalize_telegram_chat_id(validate_safe_id("chat_id", args.get("chat_id")))
+    if chat_id is None:
+        raise ToolError("invalid_input", "chat_id is required.")
     text = validate_text("text", args.get("text"), required=True)
     reply_to = validate_safe_id("reply_to_message_id", args.get("reply_to_message_id"), required=False)
     message_thread_id = validate_safe_id("message_thread_id", args.get("message_thread_id"), required=False)
@@ -266,7 +268,9 @@ def tool_telegram_send_message(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_submit_telegram_update(args: dict[str, Any]) -> dict[str, Any]:
-    chat_id = validate_safe_id("chat_id", args.get("chat_id"))
+    chat_id = normalize_telegram_chat_id(validate_safe_id("chat_id", args.get("chat_id")))
+    if chat_id is None:
+        raise ToolError("invalid_input", "chat_id is required.")
     reply_to = validate_safe_id("reply_to_message_id", args.get("reply_to_message_id"), required=False)
     message_thread_id = validate_safe_id("message_thread_id", args.get("message_thread_id"), required=False)
     try:
