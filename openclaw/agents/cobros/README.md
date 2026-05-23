@@ -34,3 +34,5 @@ Optional:
 - `OWLSWATCH_COBROS_NOTIFY_THREAD_ID`
 
 Use the existing Owl's Watch Ops Telegram group and create a `Cuentas de Cobro` topic for routing.
+
+Generated documents should go in the Google Drive `AI/Cuentas de Cobro` folder. The Google service account must be shared on that folder before live packet generation is enabled.
