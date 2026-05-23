@@ -644,8 +644,19 @@ def extract_client_reference(text: str) -> str | None:
         lines = [normalize_spaces(line) for line in value.splitlines()]
         lines = [line for line in lines if line]
         if lines:
-            return " / ".join(lines[:3])
+            return clean_client_reference(" / ".join(lines[:3]))
     return None
+
+
+def clean_client_reference(value: str) -> str:
+    value = re.sub(r"[*_`]+", " ", value)
+    parts = []
+    for part in value.split("/"):
+        part = re.sub(r"^[\\W_]+|[\\W_]+$", " ", part)
+        cleaned = normalize_spaces(part)
+        if cleaned:
+            parts.append(cleaned)
+    return " / ".join(parts[:3])
 
 
 def extract_concept(text: str) -> str | None:
@@ -833,48 +844,190 @@ def template_replacements(fields: dict[str, Any]) -> dict[str, str]:
     return replacements
 
 
+def format_cop(amount: int) -> str:
+    return f"${amount:,.0f}"
+
+
+def cobros_document_html(fields: dict[str, Any]) -> str:
+    payee = fields.get("payee") or {}
+    amount = int(fields["amountCop"])
+    rows = [
+        ("Señores", fields.get("debtorLegalName") or ""),
+        ("NIT", fields.get("debtorNit") or ""),
+        ("Referencia / Cliente", fields.get("clientReference") or ""),
+        ("Fechas de servicio", fields.get("serviceDates") or ""),
+        ("Concepto", fields.get("concept") or ""),
+        ("Valor", format_cop(amount)),
+        ("Valor en letras", fields.get("amountWordsEs") or amount_words_es(amount)),
+    ]
+    payee_rows = [
+        ("Proveedor", payee.get("displayName") or ""),
+        ("Cédula/NIT", payee.get("cedulaNit") or ""),
+        ("Banco", payee.get("bankName") or ""),
+        ("Tipo de cuenta", payee.get("accountType") or ""),
+        ("Número de cuenta", payee.get("accountNumber") or ""),
+    ]
+    def tr(label: str, value: str) -> str:
+        return f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page {{ margin: 2cm; }}
+    body {{
+      color: #2f201a;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 11pt;
+      line-height: 1.45;
+    }}
+    h1 {{
+      font-size: 20pt;
+      letter-spacing: 0;
+      margin: 0 0 28px;
+      text-align: center;
+    }}
+    .date {{
+      margin-bottom: 28px;
+      text-align: right;
+    }}
+    table {{
+      border-collapse: collapse;
+      margin: 18px 0 28px;
+      width: 100%;
+    }}
+    th {{
+      background: #eadcc6;
+      border: 1px solid #4a3027;
+      font-weight: 700;
+      padding: 9px 10px;
+      text-align: left;
+      width: 32%;
+    }}
+    td {{
+      border: 1px solid #4a3027;
+      padding: 9px 10px;
+    }}
+    .amount {{
+      font-size: 14pt;
+      font-weight: 700;
+    }}
+    .section-title {{
+      color: #4a3027;
+      font-size: 12pt;
+      font-weight: 700;
+      margin-top: 26px;
+    }}
+    .signature {{
+      margin-top: 56px;
+    }}
+  </style>
+</head>
+<body>
+  <h1>CUENTA DE COBRO</h1>
+  <p class="date">Fecha: {html.escape(dt.date.today().isoformat())}</p>
+  <p>Por medio de la presente, se presenta cuenta de cobro con la siguiente información:</p>
+  <table>{''.join(tr(label, value) for label, value in rows)}</table>
+  <p class="section-title">Datos de pago</p>
+  <table>{''.join(tr(label, value) for label, value in payee_rows)}</table>
+  <p class="signature">Atentamente,</p>
+  <p><strong>{html.escape(payee.get("displayName") or "")}</strong><br>
+  Cédula/NIT: {html.escape(payee.get("cedulaNit") or "")}</p>
+</body>
+</html>"""
+
+
+def create_doc_from_html(drive: Any, fields: dict[str, Any], title: str, folder_id: str) -> dict[str, Any]:
+    from googleapiclient.http import MediaIoBaseUpload
+    import io
+    html_bytes = cobros_document_html(fields).encode("utf-8")
+    media = MediaIoBaseUpload(io.BytesIO(html_bytes), mimetype="text/html", resumable=False)
+    return drive.files().create(
+        body={"name": title, "parents": [folder_id], "mimeType": "application/vnd.google-apps.document"},
+        media_body=media,
+        fields="id,webViewLink",
+        supportsAllDrives=True,
+    ).execute()
+
+
+def create_pdf_for_doc(drive: Any, doc_id: str, title: str, folder_id: str) -> tuple[bytes, dict[str, Any], str]:
+    from googleapiclient.http import MediaIoBaseUpload
+    import io
+    pdf_bytes = drive.files().export(fileId=doc_id, mimeType="application/pdf").execute()
+    pdf_name = f"{title}.pdf"
+    media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
+    pdf_file = drive.files().create(
+        body={"name": pdf_name, "parents": [folder_id], "mimeType": "application/pdf"},
+        media_body=media,
+        fields="id,webViewLink",
+        supportsAllDrives=True,
+    ).execute()
+    return pdf_bytes, pdf_file, pdf_name
+
+
+def should_fallback_to_drive_html(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "docs.googleapis.com" in lowered
+        or "google docs api" in lowered
+        or "file not found" in lowered
+        or "notfound" in lowered
+        or "404" in lowered
+    )
+
+
 def create_doc_and_pdf(config: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
     try:
-        from googleapiclient.http import MediaIoBaseUpload
-        import io
+        import io  # noqa: F401
+        from googleapiclient.http import MediaIoBaseUpload  # noqa: F401
     except ImportError as exc:
         raise ToolError("dependency_missing", "Google API upload dependencies are not installed.") from exc
     delegated_user = google_workspace_impersonation_user(config)
     drive = google_build_service(config, "drive", "v3", ["https://www.googleapis.com/auth/drive"], delegated_user)
-    docs = google_build_service(config, "docs", "v1", ["https://www.googleapis.com/auth/documents", "https://www.googleapis.com/auth/drive"], delegated_user)
     title = packet_title(fields)
     folder_id = cobros_folder_id(config)
+    copied: dict[str, Any] | None = None
     try:
+        docs = google_build_service(config, "docs", "v1", ["https://www.googleapis.com/auth/documents", "https://www.googleapis.com/auth/drive"], delegated_user)
         copied = drive.files().copy(
             fileId=cobros_template_doc_id(config),
             body={"name": title, "parents": [folder_id]},
             fields="id,webViewLink",
             supportsAllDrives=True,
         ).execute()
-        doc_id = copied["id"]
         requests = []
         for old, new in template_replacements(fields).items():
             requests.append({"replaceAllText": {"containsText": {"text": old, "matchCase": True}, "replaceText": str(new)}})
         if requests:
-            docs.documents().batchUpdate(documentId=doc_id, body={"requests": requests}).execute()
-        pdf_bytes = drive.files().export(fileId=doc_id, mimeType="application/pdf").execute()
-        pdf_name = f"{title}.pdf"
-        media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
-        pdf_file = drive.files().create(
-            body={"name": pdf_name, "parents": [folder_id], "mimeType": "application/pdf"},
-            media_body=media,
-            fields="id,webViewLink",
-            supportsAllDrives=True,
-        ).execute()
+            docs.documents().batchUpdate(documentId=copied["id"], body={"requests": requests}).execute()
     except Exception as exc:
         message = str(exc)
-        if "unauthorized_client" in message:
+        if copied and copied.get("id"):
+            try:
+                drive.files().delete(fileId=copied["id"], supportsAllDrives=True).execute()
+            except Exception:
+                pass
+        if should_fallback_to_drive_html(message):
+            try:
+                copied = create_doc_from_html(drive, fields, title, folder_id)
+            except Exception as fallback_exc:
+                message = str(fallback_exc)
+                if "unauthorized_client" in message:
+                    raise ToolError("google_workspace_impersonation_unauthorized", "Google Workspace delegation is missing Drive scopes for Cobros document creation.") from fallback_exc
+                if "storageQuotaExceeded" in message or "storage quota" in message.lower():
+                    raise ToolError("google_drive_storage_quota_exceeded", "Google Drive refused document creation because service-account-owned Drive storage has no quota. Configure Google Workspace impersonation for Drive writes.") from fallback_exc
+                raise ToolError("google_drive_error", "Google Drive cuenta de cobro HTML document creation failed.", retryable=True) from fallback_exc
+        elif "unauthorized_client" in message:
             raise ToolError("google_workspace_impersonation_unauthorized", "Google Workspace delegation is missing Drive/Docs scopes for Cobros document creation.") from exc
-        if "storageQuotaExceeded" in message or "storage quota" in message.lower():
+        elif "storageQuotaExceeded" in message or "storage quota" in message.lower():
             raise ToolError("google_drive_storage_quota_exceeded", "Google Drive refused document creation because service-account-owned Drive storage has no quota. Configure Google Workspace impersonation for Drive writes.") from exc
-        if "File not found" in message or "notFound" in message or "404" in message:
-            raise ToolError("google_drive_template_or_folder_not_found", "Cobros template or output folder is not accessible to the configured Google identity.") from exc
-        raise ToolError("google_drive_error", "Google Drive cuenta de cobro packet creation failed.", retryable=True) from exc
+        else:
+            raise ToolError("google_drive_error", "Google Drive cuenta de cobro packet creation failed.", retryable=True) from exc
+    doc_id = copied["id"]
+    try:
+        pdf_bytes, pdf_file, pdf_name = create_pdf_for_doc(drive, doc_id, title, folder_id)
+    except Exception as exc:
+        raise ToolError("google_drive_error", "Google Drive cuenta de cobro PDF export failed.", retryable=True) from exc
     SPOOL_DIR.mkdir(parents=True, exist_ok=True)
     pdf_local_path = SPOOL_DIR / f"{doc_id}.pdf"
     pdf_local_path.write_bytes(pdf_bytes)
