@@ -10,8 +10,9 @@ The Owl's Watch Ops group is for Owl's Watch operational work:
 - Receipts topic -> Cuenta (`agentId: cuenta`)
 - Quotes topic -> Cotiza (`agentId: cotiza`)
 - Email topic -> Correo (`agentId: correo`)
+- Cuentas de Cobro topic -> Cobros (`agentId: cobros`)
 
-Users should not need `/cotiza` or `/receipt` inside the correct topic.
+Users should not need `/cotiza`, `/receipt`, or `/cobros` inside the correct topic.
 
 ## Dennis Brain
 

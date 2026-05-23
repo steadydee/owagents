@@ -4,7 +4,7 @@ This repo follows OpenClaw's multi-agent model:
 
 - One `agentId` is one isolated brain: workspace, `agentDir`, auth profiles, model registry, sessions, skills, and tool policy.
 - `main` is the default/fallback agent. For Owl's Watch, `main` is only the conductor.
-- Specialist work lives in specialist agents: `cuenta`, `cotiza`, `correo`, and `brain`.
+- Specialist work lives in specialist agents: `cuenta`, `cotiza`, `correo`, `cobros`, and `brain`.
 - Telegram forum topics route directly to specialists with `channels.telegram.groups.<chatId>.topics.<threadId>.agentId`.
 - Whole Telegram groups can route through top-level `bindings[]` rules when the group has no forum topics, such as the private Dennis Brain capture group.
 - Per-agent tool policies enforce authority boundaries. Deny broad shell, browser, filesystem, gateway, cron, node, and web tools unless a future review explicitly approves them.
@@ -16,6 +16,7 @@ This repo follows OpenClaw's multi-agent model:
 - Receipts topic -> `cuenta`
 - Quotes topic -> `cotiza`
 - Email topic -> `correo`
+- Cuentas de Cobro topic -> `cobros`
 
 The conductor may explain where work belongs, but it does not create drafts or call business tools.
 

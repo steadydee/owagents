@@ -1,0 +1,69 @@
+version: owlswatch-cobros-profiles-v1
+notes:
+  - Historical examples are used only to confirm legal names, NITs, aliases, and payee defaults.
+  - Amounts must always come from the source request/payment context, never from historical examples.
+payees:
+  luz:
+    displayName: Luz Adriana Valencia Ortiz
+    cedulaNit: 30338298-9
+    bankName: Bancolombia
+    accountType: Ahorros
+    accountNumber: "62352655835"
+  dennis:
+    displayName: Dennis Thornton Bailey
+    cedulaNit: 700179253-5
+    bankName: Bancolombia
+    accountType: Ahorros
+    accountNumber: "05900011624"
+operators:
+  colombia57:
+    legalName: Colombia57 Tours
+    nit: 090026196-8
+    defaultPayee: luz
+    aliases:
+      - Colombia57
+      - Colombia 57
+      - Colombia57 Tours
+      - Promotora Neptuno
+  jaguarundi:
+    legalName: JAGUARUNDI TRAVEL SAS
+    nit: 901687140-1
+    defaultPayee: luz
+    aliases:
+      - Jaguarundi
+      - Jaguarundi Travel
+      - JAGUARUNDI TRAVEL SAS
+  nature_experience:
+    legalName: NATURE EXPERIENCE SAS
+    nit: 901937987-4
+    defaultPayee: dennis
+    aliases:
+      - Nature Experience
+      - NATURE EXPERIENCE SAS
+  manakin:
+    legalName: MANAKIN NATURE TOURS SAS
+    nit: 900428891-9
+    defaultPayee: dennis
+    aliases:
+      - Manakin
+      - Manakin Nature Tours
+      - MANAKIN NATURE TOURS SAS
+  hacienda_venecia:
+    legalName: Hacienda Venecia
+    nit: 900310671-7
+    defaultPayee: luz
+    aliases:
+      - Hacienda Venecia
+  wild_about_colombia:
+    legalName: Wild About Colombia
+    nit: 901132193-8
+    defaultPayee: dennis
+    aliases:
+      - Wild About Colombia
+  de_una:
+    legalName: De Una Viajes
+    nit: "830.146.707"
+    defaultPayee:
+    aliases:
+      - De Una
+      - De Una Viajes

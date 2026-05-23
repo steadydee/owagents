@@ -7,6 +7,7 @@ MAIN_WORKSPACE="${MAIN_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-main}"
 CUENTA_WORKSPACE="${CUENTA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch}"
 COTIZA_WORKSPACE="${COTIZA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-cotiza}"
 CORREO_WORKSPACE="${CORREO_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-correo}"
+COBROS_WORKSPACE="${COBROS_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-cobros}"
 BRAIN_WORKSPACE="${BRAIN_WORKSPACE:-$HOME/.openclaw/workspace-dennis-brain}"
 PROFILE="${OPENCLAW_PROFILE:-owlswatch}"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Backups/owlswatch-agents/deploy}"
@@ -57,6 +58,14 @@ backup_path "$CORREO_WORKSPACE/TOOLS.md" correo
 backup_path "$CORREO_WORKSPACE/skills/email-draft" correo-skills
 backup_path "$CORREO_WORKSPACE/tools/owlswatch_email" correo-tools
 
+backup_path "$COBROS_WORKSPACE/AGENTS.md" cobros
+backup_path "$COBROS_WORKSPACE/IDENTITY.md" cobros
+backup_path "$COBROS_WORKSPACE/SOUL.md" cobros
+backup_path "$COBROS_WORKSPACE/README.md" cobros
+backup_path "$COBROS_WORKSPACE/TOOLS.md" cobros
+backup_path "$COBROS_WORKSPACE/skills/cuenta-cobro" cobros-skills
+backup_path "$COBROS_WORKSPACE/tools/owlswatch_cobros" cobros-tools
+
 backup_path "$BRAIN_WORKSPACE/AGENTS.md" brain
 backup_path "$BRAIN_WORKSPACE/IDENTITY.md" brain
 backup_path "$BRAIN_WORKSPACE/SOUL.md" brain
@@ -105,6 +114,19 @@ if [ ! -f "$CORREO_WORKSPACE/MEMORY.md" ]; then
   cp "$ROOT/openclaw/agents/correo/MEMORY.template.md" "$CORREO_WORKSPACE/MEMORY.md"
 fi
 
+echo "Deploying Cobros source"
+mkdir -p "$COBROS_WORKSPACE/skills/cuenta-cobro" "$COBROS_WORKSPACE/tools/owlswatch_cobros" "$COBROS_WORKSPACE/data/cobros"
+rsync -a "$ROOT/openclaw/agents/cobros/AGENTS.md" "$ROOT/openclaw/agents/cobros/IDENTITY.md" "$ROOT/openclaw/agents/cobros/SOUL.md" "$ROOT/openclaw/agents/cobros/README.md" "$ROOT/openclaw/agents/cobros/TOOLS.md" "$COBROS_WORKSPACE/"
+rsync -a "$ROOT/openclaw/agents/cobros/skills/cuenta-cobro/" "$COBROS_WORKSPACE/skills/cuenta-cobro/"
+rsync -a --delete --exclude '__pycache__' --exclude '.pytest_cache' "$ROOT/tools/owlswatch_cobros/" "$COBROS_WORKSPACE/tools/owlswatch_cobros/"
+rsync -a "$ROOT/data/cobros/" "$COBROS_WORKSPACE/data/cobros/"
+if [ ! -f "$COBROS_WORKSPACE/USER.md" ]; then
+  cp "$ROOT/openclaw/agents/cobros/USER.example.md" "$COBROS_WORKSPACE/USER.md"
+fi
+if [ ! -f "$COBROS_WORKSPACE/MEMORY.md" ]; then
+  cp "$ROOT/openclaw/agents/cobros/MEMORY.template.md" "$COBROS_WORKSPACE/MEMORY.md"
+fi
+
 echo "Deploying Brain Intake source"
 mkdir -p "$BRAIN_WORKSPACE/skills/brain-intake" "$BRAIN_WORKSPACE/tools/brain_intake"
 rsync -a "$ROOT/openclaw/agents/brain/AGENTS.md" "$ROOT/openclaw/agents/brain/IDENTITY.md" "$ROOT/openclaw/agents/brain/SOUL.md" "$ROOT/openclaw/agents/brain/README.md" "$ROOT/openclaw/agents/brain/TOOLS.md" "$BRAIN_WORKSPACE/"
@@ -121,12 +143,14 @@ echo "Validating deployed source"
 python3 -m py_compile "$CUENTA_WORKSPACE/tools/owlswatch_intake/server.py"
 python3 -m py_compile "$COTIZA_WORKSPACE/tools/owlswatch_quotes/server.py"
 python3 -m py_compile "$CORREO_WORKSPACE/tools/owlswatch_email/server.py"
+python3 -m py_compile "$COBROS_WORKSPACE/tools/owlswatch_cobros/server.py"
 python3 -m py_compile "$BRAIN_WORKSPACE/tools/brain_intake/server.py"
 openclaw --profile "$PROFILE" config validate
 openclaw --profile "$PROFILE" skills check --agent main
 openclaw --profile "$PROFILE" skills check --agent cuenta
 openclaw --profile "$PROFILE" skills check --agent cotiza
 openclaw --profile "$PROFILE" skills check --agent correo
+openclaw --profile "$PROFILE" skills check --agent cobros
 openclaw --profile "$PROFILE" skills check --agent brain
 
 echo "Deploy complete. Backup: $BACKUP_DIR"

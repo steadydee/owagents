@@ -1,0 +1,23 @@
+{
+  "id": "owlswatch-cobros",
+  "name": "Owl's Watch Cobros Tools",
+  "description": "Narrow tools for Cobros cuenta de cobro drafting.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "owlswatch_cobros_search_gmail_threads",
+      "owlswatch_cobros_read_gmail_thread",
+      "owlswatch_cobros_prepare",
+      "owlswatch_cobros_create_packet",
+      "owlswatch_cobros_create_gmail_draft",
+      "owlswatch_cobros_send_telegram_message",
+      "owlswatch_cobros_memory_log"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

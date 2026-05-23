@@ -11,6 +11,7 @@ This repo manages Owl's Watch OpenClaw agents.
 - Do not give Cuenta approval, modification, or deletion authority over expenses.
 - Do not give Cotiza email-sending, booking, availability, or final quote status authority.
 - Do not give Correo final email-send authority or Gmail mutation tools beyond explicitly enabled draft creation.
+- Do not give Cobros final email-send authority. Cobros may create Gmail drafts with cuenta de cobro PDF attachments, but never sends them.
 - Operations app changes belong in the Operations repo, not here.
 
 ## Before Committing
@@ -22,6 +23,7 @@ Run:
 ./scripts/smoke-cuenta.sh
 ./scripts/smoke-cotiza.sh
 ./scripts/smoke-correo.sh
+./scripts/smoke-cobros.sh
 openclaw --profile owlswatch config validate
 openclaw --profile owlswatch agents list --bindings
 ```

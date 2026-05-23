@@ -8,6 +8,7 @@ Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegr
 - `cuenta`: creates expense drafts only.
 - `cotiza`: creates quote drafts and Drive quote sheets only.
 - `correo`: creates Email Desk tasks and Gmail drafts only. It does not send final emails.
+- `cobros`: creates cuenta de cobro Drive Doc/PDF packets, Gmail drafts with attached PDFs, and Email Desk review tasks only. It does not send final emails.
 
 ## Main
 
@@ -79,6 +80,26 @@ Forbidden:
 - Invent prices, policies, access details, payment details, or booking rules.
 - Use Luna broad prompt snapshots or direct database reads.
 - Manage marketing campaigns or outreach sequences.
+
+## Cobros
+
+Allowed:
+
+- Search/read the configured Owl's Watch Gmail account for cuenta de cobro, factura, and accounting-document requests.
+- Prepare and validate cuenta de cobro fields.
+- Copy the configured Google Doc template, export a PDF, and store both in the configured Drive folder.
+- Create Gmail drafts with the generated PDF attached.
+- Submit Operations Email Desk review tasks.
+- Send short Telegram notifications.
+
+Forbidden:
+
+- Send final email.
+- Invent legal names, NITs, amounts, service dates, concepts, payees, or bank details.
+- Reissue existing cuentas de cobro silently.
+- Generate documents for amount mismatch/correction disputes without human review.
+- Use quote prices or historical examples as accounting truth.
+- Access unrelated Operations modules or direct databases.
 
 ## Tool Policy
 

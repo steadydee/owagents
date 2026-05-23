@@ -198,6 +198,43 @@
             "bundle-mcp"
           ]
         }
+      },
+      {
+        "id": "cobros",
+        "name": "Cobros",
+        "model": "openai/gpt-5.5",
+        "models": {
+          "openai/gpt-5.5": {
+            "agentRuntime": {
+              "id": "codex"
+            }
+          }
+        },
+        "workspace": "~/.openclaw/workspace-owlswatch-cobros",
+        "skills": ["cuenta-cobro"],
+        "tools": {
+          "profile": "minimal",
+          "alsoAllow": [
+            "owlswatch_cobros_search_gmail_threads",
+            "owlswatch_cobros_read_gmail_thread",
+            "owlswatch_cobros_prepare",
+            "owlswatch_cobros_create_packet",
+            "owlswatch_cobros_create_gmail_draft",
+            "owlswatch_cobros_send_telegram_message",
+            "owlswatch_cobros_memory_log"
+          ],
+          "deny": [
+            "exec",
+            "browser",
+            "gateway",
+            "cron",
+            "nodes",
+            "canvas",
+            "group:fs",
+            "group:web",
+            "bundle-mcp"
+          ]
+        }
       }
     ]
   },
@@ -243,6 +280,12 @@
             },
             "<receipts_topic_id>": {
               "agentId": "cuenta",
+              "requireMention": false,
+              "groupPolicy": "open",
+              "ingest": true
+            },
+            "<cobros_topic_id>": {
+              "agentId": "cobros",
               "requireMention": false,
               "groupPolicy": "open",
               "ingest": true
@@ -312,6 +355,23 @@
           "OWLSWATCH_GMAIL_DRAFTS_ENABLED": "0"
         }
       },
+      "owlswatch_cobros": {
+        "command": "python3",
+        "args": ["~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros/server.py"],
+        "env": {
+          "OWLSWATCH_COBROS_WORKSPACE": "~/.openclaw/workspace-owlswatch-cobros",
+          "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
+          "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
+          "EMAIL_AGENT_API_TOKEN_FILE": "~/.openclaw-owlswatch/secrets/email-agent-token.tmp",
+          "GOOGLE_APPLICATION_CREDENTIALS": "~/.openclaw-owlswatch/secrets/google-service-account.json",
+          "OWLSWATCH_GMAIL_ACCOUNT": "info@owlswatch.com",
+          "OWLSWATCH_COBROS_FOLDER_ID": "1v5dWWiLFNbp6v1AjQqsO2Sa3i_uMM0WO",
+          "OWLSWATCH_COBROS_TEMPLATE_DOC_ID": "1cO6hgB-0ryRRWOvfuxg9jv8x7EIkTAOIDELTkGK0keE",
+          "OWLSWATCH_COBROS_PROFILES_PATH": "~/.openclaw/workspace-owlswatch-cobros/data/cobros/operator-billing-profiles.yaml",
+          "OWLSWATCH_COBROS_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
+          "OWLSWATCH_COBROS_NOTIFY_THREAD_ID": "<optional_cobros_topic_id>"
+        }
+      },
       "brain_intake": {
         "command": "python3",
         "args": ["~/.openclaw/workspace-dennis-brain/tools/brain_intake/server.py"],
@@ -340,6 +400,9 @@
       "owlswatch-email": {
         "enabled": true
       },
+      "owlswatch-cobros": {
+        "enabled": true
+      },
       "brain-intake": {
         "enabled": true
       }
@@ -349,6 +412,7 @@
         "~/.openclaw/workspace-owlswatch/tools/owlswatch_intake",
         "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes",
         "~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email",
+        "~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros",
         "~/.openclaw/workspace-dennis-brain/tools/brain_intake"
       ]
     }
