@@ -27,6 +27,11 @@ from typing import Any, Callable
 WORKSPACE = Path(os.environ.get("OWLSWATCH_COBROS_WORKSPACE", "~/.openclaw/workspace-owlswatch-cobros")).expanduser()
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-owlswatch/openclaw.json")).expanduser()
 REPO_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "cobros" / "operator-billing-profiles.yaml"
+DEFAULT_LOGO_PATHS = (
+    Path(__file__).resolve().parent / "assets" / "WATERMARK FULL LOGO.png",
+    Path(__file__).resolve().parents[2] / "openclaw" / "agents" / "cotiza" / "assets" / "WATERMARK FULL LOGO.png",
+    Path("/Users/agent/Downloads/WATERMARK FULL LOGO.png"),
+)
 SPOOL_DIR = WORKSPACE / "spool" / "cobros"
 MEMORY_DIR = WORKSPACE / "memory"
 
@@ -848,91 +853,118 @@ def format_cop(amount: int) -> str:
     return f"${amount:,.0f}"
 
 
+def logo_data_uri() -> str:
+    for path in DEFAULT_LOGO_PATHS:
+        try:
+            if path.is_file():
+                return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError:
+            continue
+    return ""
+
+
+def cedula_without_check_digit(value: str | None) -> str:
+    if not value:
+        return ""
+    return re.sub(r"-\d+$", "", value.strip())
+
+
 def cobros_document_html(fields: dict[str, Any]) -> str:
     payee = fields.get("payee") or {}
     amount = int(fields["amountCop"])
-    rows = [
-        ("Señores", fields.get("debtorLegalName") or ""),
-        ("NIT", fields.get("debtorNit") or ""),
-        ("Referencia / Cliente", fields.get("clientReference") or ""),
-        ("Fechas de servicio", fields.get("serviceDates") or ""),
-        ("Concepto", fields.get("concept") or ""),
-        ("Valor", format_cop(amount)),
-        ("Valor en letras", fields.get("amountWordsEs") or amount_words_es(amount)),
-    ]
-    payee_rows = [
-        ("Proveedor", payee.get("displayName") or ""),
-        ("Cédula/NIT", payee.get("cedulaNit") or ""),
-        ("Banco", payee.get("bankName") or ""),
-        ("Tipo de cuenta", payee.get("accountType") or ""),
-        ("Número de cuenta", payee.get("accountNumber") or ""),
-    ]
-    def tr(label: str, value: str) -> str:
-        return f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
+    logo = logo_data_uri()
+    logo_img = (
+        f'<img src="{logo}" alt="Owl&apos;s Watch" width="96" height="96" '
+        'style="width:96px;height:96px;object-fit:contain;border:0;display:block;">'
+        if logo else ""
+    )
+    payee_name = payee.get("displayName") or ""
+    payee_nit = payee.get("cedulaNit") or ""
+    payee_name_line = f"{payee_name} - Owl's Watch" if payee_name else "Owl's Watch"
     return f"""<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
-    @page {{ margin: 2cm; }}
+    @page {{ size: letter; margin: 0.65in 0.95in; }}
     body {{
-      color: #2f201a;
-      font-family: Arial, Helvetica, sans-serif;
-      font-size: 11pt;
-      line-height: 1.45;
+      color: #111;
+      font-family: "Century Gothic", "Avenir Next", Arial, Helvetica, sans-serif;
+      font-size: 12pt;
+      line-height: 1.25;
+      margin: 0;
+    }}
+    h1, h2 {{
+      font-family: "Century Gothic", "Avenir Next", Arial, Helvetica, sans-serif;
     }}
     h1 {{
-      font-size: 20pt;
-      letter-spacing: 0;
-      margin: 0 0 28px;
-      text-align: center;
-    }}
-    .date {{
-      margin-bottom: 28px;
-      text-align: right;
-    }}
-    table {{
-      border-collapse: collapse;
-      margin: 18px 0 28px;
-      width: 100%;
-    }}
-    th {{
-      background: #eadcc6;
-      border: 1px solid #4a3027;
-      font-weight: 700;
-      padding: 9px 10px;
-      text-align: left;
-      width: 32%;
-    }}
-    td {{
-      border: 1px solid #4a3027;
-      padding: 9px 10px;
-    }}
-    .amount {{
       font-size: 14pt;
       font-weight: 700;
+      letter-spacing: 0;
+      margin: 0 0 10px;
+      text-align: center;
     }}
-    .section-title {{
-      color: #4a3027;
-      font-size: 12pt;
+    h2 {{
+      font-size: 13pt;
       font-weight: 700;
-      margin-top: 26px;
+      margin: 28px 0 7px;
     }}
-    .signature {{
-      margin-top: 56px;
+    p {{
+      margin: 0 0 8px;
+    }}
+    .reference {{
+      font-size: 11pt;
+      margin-top: 6px;
+    }}
+    .payment {{
+      font-size: 11.5pt;
+      margin-top: 82px;
+      width: 3.2in;
+    }}
+    .payment p {{
+      margin-bottom: 6px;
+    }}
+    .main {{
+      margin: 26px auto 0;
+      max-width: 5.6in;
+      text-align: center;
     }}
   </style>
 </head>
 <body>
-  <h1>CUENTA DE COBRO</h1>
-  <p class="date">Fecha: {html.escape(dt.date.today().isoformat())}</p>
-  <p>Por medio de la presente, se presenta cuenta de cobro con la siguiente información:</p>
-  <table>{''.join(tr(label, value) for label, value in rows)}</table>
-  <p class="section-title">Datos de pago</p>
-  <table>{''.join(tr(label, value) for label, value in payee_rows)}</table>
-  <p class="signature">Atentamente,</p>
-  <p><strong>{html.escape(payee.get("displayName") or "")}</strong><br>
-  Cédula/NIT: {html.escape(payee.get("cedulaNit") or "")}</p>
+  <table border="0" cellpadding="0" cellspacing="0" style="width:100%; border-collapse:collapse; border:0;">
+    <tr>
+      <td style="width:1.25in; vertical-align:top; border:0;">{logo_img}</td>
+      <td></td>
+    </tr>
+  </table>
+  <div class="main" align="center">
+      <h1>Cuenta de Cobro</h1>
+      <p align="center">{html.escape(fields.get("debtorLegalName") or "")}</p>
+      <p align="center">NIT: {html.escape(fields.get("debtorNit") or "")}</p>
+
+      <h2>Debe a:</h2>
+      <p align="center">{html.escape(payee_name_line)}</p>
+      <p align="center">NIT: {html.escape(payee_nit)}</p>
+
+      <h2>La Suma de:</h2>
+      <p align="center">{html.escape(format_cop(amount))}</p>
+      <p align="center">{html.escape(fields.get("amountWordsEs") or amount_words_es(amount))}</p>
+
+      <h2>Por Concepto:</h2>
+      <p align="center">{html.escape(fields.get("concept") or "")}</p>
+      <p align="center">{html.escape(fields.get("serviceDates") or "")}</p>
+      <p align="center" class="reference">Referencia: {html.escape(fields.get("clientReference") or "")}</p>
+  </div>
+
+    <section class="payment" align="left">
+      <p>Por favor consignar:</p>
+      <p>{html.escape(payee.get("accountType") or "Cuenta")} {html.escape(payee.get("bankName") or "")}</p>
+      <p># {html.escape(payee.get("accountNumber") or "")}</p>
+      <p>A nombre de:</p>
+      <p>{html.escape(payee_name)}</p>
+      <p>Cédula: {html.escape(cedula_without_check_digit(payee_nit))}</p>
+    </section>
 </body>
 </html>"""
 
