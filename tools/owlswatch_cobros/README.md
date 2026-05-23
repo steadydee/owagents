@@ -15,6 +15,7 @@ Required runtime values live in `~/.openclaw-owlswatch/openclaw.json` under `mcp
 Required:
 
 - `GOOGLE_APPLICATION_CREDENTIALS`
+- `GOOGLE_WORKSPACE_IMPERSONATE_USER=info@owlswatch.com`
 - `OWLSWATCH_GMAIL_ACCOUNT`
 - `OWLSWATCH_COBROS_FOLDER_ID`
 - `OWLSWATCH_COBROS_TEMPLATE_DOC_ID`
@@ -26,7 +27,12 @@ Optional:
 - `OWLSWATCH_COBROS_NOTIFY_CHAT_ID`
 - `OWLSWATCH_COBROS_NOTIFY_THREAD_ID`
 
-Gmail draft creation requires Workspace domain-wide delegation scope:
+Google Doc/PDF creation should use Workspace domain-wide delegation so files are owned by `info@owlswatch.com`, not by the service account. Required scopes for the configured service-account client ID:
+
+- `https://www.googleapis.com/auth/drive`
+- `https://www.googleapis.com/auth/documents`
+
+Gmail draft creation also requires Workspace domain-wide delegation scope:
 
 `https://www.googleapis.com/auth/gmail.compose`
 

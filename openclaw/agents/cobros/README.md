@@ -23,6 +23,7 @@ Configured values live in `~/.openclaw-owlswatch/openclaw.json` under `mcp.serve
 Required when live:
 
 - `GOOGLE_APPLICATION_CREDENTIALS`
+- `GOOGLE_WORKSPACE_IMPERSONATE_USER=info@owlswatch.com`
 - `OWLSWATCH_GMAIL_ACCOUNT=info@owlswatch.com`
 - `OWLSWATCH_COBROS_FOLDER_ID`
 - `OWLSWATCH_COBROS_TEMPLATE_DOC_ID`
@@ -35,4 +36,4 @@ Optional:
 
 Use the existing Owl's Watch Ops Telegram group and create a `Cuentas de Cobro` topic for routing.
 
-Generated documents should go in the Google Drive `AI/Cuentas de Cobro` folder. The Google service account must be shared on that folder before live packet generation is enabled.
+Generated documents should go in the Google Drive `AI/Cuentas de Cobro` folder. The Google service account must be shared on that folder before live packet generation is enabled, and Workspace domain-wide delegation should include Drive/Docs scopes so Cobros can create files as `info@owlswatch.com`.

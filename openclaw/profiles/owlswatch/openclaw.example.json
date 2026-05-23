@@ -334,6 +334,7 @@
           "OWLSWATCH_GMAIL_ACCOUNT": "info@owlswatch.com",
           "GOOGLE_DRIVE_QUOTES_FOLDER_ID": "1_9QDJAfZ634pkLAxnPiDi1XaNhENQJiE",
           "GOOGLE_APPLICATION_CREDENTIALS": "~/.openclaw-owlswatch/secrets/google-service-account.json",
+          "GOOGLE_WORKSPACE_IMPERSONATE_USER": "info@owlswatch.com",
           "OWLSWATCH_QUOTES_MOCKS": "0",
           "OWLSWATCH_GMAIL_QUOTE_LABEL": "*"
         }
@@ -364,9 +365,10 @@
           "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
           "EMAIL_AGENT_API_TOKEN_FILE": "~/.openclaw-owlswatch/secrets/email-agent-token.tmp",
           "GOOGLE_APPLICATION_CREDENTIALS": "~/.openclaw-owlswatch/secrets/google-service-account.json",
+          "GOOGLE_WORKSPACE_IMPERSONATE_USER": "info@owlswatch.com",
           "OWLSWATCH_GMAIL_ACCOUNT": "info@owlswatch.com",
           "OWLSWATCH_COBROS_FOLDER_ID": "1xBqTQi7_QxTW-WRvmyAOnqafZXizK9wS",
-          "OWLSWATCH_COBROS_TEMPLATE_DOC_ID": "1cO6hgB-0ryRRWOvfuxg9jv8x7EIkTAOIDELTkGK0keE",
+          "OWLSWATCH_COBROS_TEMPLATE_DOC_ID": "<template_doc_id_in_ai_cuentas_folder>",
           "OWLSWATCH_COBROS_PROFILES_PATH": "~/.openclaw/workspace-owlswatch-cobros/data/cobros/operator-billing-profiles.yaml",
           "OWLSWATCH_COBROS_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
           "OWLSWATCH_COBROS_NOTIFY_THREAD_ID": "<optional_cobros_topic_id>"

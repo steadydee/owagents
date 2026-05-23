@@ -45,12 +45,13 @@ Required:
 
 Optional:
 
+- `GOOGLE_WORKSPACE_IMPERSONATE_USER=info@owlswatch.com`
 - `GOOGLE_DRIVE_QUOTE_TEMPLATE_SPREADSHEET_ID`
 - `OWLSWATCH_QUOTES_MOCKS=1` for local contract tests only
 
 In this installed OpenClaw version, arbitrary top-level config blocks such as `operations`, `gmail`, and `googleDrive` do not validate. Cotiza's runtime values are therefore stored under `mcp.servers.owlswatch_quotes.env`.
 
-For Gmail, the Google credentials must allow read-only access to `info@owlswatch.com`. For Drive, share the configured quote folder with the service account if a service account owns the API calls.
+For Gmail, the Google credentials must allow read-only access to `info@owlswatch.com`. For Drive, share the configured quote folder with the service account. Prefer Workspace domain-wide delegation with `GOOGLE_WORKSPACE_IMPERSONATE_USER=info@owlswatch.com` so generated sheets are owned by the Owl's Watch account instead of the service account.
 
 Tokens stay inside the tool process. The model never receives token values as tool parameters, prompt text, memory, or Telegram replies.
 

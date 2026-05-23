@@ -267,6 +267,15 @@ def gmail_account(config: dict[str, Any]) -> str:
     return raw
 
 
+def google_workspace_impersonation_user(config: dict[str, Any]) -> str | None:
+    raw = cfg_env(config, "GOOGLE_WORKSPACE_IMPERSONATE_USER") or cfg_env(config, "GOOGLE_DRIVE_IMPERSONATE_USER")
+    if raw is None:
+        return None
+    if not EMAIL_RE.match(raw):
+        raise ToolError("config_invalid", "Configured Google Workspace impersonation user is malformed.")
+    return raw
+
+
 def google_credentials_path(config: dict[str, Any]) -> str:
     raw = cfg_env(config, "GOOGLE_APPLICATION_CREDENTIALS")
     if not raw:
@@ -830,31 +839,42 @@ def create_doc_and_pdf(config: dict[str, Any], fields: dict[str, Any]) -> dict[s
         import io
     except ImportError as exc:
         raise ToolError("dependency_missing", "Google API upload dependencies are not installed.") from exc
-    drive = google_build_service(config, "drive", "v3", ["https://www.googleapis.com/auth/drive"])
-    docs = google_build_service(config, "docs", "v1", ["https://www.googleapis.com/auth/documents", "https://www.googleapis.com/auth/drive"])
+    delegated_user = google_workspace_impersonation_user(config)
+    drive = google_build_service(config, "drive", "v3", ["https://www.googleapis.com/auth/drive"], delegated_user)
+    docs = google_build_service(config, "docs", "v1", ["https://www.googleapis.com/auth/documents", "https://www.googleapis.com/auth/drive"], delegated_user)
     title = packet_title(fields)
     folder_id = cobros_folder_id(config)
-    copied = drive.files().copy(
-        fileId=cobros_template_doc_id(config),
-        body={"name": title, "parents": [folder_id]},
-        fields="id,webViewLink",
-        supportsAllDrives=True,
-    ).execute()
-    doc_id = copied["id"]
-    requests = []
-    for old, new in template_replacements(fields).items():
-        requests.append({"replaceAllText": {"containsText": {"text": old, "matchCase": True}, "replaceText": str(new)}})
-    if requests:
-        docs.documents().batchUpdate(documentId=doc_id, body={"requests": requests}).execute()
-    pdf_bytes = drive.files().export(fileId=doc_id, mimeType="application/pdf").execute()
-    pdf_name = f"{title}.pdf"
-    media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
-    pdf_file = drive.files().create(
-        body={"name": pdf_name, "parents": [folder_id], "mimeType": "application/pdf"},
-        media_body=media,
-        fields="id,webViewLink",
-        supportsAllDrives=True,
-    ).execute()
+    try:
+        copied = drive.files().copy(
+            fileId=cobros_template_doc_id(config),
+            body={"name": title, "parents": [folder_id]},
+            fields="id,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+        doc_id = copied["id"]
+        requests = []
+        for old, new in template_replacements(fields).items():
+            requests.append({"replaceAllText": {"containsText": {"text": old, "matchCase": True}, "replaceText": str(new)}})
+        if requests:
+            docs.documents().batchUpdate(documentId=doc_id, body={"requests": requests}).execute()
+        pdf_bytes = drive.files().export(fileId=doc_id, mimeType="application/pdf").execute()
+        pdf_name = f"{title}.pdf"
+        media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
+        pdf_file = drive.files().create(
+            body={"name": pdf_name, "parents": [folder_id], "mimeType": "application/pdf"},
+            media_body=media,
+            fields="id,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as exc:
+        message = str(exc)
+        if "unauthorized_client" in message:
+            raise ToolError("google_workspace_impersonation_unauthorized", "Google Workspace delegation is missing Drive/Docs scopes for Cobros document creation.") from exc
+        if "storageQuotaExceeded" in message or "storage quota" in message.lower():
+            raise ToolError("google_drive_storage_quota_exceeded", "Google Drive refused document creation because service-account-owned Drive storage has no quota. Configure Google Workspace impersonation for Drive writes.") from exc
+        if "File not found" in message or "notFound" in message or "404" in message:
+            raise ToolError("google_drive_template_or_folder_not_found", "Cobros template or output folder is not accessible to the configured Google identity.") from exc
+        raise ToolError("google_drive_error", "Google Drive cuenta de cobro packet creation failed.", retryable=True) from exc
     SPOOL_DIR.mkdir(parents=True, exist_ok=True)
     pdf_local_path = SPOOL_DIR / f"{doc_id}.pdf"
     pdf_local_path.write_bytes(pdf_bytes)

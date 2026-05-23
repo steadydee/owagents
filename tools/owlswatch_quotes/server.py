@@ -191,6 +191,15 @@ def gmail_account(config: dict[str, Any]) -> str:
     return raw
 
 
+def google_workspace_impersonation_user(config: dict[str, Any]) -> str | None:
+    raw = cfg_env(config, "GOOGLE_WORKSPACE_IMPERSONATE_USER") or cfg_env(config, "GOOGLE_DRIVE_IMPERSONATE_USER")
+    if not raw:
+        return None
+    if "@" not in raw:
+        raise ToolError("config_invalid", "Configured Google Workspace impersonation user is malformed.")
+    return raw
+
+
 def google_build_service(config: dict[str, Any], api: str, version: str, scopes: list[str], delegated_subject: str | None = None) -> Any:
     credentials_path = google_credentials_path(config)
     try:
@@ -3970,6 +3979,9 @@ def tool_drive_create_quote_sheet(args: dict[str, Any]) -> dict[str, Any]:
         "https://www.googleapis.com/auth/spreadsheets",
     ]
     credentials = service_account.Credentials.from_service_account_file(credentials_path, scopes=scopes)
+    delegated_user = google_workspace_impersonation_user(config)
+    if delegated_user:
+        credentials = credentials.with_subject(delegated_user)
     sheets = build("sheets", "v4", credentials=credentials)
     drive = build("drive", "v3", credentials=credentials)
 
@@ -4027,10 +4039,12 @@ def tool_drive_create_quote_sheet(args: dict[str, Any]) -> dict[str, Any]:
             raise ToolError("google_sheets_api_disabled", "Google Sheets API is not enabled for the configured service-account project.") from exc
         if "File not found" in message or "404" in message:
             raise ToolError("google_drive_folder_inaccessible", "Google Drive quote folder is not accessible to the configured service account.") from exc
+        if "unauthorized_client" in message:
+            raise ToolError("google_workspace_impersonation_unauthorized", "Google Workspace delegation is missing Drive/Sheets scopes for quote sheet creation.") from exc
         if "storage quota" in message.lower() or "storageQuotaExceeded" in message:
             raise ToolError(
                 "google_drive_storage_quota_exceeded",
-                "Google Drive refused to create the quote sheet because the configured service account has no Drive storage quota.",
+                "Google Drive refused to create the quote sheet because service-account-owned Drive storage has no quota. Configure Google Workspace impersonation for Drive writes.",
             ) from exc
         raise ToolError("google_drive_error", "Google Drive quote sheet creation failed without exposing credential details.", retryable=True) from exc
 
