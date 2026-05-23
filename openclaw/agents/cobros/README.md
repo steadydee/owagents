@@ -8,7 +8,7 @@ It is separate from Cotiza because quotes are pre-sale and cuentas de cobro are 
 
 1. Search/read a targeted Gmail thread or receive pasted Telegram request.
 2. Prepare and validate legal/accounting fields.
-3. Create a Google Doc from the active template.
+3. Render a Google Doc from the active variable template.
 4. Export and upload a PDF.
 5. Create a Gmail draft reply with the PDF attached.
 6. Submit an Operations Email Desk review task.
@@ -36,4 +36,4 @@ Optional:
 
 Use the existing Owl's Watch Ops Telegram group and create a `Cuentas de Cobro` topic for routing.
 
-Generated documents should go in the Google Drive `AI/Cuentas de Cobro` folder. The Google service account must be shared on that folder before live packet generation is enabled, and Workspace domain-wide delegation should include Drive/Docs scopes so Cobros can create files as `info@owlswatch.com`.
+Generated documents should go in the Google Drive `AI/Cuentas de Cobro` folder. The Google service account must be shared on that folder before live packet generation is enabled, and Workspace domain-wide delegation should include Drive plus Gmail compose scopes so Cobros can create files and draft replies as `info@owlswatch.com`.

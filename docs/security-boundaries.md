@@ -87,7 +87,7 @@ Allowed:
 
 - Search/read the configured Owl's Watch Gmail account for cuenta de cobro, factura, and accounting-document requests.
 - Prepare and validate cuenta de cobro fields.
-- Copy the configured Google Doc template, export a PDF, and store both in the configured Drive folder.
+- Render the configured variable Google Doc template, export a PDF, and store both in the configured Drive folder.
 - Create Gmail drafts with the generated PDF attached.
 - Submit Operations Email Desk review tasks.
 - Send short Telegram notifications.

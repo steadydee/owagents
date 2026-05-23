@@ -23,6 +23,9 @@ assert spec.loader
 spec.loader.exec_module(server)
 
 assert server.amount_words_es(3208110) == "Tres millones doscientos ocho mil ciento diez pesos colombianos"
+template_html = server.cobros_placeholder_template_html()
+for placeholder in server.REQUIRED_TEMPLATE_PLACEHOLDERS:
+    assert placeholder in template_html, placeholder
 sample = """
 Asunto: Cuenta de cobro COLOMBIA57 / Simon Jackson
 Buenos dias estimada Adriana.
@@ -47,6 +50,10 @@ assert fields["payeeKey"] == "luz"
 assert fields["amountCop"] == 3208110
 assert fields["serviceDates"] == "Mar 4-7 2026"
 assert fields["concept"] == "Hospedaje"
+rendered = server.render_template_html(template_html, fields)
+assert "{{AMOUNT_COP}}" not in rendered
+assert "$3,208,110" in rendered
+assert "JAGUARUNDI" not in rendered
 
 dispute = server.tool_prepare({"raw_text": sample + "\nEl valor no coincide con los pagos realizados."})
 assert dispute["status"] == "needs_human", dispute

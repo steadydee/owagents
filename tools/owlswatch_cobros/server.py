@@ -13,13 +13,16 @@ import datetime as dt
 import email.utils
 import hashlib
 import html
+import io
 import json
+import mimetypes
 import os
 import re
 import sys
 import traceback
 import urllib.parse
 import urllib.request
+import zipfile
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
@@ -40,6 +43,21 @@ DEFAULT_OPERATIONS_BASE_URL = "https://operations.owlswatch.com"
 DEFAULT_COBROS_FOLDER_ID = "1xBqTQi7_QxTW-WRvmyAOnqafZXizK9wS"
 DEFAULT_TEMPLATE_DOC_ID = "1cO6hgB-0ryRRWOvfuxg9jv8x7EIkTAOIDELTkGK0keE"
 DEFAULT_NOTIFY_CHAT_ID = "-1003949383737"
+REQUIRED_TEMPLATE_PLACEHOLDERS = (
+    "{{DEBTOR_LEGAL_NAME}}",
+    "{{DEBTOR_NIT}}",
+    "{{AMOUNT_COP}}",
+    "{{CONCEPT}}",
+    "{{SERVICE_DATES}}",
+    "{{CLIENT_REFERENCE}}",
+    "{{PAYEE_NAME}}",
+    "{{PAYEE_NIT}}",
+    "{{PAYEE_CEDULA}}",
+    "{{AMOUNT_WORDS_ES}}",
+    "{{PAYEE_BANK}}",
+    "{{PAYEE_ACCOUNT_TYPE}}",
+    "{{PAYEE_ACCOUNT_NUMBER}}",
+)
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\\-]{1,360}$")
 TEXT_RE = re.compile(r"^[\s\S]{0,80000}$")
@@ -819,6 +837,7 @@ def packet_title(fields: dict[str, Any]) -> str:
 def template_replacements(fields: dict[str, Any]) -> dict[str, str]:
     payee = fields.get("payee") or {}
     amount = int(fields["amountCop"])
+    payee_nit = payee.get("cedulaNit") or ""
     replacements = {
         "{{DEBTOR_LEGAL_NAME}}": fields.get("debtorLegalName") or "",
         "{{DEBTOR_NIT}}": fields.get("debtorNit") or "",
@@ -828,7 +847,8 @@ def template_replacements(fields: dict[str, Any]) -> dict[str, str]:
         "{{AMOUNT_COP}}": f"${amount:,.0f}",
         "{{AMOUNT_WORDS_ES}}": fields.get("amountWordsEs") or amount_words_es(amount),
         "{{PAYEE_NAME}}": payee.get("displayName") or "",
-        "{{PAYEE_NIT}}": payee.get("cedulaNit") or "",
+        "{{PAYEE_NIT}}": payee_nit,
+        "{{PAYEE_CEDULA}}": cedula_without_check_digit(payee_nit),
         "{{PAYEE_BANK}}": payee.get("bankName") or "",
         "{{PAYEE_ACCOUNT_TYPE}}": payee.get("accountType") or "",
         "{{PAYEE_ACCOUNT_NUMBER}}": payee.get("accountNumber") or "",
@@ -867,6 +887,10 @@ def cedula_without_check_digit(value: str | None) -> str:
     if not value:
         return ""
     return re.sub(r"-\d+$", "", value.strip())
+
+
+def html_template_replacements(fields: dict[str, Any]) -> dict[str, str]:
+    return {key: html.escape(value, quote=False) for key, value in template_replacements(fields).items()}
 
 
 def cobros_document_html(fields: dict[str, Any]) -> str:
@@ -969,10 +993,85 @@ def cobros_document_html(fields: dict[str, Any]) -> str:
 </html>"""
 
 
-def create_doc_from_html(drive: Any, fields: dict[str, Any], title: str, folder_id: str) -> dict[str, Any]:
+def cobros_placeholder_template_html() -> str:
+    fields = {
+        "debtorLegalName": "{{DEBTOR_LEGAL_NAME}}",
+        "debtorNit": "{{DEBTOR_NIT}}",
+        "clientReference": "{{CLIENT_REFERENCE}}",
+        "serviceDates": "{{SERVICE_DATES}}",
+        "concept": "{{CONCEPT}}",
+        "amountCop": 123456789,
+        "amountWordsEs": "{{AMOUNT_WORDS_ES}}",
+        "payee": {
+            "displayName": "{{PAYEE_NAME}}",
+            "cedulaNit": "{{PAYEE_NIT}}",
+            "bankName": "{{PAYEE_BANK}}",
+            "accountType": "{{PAYEE_ACCOUNT_TYPE}}",
+            "accountNumber": "{{PAYEE_ACCOUNT_NUMBER}}",
+        },
+    }
+    return (
+        cobros_document_html(fields)
+        .replace("$123,456,789", "{{AMOUNT_COP}}")
+        .replace("Cédula: {{PAYEE_NIT}}", "Cédula: {{PAYEE_CEDULA}}")
+    )
+
+
+def unpack_google_doc_html(raw: bytes) -> str:
+    if not zipfile.is_zipfile(io.BytesIO(raw)):
+        return raw.decode("utf-8", errors="replace")
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        html_names = [name for name in archive.namelist() if name.lower().endswith((".html", ".htm"))]
+        if not html_names:
+            raise ToolError("template_invalid", "Cobros template export did not include HTML.")
+        html_name = html_names[0]
+        text = archive.read(html_name).decode("utf-8", errors="replace")
+        for name in archive.namelist():
+            if name == html_name or name.endswith("/"):
+                continue
+            data = archive.read(name)
+            mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            data_uri = "data:" + mime_type + ";base64," + base64.b64encode(data).decode("ascii")
+            escaped = html.escape(name, quote=True)
+            quoted = urllib.parse.quote(name)
+            text = text.replace(name, data_uri).replace(escaped, data_uri).replace(quoted, data_uri)
+        return text
+
+
+def export_template_html(drive: Any, template_doc_id: str) -> str:
+    raw = drive.files().export(fileId=template_doc_id, mimeType="text/html").execute()
+    return unpack_google_doc_html(raw)
+
+
+def render_template_html(template_html: str, fields: dict[str, Any]) -> str:
+    missing = [placeholder for placeholder in REQUIRED_TEMPLATE_PLACEHOLDERS if placeholder not in template_html]
+    if missing:
+        raise ToolError(
+            "template_invalid",
+            "Cobros template is not variable-ready. It must contain the required {{...}} placeholders.",
+        )
+    rendered = template_html
+    for placeholder, value in html_template_replacements(fields).items():
+        rendered = rendered.replace(placeholder, value)
+    return rendered
+
+
+def render_document_html(config: dict[str, Any], drive: Any, fields: dict[str, Any]) -> tuple[str, str]:
+    template_doc_id = cobros_template_doc_id(config)
+    try:
+        template_html = export_template_html(drive, template_doc_id)
+        return render_template_html(template_html, fields), "google_doc_template"
+    except ToolError as exc:
+        if exc.code != "template_invalid":
+            raise
+    except Exception:
+        pass
+    return cobros_document_html(fields), "generated_fallback"
+
+
+def create_doc_from_html_text(drive: Any, html_text: str, title: str, folder_id: str) -> dict[str, Any]:
     from googleapiclient.http import MediaIoBaseUpload
-    import io
-    html_bytes = cobros_document_html(fields).encode("utf-8")
+    html_bytes = html_text.encode("utf-8")
     media = MediaIoBaseUpload(io.BytesIO(html_bytes), mimetype="text/html", resumable=False)
     return drive.files().create(
         body={"name": title, "parents": [folder_id], "mimeType": "application/vnd.google-apps.document"},
@@ -982,9 +1081,12 @@ def create_doc_from_html(drive: Any, fields: dict[str, Any], title: str, folder_
     ).execute()
 
 
+def create_doc_from_html(drive: Any, fields: dict[str, Any], title: str, folder_id: str) -> dict[str, Any]:
+    return create_doc_from_html_text(drive, cobros_document_html(fields), title, folder_id)
+
+
 def create_pdf_for_doc(drive: Any, doc_id: str, title: str, folder_id: str) -> tuple[bytes, dict[str, Any], str]:
     from googleapiclient.http import MediaIoBaseUpload
-    import io
     pdf_bytes = drive.files().export(fileId=doc_id, mimeType="application/pdf").execute()
     pdf_name = f"{title}.pdf"
     media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
@@ -1019,7 +1121,8 @@ def create_doc_and_pdf(config: dict[str, Any], fields: dict[str, Any]) -> dict[s
     title = packet_title(fields)
     folder_id = cobros_folder_id(config)
     try:
-        copied = create_doc_from_html(drive, fields, title, folder_id)
+        html_text, template_source = render_document_html(config, drive, fields)
+        copied = create_doc_from_html_text(drive, html_text, title, folder_id)
     except Exception as exc:
         message = str(exc)
         if "unauthorized_client" in message:
@@ -1044,6 +1147,7 @@ def create_doc_and_pdf(config: dict[str, Any], fields: dict[str, Any]) -> dict[s
         "pdfFileName": pdf_name,
         "pdfLocalPath": str(pdf_local_path),
         "sizeBytes": len(pdf_bytes),
+        "templateSource": template_source,
     }
 
 

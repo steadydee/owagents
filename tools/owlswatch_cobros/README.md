@@ -5,7 +5,7 @@ This plugin exposes narrow tools for Cobros, the Owl's Watch cuenta de cobro dra
 The tools are intentionally scoped:
 
 - Gmail search/read is read-only.
-- Drive writes are limited to copying the configured cuenta de cobro template, creating the exported PDF, and placing both in the configured Cobros folder.
+- Drive writes are limited to rendering the configured variable cuenta de cobro template, creating the exported PDF, and placing both in the configured Cobros folder.
 - Gmail draft creation attaches the generated PDF but never sends.
 - Operations integration writes only to Email Desk intake.
 - Telegram is used only for operational review alerts.
@@ -22,6 +22,22 @@ Required:
 - `OWLSWATCH_COBROS_PROFILES_PATH`
 - `EMAIL_AGENT_API_TOKEN_FILE`
 
+The Google Doc named by `OWLSWATCH_COBROS_TEMPLATE_DOC_ID` must be a variable template. Required placeholders:
+
+- `{{DEBTOR_LEGAL_NAME}}`
+- `{{DEBTOR_NIT}}`
+- `{{PAYEE_NAME}}`
+- `{{PAYEE_NIT}}`
+- `{{PAYEE_CEDULA}}`
+- `{{AMOUNT_COP}}`
+- `{{AMOUNT_WORDS_ES}}`
+- `{{CONCEPT}}`
+- `{{SERVICE_DATES}}`
+- `{{CLIENT_REFERENCE}}`
+- `{{PAYEE_BANK}}`
+- `{{PAYEE_ACCOUNT_TYPE}}`
+- `{{PAYEE_ACCOUNT_NUMBER}}`
+
 Optional:
 
 - `OWLSWATCH_COBROS_NOTIFY_CHAT_ID`
@@ -30,7 +46,6 @@ Optional:
 Google Doc/PDF creation should use Workspace domain-wide delegation so files are owned by `info@owlswatch.com`, not by the service account. Required scopes for the configured service-account client ID:
 
 - `https://www.googleapis.com/auth/drive`
-- `https://www.googleapis.com/auth/documents`
 
 Gmail draft creation also requires Workspace domain-wide delegation scope:
 
