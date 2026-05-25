@@ -8,10 +8,10 @@ Allowed responsibilities:
 - search unanswered Gmail threads read-only
 - read one Gmail thread
 - fetch safe Luna email response context
-- submit draft tasks to Operations Email Desk
+- optionally submit draft tasks to Operations Email Desk as fallback/audit
 - submit scan summaries to Operations Email Desk
-- create/update local fallback task records
-- optionally create Gmail drafts when explicitly enabled
+- create/update local task records for de-duplication and recovery
+- create Gmail drafts when enabled
 - send short Telegram notifications
 - log memory
 

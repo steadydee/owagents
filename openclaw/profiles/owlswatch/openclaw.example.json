@@ -353,7 +353,7 @@
           "OWLSWATCH_GMAIL_ACCOUNT": "info@owlswatch.com",
           "OWLSWATCH_EMAIL_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
           "OWLSWATCH_EMAIL_NOTIFY_THREAD_ID": "<optional_email_topic_id>",
-          "OWLSWATCH_GMAIL_DRAFTS_ENABLED": "0"
+          "OWLSWATCH_GMAIL_DRAFTS_ENABLED": "1"
         }
       },
       "owlswatch_cobros": {

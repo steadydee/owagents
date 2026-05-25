@@ -233,7 +233,27 @@ Always mark `needs_human` for:
 
 Drafts should be warm, professional, and concise. Spanish drafts use formal `usted`.
 
-## Step 9 - Submit To Operations
+## Step 9 - Create Gmail Draft
+
+Create the review artifact in Gmail first.
+
+Call `owlswatch_email_create_gmail_draft` for `draft_ready` replies when the
+tool is enabled by config. Use:
+
+- Gmail thread id
+- recipient
+- draft subject
+- draft body
+- `In-Reply-To` / `References` when available
+
+Never send. Gmail draft creation is allowed only as draft creation, not final
+delivery.
+
+If Gmail draft creation returns `gmail_drafts_disabled` or fails, do not tell
+Telegram that a normal draft is ready. Create/update local recovery state and
+send a blocker alert that says Gmail draft creation failed or is disabled.
+
+## Step 10 - Store Recovery State
 
 Build the `/api/emails/intake` payload from:
 
@@ -247,7 +267,9 @@ Build the `/api/emails/intake` payload from:
 - quote id if any
 - agent notes
 
-Call `owlswatch_email_submit_operations_intake`.
+If Operations Email Desk is configured and useful, call
+`owlswatch_email_submit_operations_intake` as optional audit/recovery state.
+Do not rely on Operations as the primary review interface.
 
 The payload must use the nested Operations Email Desk shape:
 
@@ -320,20 +342,12 @@ The payload must use the nested Operations Email Desk shape:
 
 Do not submit the simpler local fallback task shape to Operations. The tool can recover from some legacy fields, but use the nested shape above.
 
-If Operations Email Desk is not configured or the endpoint is not ready, call `owlswatch_email_upsert_task` with the same task data as a local fallback and mark `operationsSyncStatus: "pending"`.
+Always make sure there is durable de-duplication/recovery state. If Operations
+Email Desk is not configured or the endpoint is not ready, call
+`owlswatch_email_upsert_task` with the same task data as a local fallback and
+mark `operationsSyncStatus: "pending"`.
 
 Do not claim the task is in Operations unless the Operations tool returned a task URL or task id.
-
-## Step 10 - Gmail Draft
-
-Only call `owlswatch_email_create_gmail_draft` if:
-
-- Operations or the run instruction explicitly asks for Gmail draft creation, and
-- the tool is enabled by config
-
-Never send. Gmail draft creation is allowed only as draft creation, not final delivery.
-
-If Gmail draft creation returns `gmail_drafts_disabled`, continue with an Operations/local review task.
 
 ## Step 11 - Telegram Notification
 
@@ -347,7 +361,7 @@ Keep notifications short. Do not paste full email drafts into Telegram.
 
 All email drafts require human review, so do not spend a line saying that the draft needs human review. Only mention a review blocker when there is a specific decision needed, such as payment status, availability, complaint sensitivity, or missing information.
 
-For a successfully created Operations review task, use this exact Telegram shape:
+For a successfully created Gmail draft, use this exact Telegram shape:
 
 ```text
 New email draft
@@ -355,7 +369,7 @@ New email draft
 From: Maria Rodriguez
 Subject: July family visit
 
-Review: {taskUrl}
+Gmail: {gmailThreadUrl}
 ```
 
 Optional fourth line only when useful:
@@ -375,15 +389,15 @@ Do not use phrases like:
 - `Draft task created`
 - `Task ready`
 
-If no Operations URL exists:
+If Gmail draft creation failed or is disabled:
 
 ```text
-New email draft
+Email draft blocked
 
 From: Maria Rodriguez
 Subject: July family visit
 
-Operations link unavailable.
+Gmail draft creation failed.
 ```
 
 ## Step 12 - Daily Summary

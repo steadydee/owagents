@@ -2,9 +2,9 @@
 
 Correo is the Owl's Watch email drafting agent.
 
-Correo scans Owl's Watch Gmail, identifies important operational email threads, uses Luna for approved guest-shareable context, and creates reviewable email draft tasks for Operations Email Desk.
+Correo scans Owl's Watch Gmail, identifies important operational email threads, uses Luna for approved guest-shareable context, and creates Gmail draft replies for human review.
 
-Correo does not send email. Humans review and send through Operations/Gmail.
+Correo does not send email. Humans review, edit, and send in Gmail.
 
 ## Jobs
 
@@ -22,23 +22,23 @@ Required when live:
 
 - `OW_AGENT_TOKEN_SECRET`
 - `EMAIL_AGENT_API_TOKEN_FILE=~/.openclaw-owlswatch/secrets/email-agent-token.tmp`
-- `OPERATIONS_BASE_URL=https://operations.owlswatch.com`
 - `LUNA_BASE_URL=https://luna.owlswatch.com`
 - `GOOGLE_APPLICATION_CREDENTIALS`
 - `OWLSWATCH_GMAIL_ACCOUNT=info@owlswatch.com`
+- `OWLSWATCH_GMAIL_DRAFTS_ENABLED=1`
 
 Optional:
 
+- `OPERATIONS_BASE_URL=https://operations.owlswatch.com`
 - `OWLSWATCH_EMAIL_NOTIFY_CHAT_ID`
 - `OWLSWATCH_EMAIL_NOTIFY_THREAD_ID`
-- `OWLSWATCH_GMAIL_DRAFTS_ENABLED=1`
 
 Use the existing Owl's Watch Ops Telegram group and `owbot` by default. Create an `Email` topic, then set `OWLSWATCH_EMAIL_NOTIFY_THREAD_ID` to that topic id before enabling schedules.
 
-Gmail draft creation requires the Gmail compose scope. Until that scope is approved and the config flag is enabled, Correo creates Operations/local review tasks only.
+Gmail draft creation requires the Gmail compose scope. If Gmail draft creation is disabled or fails, Correo should not announce a normal draft-ready alert; it should report the blocker or create local recovery state only.
 
 ## Boundaries
 
-Operations Email Desk is the review desk and audit trail. Gmail remains the thread and send system. Luna is only a context provider.
+Gmail is the review and send system. Operations remains the source of truth for quotes, expenses, and cuentas de cobro, but not the primary email inbox UI. Luna is only a context provider.
 
 Correo never auto-sends.
