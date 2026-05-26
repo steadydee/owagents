@@ -35,7 +35,9 @@ const toolSchemas = {
       properties: {
         raw_text: { type: ["string", "null"] },
         thread: { type: ["object", "null"], additionalProperties: true },
-        source_metadata: { type: ["object", "null"], additionalProperties: true }
+        source_metadata: { type: ["object", "null"], additionalProperties: true },
+        human_override: { type: "boolean" },
+        override_fields: { type: ["object", "null"], additionalProperties: true }
       },
       additionalProperties: false
     }

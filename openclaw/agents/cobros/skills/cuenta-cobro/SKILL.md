@@ -83,6 +83,18 @@ The prepare tool owns extraction, normalization, amount-in-words, profile lookup
 
 Do not assemble legal document fields manually.
 
+If the source thread contains correction/dispute language but Dennis or
+Adriana explicitly gives the final corrected amount and asks for an updated or
+corrected cuenta, call `owlswatch_cobros_prepare` with:
+
+- `human_override: true`
+- `override_fields.amountCop`
+- any confirmed `override_fields` such as `serviceDates`, `clientReference`,
+  `concept`, `operatorKey`, or `payeeKey`
+
+This is a human-approved correction path. Preserve the warning in memory/notes,
+but do not stay blocked solely because the email contained correction language.
+
 ## Step 4 - Handle Prepare Status
 
 If `status = needs_info`, ask exactly one concise question for the most important missing field. Do not create a document.
@@ -167,6 +179,10 @@ Required fields:
 ## Amount Mismatch Or Dispute
 
 Do not create a new PDF. Flag for human review.
+
+Exception: if Dennis or Adriana explicitly approves the corrected final amount
+and asks for an updated/reissued cuenta, use the human override path in Step 3
+and continue with visible warnings.
 
 Trigger words include:
 

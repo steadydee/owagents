@@ -734,10 +734,33 @@ def build_review_question(missing: list[str]) -> str:
     return prompts.get(missing[0], "What missing detail should I use for the cuenta de cobro?")
 
 
+def override_text(value: Any, max_len: int = 500) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:max_len]
+
+
+def override_amount_cop(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        amount = value
+    else:
+        amount = parse_money(str(value))
+    if amount is None or amount <= 0 or amount > 500_000_000:
+        raise ToolError("invalid_input", "override_fields.amountCop must be a valid COP amount.")
+    return amount
+
+
 def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
     text = source_text_from_args(args)
     source_metadata = args.get("source_metadata") if isinstance(args.get("source_metadata"), dict) else {}
     thread = args.get("thread") if isinstance(args.get("thread"), dict) else None
+    override_fields = args.get("override_fields") if isinstance(args.get("override_fields"), dict) else {}
+    human_override = bool(args.get("human_override")) or bool(override_fields)
     profiles = profile_data()
     operator = find_operator(text, profiles) or infer_unknown_operator(text)
     payee = find_payee(text, operator, profiles)
@@ -746,9 +769,20 @@ def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
     concept = extract_concept(text)
     client_reference = extract_client_reference(text)
 
+    if override_fields:
+        if override_fields.get("operatorKey") in profiles.get("operators", {}):
+            operator = profiles["operators"][override_fields["operatorKey"]]
+        if override_fields.get("payeeKey") in profiles.get("payees", {}):
+            payee = profiles["payees"][override_fields["payeeKey"]]
+        amount = override_amount_cop(override_fields.get("amountCop")) or amount
+        service_dates = override_text(override_fields.get("serviceDates")) or service_dates
+        concept = override_text(override_fields.get("concept")) or concept
+        client_reference = override_text(override_fields.get("clientReference")) or client_reference
+
     warnings = []
     comp = comparable(text)
-    if any(term in comp for term in (comparable(t) for t in DISPUTE_TERMS)):
+    has_dispute_terms = any(term in comp for term in (comparable(t) for t in DISPUTE_TERMS))
+    if has_dispute_terms and not human_override:
         return {
             "ok": True,
             "status": "needs_human",
@@ -765,6 +799,8 @@ def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
                 "concept": concept,
             },
         }
+    if has_dispute_terms and human_override:
+        warnings.append("human_override_after_amount_dispute_or_correction")
     if "rut" in comp or "factura electronica" in comp or "factura electrónica" in text.lower():
         warnings.append("rut_or_electronic_invoice_requested")
     if len(all_amounts) > 1:
@@ -1340,7 +1376,7 @@ def tool_memory_log(args: dict[str, Any]) -> dict[str, Any]:
 TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str, Any]]]] = {
     "owlswatch_cobros_search_gmail_threads": ("Search read-only Owl's Watch Gmail for cuenta de cobro/accounting requests.", {"type": "object", "properties": {"query": {"type": ["string", "null"]}, "maxResults": {"type": "integer", "minimum": 1, "maximum": 20}}, "additionalProperties": False}, tool_search_gmail_threads),
     "owlswatch_cobros_read_gmail_thread": ("Read one Owl's Watch Gmail thread for cuenta de cobro drafting.", {"type": "object", "properties": {"threadId": {"type": "string"}}, "required": ["threadId"], "additionalProperties": False}, tool_read_gmail_thread),
-    "owlswatch_cobros_prepare": ("Extract and validate cuenta de cobro fields. Does not create documents.", {"type": "object", "properties": {"raw_text": {"type": ["string", "null"]}, "thread": {"type": ["object", "null"], "additionalProperties": True}, "source_metadata": {"type": ["object", "null"], "additionalProperties": True}}, "additionalProperties": False}, tool_prepare),
+    "owlswatch_cobros_prepare": ("Extract and validate cuenta de cobro fields. Does not create documents.", {"type": "object", "properties": {"raw_text": {"type": ["string", "null"]}, "thread": {"type": ["object", "null"], "additionalProperties": True}, "source_metadata": {"type": ["object", "null"], "additionalProperties": True}, "human_override": {"type": "boolean"}, "override_fields": {"type": ["object", "null"], "additionalProperties": True}}, "additionalProperties": False}, tool_prepare),
     "owlswatch_cobros_create_packet": ("Create Google Doc cuenta de cobro and exported PDF from a ready prepared result.", {"type": "object", "properties": {"prepared": {"type": "object", "additionalProperties": True}}, "required": ["prepared"], "additionalProperties": False}, tool_create_packet),
     "owlswatch_cobros_create_gmail_draft": ("Create a Gmail draft reply with the cuenta de cobro PDF attached. Never sends.", {"type": "object", "properties": {"prepared": {"type": "object", "additionalProperties": True}, "packet": {"type": "object", "additionalProperties": True}, "thread": {"type": ["object", "null"], "additionalProperties": True}, "threadId": {"type": ["string", "null"]}, "to": {"type": ["string", "null"]}, "subject": {"type": ["string", "null"]}, "body": {"type": ["string", "null"]}, "inReplyTo": {"type": ["string", "null"]}, "sourceMessageId": {"type": ["string", "null"]}, "sourceSummary": {"type": ["string", "null"]}}, "required": ["prepared", "packet"], "additionalProperties": False}, tool_create_gmail_draft),
     "owlswatch_cobros_send_telegram_message": ("Send a short Cobros Telegram notification to the configured Owl's Watch topic.", {"type": "object", "properties": {"text": {"type": "string"}, "chat_id": {"type": ["string", "number", "null"]}, "message_thread_id": {"type": ["string", "number", "null"]}}, "required": ["text"], "additionalProperties": False}, tool_send_telegram_message),
