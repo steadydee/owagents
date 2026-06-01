@@ -29,7 +29,8 @@ if [ ! -x "$OPENCLAW_BIN" ]; then
   exit 1
 fi
 
-status_output="$("$OPENCLAW_BIN" --profile "$PROFILE" channels status --probe 2>&1 || true)"
+status_failed=0
+status_output="$("$OPENCLAW_BIN" --profile "$PROFILE" channels status --probe 2>&1)" || status_failed=1
 
 bot_init_error=0
 if [ -f "$OPENCLAW_LOG_FILE" ]; then
@@ -53,8 +54,18 @@ if [ -f "$OPENCLAW_LOG_FILE" ]; then
   fi
 fi
 
-if [ "$bot_init_error" -eq 0 ] && printf '%s\n' "$status_output" | grep -Eq 'Telegram .*: .*running.*connected'; then
-  log "ok: Telegram running and connected"
+telegram_operational=0
+if [ "$status_failed" -eq 0 ] \
+  && printf '%s\n' "$status_output" | grep -Eq 'Telegram .*: .*enabled, configured, running' \
+  && printf '%s\n' "$status_output" | grep -Eq 'works, audit ok'; then
+  telegram_operational=1
+fi
+
+# OpenClaw may report Telegram as disconnected when polling is idle. That is
+# fine for low-volume bots; restart only when the probe fails or the handler
+# emits a known hard failure.
+if [ "$bot_init_error" -eq 0 ] && [ "$telegram_operational" -eq 1 ]; then
+  log "ok: Telegram operational"
   exit 0
 fi
 
@@ -72,6 +83,8 @@ fi
 
 if [ "$bot_init_error" -eq 1 ]; then
   log "unhealthy Telegram handler: Bot not initialized error detected; restarting owlswatch gateway"
+elif [ "$status_failed" -ne 0 ]; then
+  log "unhealthy Telegram channel: status probe failed; restarting owlswatch gateway"
 else
   log "unhealthy Telegram channel; restarting owlswatch gateway"
 fi
@@ -81,8 +94,9 @@ if "$OPENCLAW_BIN" --profile "$PROFILE" gateway restart >> "$LOG_FILE" 2>&1; the
   date +%s > "$STAMP_FILE"
   sleep 8
   after_output="$("$OPENCLAW_BIN" --profile "$PROFILE" channels status --probe 2>&1 || true)"
-  if printf '%s\n' "$after_output" | grep -Eq 'Telegram .*: .*running.*connected'; then
-    log "recovered: Telegram running and connected after restart"
+  if printf '%s\n' "$after_output" | grep -Eq 'Telegram .*: .*enabled, configured, running' \
+    && printf '%s\n' "$after_output" | grep -Eq 'works, audit ok'; then
+    log "recovered: Telegram operational after restart"
     exit 0
   fi
   log "restart completed, but Telegram is still unhealthy"

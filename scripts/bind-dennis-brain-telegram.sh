@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cat >&2 <<'EOF'
+This helper is deprecated for the Owl's Watch profile.
+
+Brain/private dashboard routing must live in its own OpenClaw profile and bot.
+Do not bind Dennis Brain into the owlswatch profile.
+EOF
+exit 2
+
 PROFILE="${OPENCLAW_PROFILE:-owlswatch}"
 WAIT_SECONDS="${WAIT_SECONDS:-120}"
 
