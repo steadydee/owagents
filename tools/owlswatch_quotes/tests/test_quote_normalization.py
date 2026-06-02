@@ -89,6 +89,36 @@ def test_cabin_spanish_alimentacion_completa_counts_full_board():
     assert normalized["meals"] == {"breakfasts": "included_with_lodging", "lunches": 2, "dinners": 3}
 
 
+def test_spanish_day_month_range_without_de_parses_both_dates():
+    assert server.parse_text_dates("15-17 junio 2026") == ("2026-06-15", "2026-06-17")
+
+
+def test_month_day_range_without_year_uses_current_or_next_year():
+    arrival, departure = server.parse_text_dates("June 15-17")
+
+    assert arrival is not None
+    assert departure is not None
+    assert arrival.endswith("-06-15")
+    assert departure.endswith("-06-17")
+
+
+def test_cabin_without_explicit_meal_scope_defaults_to_standard_meals():
+    normalized = server.normalize_calculate_payload(
+        {
+            "quoteType": "operator",
+            "agencyName": "Wild About Colombia",
+            "arrivalDate": "2026-06-15",
+            "departureDate": "2026-06-17",
+            "guestCount": 2,
+            "guideCount": 1,
+            "lodging": {"requested": True, "cabinCount": 1, "guideRoomCount": 1},
+            "requestSummary": "Operator cabin quote with guide room.",
+        }
+    )
+
+    assert normalized["meals"] == {"breakfasts": "included_with_lodging", "lunches": 1, "dinners": 2}
+
+
 def test_cabin_full_board_includes_checkout_lunch_only_when_explicit():
     normalized = server.normalize_calculate_payload(
         {

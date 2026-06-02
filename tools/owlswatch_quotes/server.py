@@ -31,7 +31,7 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2027-one-page-quote-layout-v1"
+QUOTE_RULE_VERSION = "2027-default-cabin-meals-v1"
 QUOTE_RATES = {
     2026: {
         "pricebook_version": "2026-operators",
@@ -69,6 +69,22 @@ QUOTE_RATES = {
         "guide_driver_lunch": 35000,
         "guide_driver_dinner": 35000,
     },
+}
+
+KNOWN_OPERATOR_ALIASES = {
+    "birding by bus": "Birding By Bus",
+    "colombia57": "Colombia57",
+    "colombia 57": "Colombia57",
+    "de una": "De Una",
+    "hacienda venecia": "Hacienda Venecia",
+    "jaguarundi": "Jaguarundi Travel",
+    "jaguarundi travel": "Jaguarundi Travel",
+    "juan manuel": "Juan Manuel",
+    "manakin": "Manakin Nature Tours",
+    "nature experience": "Nature Experience",
+    "promotora neptuno": "Promotora Neptuno",
+    "neptuno": "Promotora Neptuno",
+    "wild about colombia": "Wild About Colombia",
 }
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\\-]{1,220}$")
@@ -417,6 +433,14 @@ def quote_rates_for_year(year: int) -> dict[str, Any]:
     return QUOTE_RATES.get(year, QUOTE_RATES[2026])
 
 
+def known_operator_name(text: str) -> str | None:
+    lowered = text.lower()
+    for alias in sorted(KNOWN_OPERATOR_ALIASES, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(alias)}\b", lowered):
+            return KNOWN_OPERATOR_ALIASES[alias]
+    return None
+
+
 def infer_audience(payload: dict[str, Any], summary: str) -> str | None:
     for key in (
         "audience",
@@ -447,6 +471,8 @@ def infer_audience(payload: dict[str, Any], summary: str) -> str | None:
             return "direct"
     lowered_summary = summary.lower()
     if any(token in lowered_summary for token in ("operator", "agency", "agencia", "net rate", "tarifa operador")):
+        return "operator"
+    if known_operator_name(summary):
         return "operator"
     if any(token in lowered_summary for token in ("direct client", "directo", "rack rate", "retail")):
         return "direct"
@@ -605,7 +631,7 @@ def requests_guide_room(payload: dict[str, Any], summary: str) -> bool:
         return True
     if coerce_int(lodging.get("guideRoomCount"), None) or coerce_int(lodging.get("guide_room_count"), None):
         return True
-    return bool(re.search(r"\bguide room\b|\bhabitaci[oó]n\b.{0,40}\bgu[ií]a\b|\bgu[ií]a\b.{0,40}\bhabitaci[oó]n\b", summary, re.I))
+    return bool(re.search(r"\bguide room\b|\bhab(?:\.|itaci[oó]n)?\b.{0,40}\bgu[ií]a\b|\bgu[ií]a\b.{0,40}\bhab(?:\.|itaci[oó]n)?\b", summary, re.I))
 
 
 def lodging_breakfast_days(payload: dict[str, Any], summary: str) -> int:
@@ -617,7 +643,8 @@ def lodging_breakfast_days(payload: dict[str, Any], summary: str) -> int:
 
 def normalized_meal_day_count(payload: dict[str, Any], meal: str) -> int | None:
     meals = requested_services_meals(payload)
-    for key in (f"{meal}s", meal):
+    plural = {"breakfast": "breakfasts", "lunch": "lunches", "dinner": "dinners"}.get(meal, f"{meal}s")
+    for key in (plural, meal):
         value = meals.get(key)
         count = coerce_int(value, None)
         if count is not None:
@@ -724,7 +751,50 @@ def has_full_board(payload: dict[str, Any], summary: str) -> bool:
         return True
     if any("full_board" in item_code_text(item) or "full board" in item_code_text(item) for item in item_codes(payload)):
         return True
-    return bool(re.search(r"\b(full board|food included|meals included|comida incluida|pensi[oó]n completa|a?alimentaci[oó]n completa)\b", summary, re.I))
+    return bool(re.search(r"\b(full board|food included|meals included|with meals|comida incluida|con comidas?|pensi[oó]n completa|a?alimentaci[oó]n completa)\b", summary, re.I))
+
+
+def explicit_meal_scope(payload: dict[str, Any], summary: str) -> bool:
+    meals_payload = object_value(payload, "meals")
+    if meals_payload:
+        return True
+    for key in (
+        "mealPlan",
+        "meal_plan",
+        "fullBoard",
+        "full_board",
+        "foodIncluded",
+        "food_included",
+        "mealsIncluded",
+        "meals_included",
+        "includeBreakfast",
+        "include_breakfast",
+        "includeLunch",
+        "include_lunch",
+        "includeDinner",
+        "include_dinner",
+        "breakfast",
+        "breakfasts",
+        "lunch",
+        "lunches",
+        "dinner",
+        "dinners",
+        "lunchCount",
+        "lunch_count",
+        "dinnerCount",
+        "dinner_count",
+    ):
+        if first_value(payload, key) is not None:
+            return True
+    return bool(
+        re.search(
+            r"\b(no meals?|without meals?|sin comidas?|sin alimentaci[oó]n|"
+            r"full board|food included|meals included|with meals|meal plan|"
+            r"breakfast|desayuno|lunch|almuerzo|dinner|cena|comida|alimentaci[oó]n)\b",
+            summary,
+            re.I,
+        )
+    )
 
 
 def meal_plan_tokens(meals_payload: dict[str, Any]) -> str:
@@ -737,7 +807,7 @@ def meal_plan_tokens(meals_payload: dict[str, Any]) -> str:
 
 
 def nested_meal_count(meals_payload: dict[str, Any], meal: str) -> int | None:
-    plural = f"{meal}s"
+    plural = {"breakfast": "breakfasts", "lunch": "lunches", "dinner": "dinners"}.get(meal, f"{meal}s")
     for key in (plural, meal):
         value = meals_payload.get(key)
         if isinstance(value, dict):
@@ -1049,7 +1119,8 @@ def normalize_calculate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         lunches = coerce_int(first_value(payload, "lunchCount", "lunch_count"), None)
     if dinners is None:
         dinners = coerce_int(first_value(payload, "dinnerCount", "dinner_count"), None)
-    if full_board:
+    standard_cabin_meals = bool(normalized["lodging"]["requested"] and not day_trip and not explicit_meal_scope(payload, summary))
+    if full_board or standard_cabin_meals:
         lunches = lunches if lunches is not None else default_cabin_lunch_count(nights, summary)
         dinners = dinners if dinners is not None else (nights or 0)
     elif day_trip:
@@ -1315,6 +1386,18 @@ def compact_text(value: str | None) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
 
+def default_year_for_month_day(month: int, day: int) -> int:
+    today = dt.date.today()
+    year = today.year
+    try:
+        candidate = dt.date(year, month, day)
+    except ValueError:
+        return year
+    if candidate < today:
+        return year + 1
+    return year
+
+
 def merge_dicts(*objects: dict[str, Any]) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     for obj in objects:
@@ -1353,7 +1436,7 @@ def parse_text_dates(text: str) -> tuple[str | None, str | None]:
             return dt.date(int(year), sm, int(start_day)).isoformat(), dt.date(int(year), em, int(end_day)).isoformat()
 
     spanish_day_range = re.search(
-        rf"\b(\d{{1,2}})\s*[-–]\s*(\d{{1,2}})\s+de\s+({month_words})\.?(?:\s*,)?\s+(\d{{4}})\b",
+        rf"\b(\d{{1,2}})\s*[-–]\s*(\d{{1,2}})\s+(?:de\s+)?({month_words})\.?(?:\s*,)?(?:\s+(?:de\s+)?)?(\d{{4}})?\b",
         text,
         re.I,
     )
@@ -1361,7 +1444,29 @@ def parse_text_dates(text: str) -> tuple[str | None, str | None]:
         start_day, end_day, month_token, year = spanish_day_range.groups()
         month = month_number(month_token)
         if month:
-            return dt.date(int(year), month, int(start_day)).isoformat(), dt.date(int(year), month, int(end_day)).isoformat()
+            resolved_year = int(year) if year else default_year_for_month_day(month, int(start_day))
+            return dt.date(resolved_year, month, int(start_day)).isoformat(), dt.date(resolved_year, month, int(end_day)).isoformat()
+
+    match = MONTH_NAME_RE.search(text)
+    if match:
+        month_token, start_day, end_day, year = match.groups()
+        month = month_number(month_token)
+        if month:
+            start = dt.date(int(year), month, int(start_day))
+            end = dt.date(int(year), month, int(end_day or start_day))
+            return start.isoformat(), end.isoformat()
+
+    month_day_range = re.search(
+        rf"\b({month_words})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*[-–]\s*(\d{{1,2}})(?:st|nd|rd|th)?\b",
+        text,
+        re.I,
+    )
+    if month_day_range:
+        month_token, start_day, end_day = month_day_range.groups()
+        month = month_number(month_token)
+        if month:
+            resolved_year = default_year_for_month_day(month, int(start_day))
+            return dt.date(resolved_year, month, int(start_day)).isoformat(), dt.date(resolved_year, month, int(end_day)).isoformat()
 
     day_month_dates: list[str] = []
     for day, month_token, year in re.findall(
@@ -1377,14 +1482,17 @@ def parse_text_dates(text: str) -> tuple[str | None, str | None]:
     if len(day_month_dates) == 1:
         return day_month_dates[0], day_month_dates[0]
 
-    match = MONTH_NAME_RE.search(text)
-    if match:
-        month_token, start_day, end_day, year = match.groups()
+    spanish_single_day = re.search(
+        rf"\b(\d{{1,2}})\s+(?:de\s+)?({month_words})\.?\b",
+        text,
+        re.I,
+    )
+    if spanish_single_day:
+        day, month_token = spanish_single_day.groups()
         month = month_number(month_token)
         if month:
-            start = dt.date(int(year), month, int(start_day))
-            end = dt.date(int(year), month, int(end_day or start_day))
-            return start.isoformat(), end.isoformat()
+            resolved_year = default_year_for_month_day(month, int(day))
+            return dt.date(resolved_year, month, int(day)).isoformat(), dt.date(resolved_year, month, int(day)).isoformat()
 
     numeric = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b", text)
     if numeric:
@@ -1426,6 +1534,8 @@ def raw_text_quote_intent(raw_text: str) -> dict[str, Any]:
         intent["audience"] = audience
 
     agency = extract_named_value(raw_text, ("operator", "operador", "agency", "agencia"))
+    if not agency:
+        agency = known_operator_name(raw_text)
     if agency:
         intent["agencyName"] = agency
     client = extract_named_value(raw_text, ("client", "cliente", "guest", "huesped", "huésped", "referencia", "reference"))

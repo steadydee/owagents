@@ -39,6 +39,8 @@ For every new user message that asks for a quote, including "latest email from X
 
 Do not say "already drafted", "already ready", "this matches an earlier draft", or return an older sheet unless `owlswatch_quote_create_draft` itself returns an idempotent result for the current quote-rule version during this same run.
 
+If the message is clearly answering Cotiza's last missing-info question, or adding details to the active quote in the same Telegram Quotes topic, it is not a blank new request. Combine the current message with the earlier known facts from this active Telegram exchange, or pass those known facts as `prior_context`, then call `owlswatch_quote_prepare` again.
+
 Use only these quote workflow tools:
 
 - `owlswatch_gmail_search_quote_threads`
@@ -65,6 +67,7 @@ Do not call low-level quote calculate, Drive sheet, or Drive patch tools directl
 - Bilingual guide is excluded unless requested.
 - Local Spanish guide is assumed for standard birding.
 - Cabin stays include breakfast with lodging.
+- Standard cabin stays include meals by default unless the request explicitly says otherwise.
 - Breakfast included with cabin or guide-room lodging is shown on breakfast service days after check-in, not on the check-in day.
 - Show complimentary breakfast lines when breakfast is included or requested, because staff use the sheet as the visible quote.
 - For cabin stays, standard full board means dinner for each night and lunch only for non-checkout stay days. Do not include lunch on checkout day unless the source explicitly asks for checkout/departure lunch.

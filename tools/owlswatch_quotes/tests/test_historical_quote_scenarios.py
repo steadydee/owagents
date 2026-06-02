@@ -118,6 +118,48 @@ def test_operator_cabin_with_two_cabins_guide_room_meals_and_birding():
     assert "Guide Lunch" in descriptions(result)
 
 
+def test_known_operator_cabin_defaults_to_meals_and_parses_spanish_date_range():
+    result = prepare(
+        "i need a quote for wild about colombia\n"
+        "15-17 junio 2026\n"
+        "1 cabaña para clientes\n"
+        "+ 1 hab para guía\n"
+        "Wild About Colombia is the operator, 2 people and a guide, 2 nights"
+    )
+
+    assert_ready(result)
+    canonical = result["canonicalPayload"]
+    assert canonical["audience"] == "operator"
+    assert result["preparedQuote"]["intent"]["agencyName"] == "Wild About Colombia"
+    assert canonical["arrivalDate"] == "2026-06-15"
+    assert canonical["departureDate"] == "2026-06-17"
+    assert canonical["nights"] == 2
+    assert canonical["lodging"]["cabinCount"] == 1
+    assert canonical["lodging"]["guideRoomCount"] == 1
+    assert canonical["meals"] == {"breakfasts": "included_with_lodging", "lunches": 1, "dinners": 2}
+    assert "Guide Breakfast" in descriptions(result)
+    assert "Guide Lunch" in descriptions(result)
+    assert "Guide Dinner" in descriptions(result)
+
+
+def test_cabin_specific_breakfast_dinner_request_does_not_add_lunch():
+    result = prepare(
+        "HOTEL Owl Watch\n"
+        "ESTADO Reservacion\n"
+        "REFERENCIA - Turrian\n"
+        "2 PAX + Guia\n"
+        "FECHA IN - 04 febrero 2027\n"
+        "FECHA OUT - 06 febrero 2027 (2 noches)\n"
+        "SERVICIO - 1 habitacion matrimonial para pasajero + "
+        "1 habitacion single para Guia + desayunos + cenas"
+    )
+
+    assert_ready(result)
+    assert result["canonicalPayload"]["meals"] == {"breakfasts": "included_with_lodging", "lunches": 0, "dinners": 2}
+    assert "Guide Lunch" not in descriptions(result)
+    assert "Guide Dinner" in descriptions(result)
+
+
 def test_operator_reservation_form_without_operator_name_can_draft():
     result = prepare(
         "HOTEL Owl Watch\n"
