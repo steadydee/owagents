@@ -75,7 +75,7 @@ For `polling_30m`, call `owlswatch_email_search_recent_threads` with:
 - `hours: 24`
 - `maxResults: 20`
 
-Even though the job runs every 30 minutes, use a 24-hour search window so missed runs recover after downtime. De-duplication belongs to Operations/local task state.
+Even though the job runs every 30 minutes, use a 24-hour search window so missed runs recover after downtime. De-duplication belongs to Operations/local task state and the Telegram send tool.
 
 For `daily_summary`, the Telegram message is a last-24-hours digest only. Do not include old open tasks just because they are unresolved.
 
@@ -96,6 +96,8 @@ For `unanswered_7d`, call `owlswatch_email_search_unanswered_threads` with:
 
 - `days: 7`
 - `maxResults: 50`
+
+The unanswered scan should not create a second same-day Telegram ping for a thread that was already alerted by `polling_30m` or `daily_summary`. Treat it as a follow-up safety net for threads that are still unresolved after at least 24 hours, unless the user explicitly asks to check a specific thread.
 
 For manual searches, use the sender, subject, or Gmail thread id supplied by the user. If only candidates are available, show up to three concise options and ask which one.
 
@@ -361,6 +363,8 @@ Keep notifications short. Do not paste full email drafts into Telegram.
 
 All email drafts require human review, so do not spend a line saying that the draft needs human review. Only mention a review blocker when there is a specific decision needed, such as payment status, availability, complaint sensitivity, or missing information.
 
+Use one Telegram ping per Gmail thread per day by default. `owlswatch_email_send_telegram_message` automatically dedupes Gmail-thread links for 24 hours. Do not set `force: true` for scheduled `polling_30m`, `daily_summary`, or `unanswered_7d` jobs. Use `force: true` only when the user explicitly asks you to resend a notification.
+
 For a successfully created Gmail draft, use this exact Telegram shape:
 
 ```text
@@ -412,7 +416,7 @@ For the daily summary:
    - Waiting on quote/payment/availability
 3. call `owlswatch_email_search_recent_threads` with `hours: 24`
 4. include only important items from the last 24 hours
-5. exclude older open tasks, old unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, and resolved items
+5. exclude older open tasks, old unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, resolved items, and threads that already triggered a same-day Telegram alert
    - exception: include Little Hotelier / BookingButton `enquiry received` messages because they are guest inquiries, even if sent by a no-reply address
 6. call `owlswatch_email_send_telegram_message`
 7. call `owlswatch_email_submit_scan_run` if Operations is configured; otherwise skip or local-log

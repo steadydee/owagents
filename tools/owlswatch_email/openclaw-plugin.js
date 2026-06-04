@@ -123,13 +123,16 @@ const toolSchemas = {
     }
   },
   owlswatch_email_send_telegram_message: {
-    description: "Send an email-agent Telegram notification to the configured Owl's Watch ops chat/topic.",
+    description: "Send an email-agent Telegram notification to the configured Owl's Watch ops chat/topic. Gmail-thread links are automatically deduped for 24 hours unless force=true.",
     parameters: {
       type: "object",
       properties: {
         text: { type: "string" },
         chat_id: { type: ["string", "number", "null"] },
-        message_thread_id: { type: ["string", "number", "null"] }
+        message_thread_id: { type: ["string", "number", "null"] },
+        dedupeKey: { type: ["string", "null"] },
+        dedupeHours: { type: "integer", minimum: 1, maximum: 168 },
+        force: { type: "boolean" }
       },
       required: ["text"],
       additionalProperties: false

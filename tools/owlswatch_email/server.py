@@ -30,6 +30,7 @@ from typing import Any, Callable
 WORKSPACE = Path(os.environ.get("OWLSWATCH_EMAIL_WORKSPACE", "~/.openclaw/workspace-owlswatch-correo")).expanduser()
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-owlswatch/openclaw.json")).expanduser()
 TASK_DIR = WORKSPACE / "tasks" / "email"
+NOTIFICATION_DIR = WORKSPACE / "tasks" / "email_notifications"
 MEMORY_DIR = WORKSPACE / "memory"
 
 DEFAULT_LUNA_BASE_URL = "https://luna.owlswatch.com"
@@ -40,6 +41,7 @@ DEFAULT_GMAIL_ACCOUNT = "info@owlswatch.com"
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\\-]{1,300}$")
 TEXT_RE = re.compile(r"^[\s\S]{0,50000}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+GMAIL_THREAD_URL_RE = re.compile(r"https://mail\.google\.com/mail/u/\d+/#\S+/([A-Za-z0-9_-]{10,300})")
 LOW_VALUE_MARKERS = (
     "unsubscribe",
     "newsletter",
@@ -432,6 +434,11 @@ def task_path(task_id: str) -> Path:
     return TASK_DIR / f"{safe}.json"
 
 
+def notification_path(key: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "-", key)[:180]
+    return NOTIFICATION_DIR / f"{safe}.json"
+
+
 def parse_iso_datetime(value: Any) -> dt.datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -474,9 +481,56 @@ def task_id_from(payload: dict[str, Any]) -> str:
     explicit = payload.get("taskId") or payload.get("task_id")
     if explicit:
         return validate_safe_id("taskId", explicit) or ""
-    base = payload.get("gmailThreadId") or payload.get("threadId") or payload.get("sourceUrl") or json_dumps(payload)
+    gmail = payload.get("gmail") if isinstance(payload.get("gmail"), dict) else {}
+    thread = payload.get("thread") if isinstance(payload.get("thread"), dict) else {}
+    base = (
+        payload.get("gmailThreadId")
+        or payload.get("threadId")
+        or gmail.get("threadId")
+        or gmail.get("gmailThreadId")
+        or thread.get("gmailThreadId")
+        or thread.get("threadId")
+        or payload.get("sourceUrl")
+        or gmail.get("sourceUrl")
+        or json_dumps(payload)
+    )
     digest = hashlib.sha256(str(base).encode()).hexdigest()[:16]
     return f"email-{digest}"
+
+
+def extract_gmail_thread_ids_from_text(text: str) -> list[str]:
+    seen: set[str] = set()
+    thread_ids: list[str] = []
+    for match in GMAIL_THREAD_URL_RE.finditer(text or ""):
+        thread_id = match.group(1).strip()
+        if thread_id and thread_id not in seen:
+            seen.add(thread_id)
+            thread_ids.append(thread_id)
+    return thread_ids
+
+
+def read_notification(key: str) -> dict[str, Any] | None:
+    try:
+        return json.loads(notification_path(key).read_text())
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
+def write_notification(key: str, record: dict[str, Any]) -> None:
+    NOTIFICATION_DIR.mkdir(parents=True, exist_ok=True)
+    notification_path(key).write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+
+
+def recently_notified(key: str, cooldown_hours: int) -> bool:
+    record = read_notification(key)
+    if not record:
+        return False
+    last = parse_iso_datetime(record.get("lastNotifiedAt"))
+    if not last:
+        return False
+    return last >= now_utc() - dt.timedelta(hours=cooldown_hours)
 
 
 def read_task(path: Path) -> dict[str, Any] | None:
@@ -1020,6 +1074,25 @@ def tool_email_send_telegram_message(args: dict[str, Any]) -> dict[str, Any]:
     chat_id = str(args.get("chat_id") or email_notify_chat_id(config))
     text = validate_text("text", args.get("text"), required=True, max_len=3900)
     thread_id = args.get("message_thread_id") or email_notify_thread_id(config)
+    force = bool(args.get("force"))
+    dedupe_hours = int(args.get("dedupeHours") or 24)
+    if not 1 <= dedupe_hours <= 168:
+        raise ToolError("invalid_input", "dedupeHours must be between 1 and 168.")
+    explicit_key = validate_safe_id("dedupeKey", args.get("dedupeKey")) if args.get("dedupeKey") else None
+    gmail_thread_ids = extract_gmail_thread_ids_from_text(text)
+    dedupe_keys = [f"gmail-thread-{thread}" for thread in gmail_thread_ids]
+    if explicit_key:
+        dedupe_keys.insert(0, f"custom-{explicit_key}")
+
+    if dedupe_keys and not force and all(recently_notified(key, dedupe_hours) for key in dedupe_keys):
+        return {
+            "ok": True,
+            "suppressed": True,
+            "reason": "duplicate_thread_notification",
+            "dedupeKeys": dedupe_keys,
+            "cooldownHours": dedupe_hours,
+        }
+
     payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
     if thread_id:
         payload["message_thread_id"] = str(thread_id)
@@ -1028,7 +1101,24 @@ def tool_email_send_telegram_message(args: dict[str, Any]) -> dict[str, Any]:
     if not response.get("ok"):
         raise ToolError("telegram_error", "Telegram sendMessage failed.", retryable=True)
     result = response.get("result") or {}
-    return {"ok": True, "message_id": result.get("message_id"), "message_thread_id": result.get("message_thread_id")}
+    if dedupe_keys:
+        record = {
+            "lastNotifiedAt": now_iso(),
+            "messageId": result.get("message_id"),
+            "messageThreadId": result.get("message_thread_id"),
+            "chatId": chat_id,
+            "gmailThreadIds": gmail_thread_ids,
+            "textHash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        }
+        for key in dedupe_keys:
+            write_notification(key, record)
+    return {
+        "ok": True,
+        "message_id": result.get("message_id"),
+        "message_thread_id": result.get("message_thread_id"),
+        "suppressed": False,
+        "dedupeKeys": dedupe_keys,
+    }
 
 
 def tool_email_memory_log(args: dict[str, Any]) -> dict[str, Any]:
@@ -1051,7 +1141,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
     "owlswatch_email_submit_operations_intake": ("Submit an email draft task to Operations Email Desk. Requires EMAIL_AGENT_API_TOKEN. Does not send email.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": False}, tool_operations_email_intake),
     "owlswatch_email_submit_scan_run": ("Submit a daily/recent/unanswered email scan summary to Operations Email Desk. Requires EMAIL_AGENT_API_TOKEN.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": False}, tool_operations_scan_run),
     "owlswatch_email_create_gmail_draft": ("Create a Gmail draft in the original thread when compose scope is explicitly enabled. Never sends.", {"type": "object", "properties": {"threadId": {"type": "string"}, "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "inReplyTo": {"type": ["string", "null"]}}, "required": ["threadId", "to", "subject", "body"], "additionalProperties": False}, tool_gmail_create_draft),
-    "owlswatch_email_send_telegram_message": ("Send an email-agent Telegram notification to the configured Owl's Watch ops chat/topic.", {"type": "object", "properties": {"text": {"type": "string"}, "chat_id": {"type": ["string", "number", "null"]}, "message_thread_id": {"type": ["string", "number", "null"]}}, "required": ["text"], "additionalProperties": False}, tool_email_send_telegram_message),
+    "owlswatch_email_send_telegram_message": ("Send an email-agent Telegram notification to the configured Owl's Watch ops chat/topic. Gmail-thread links are automatically deduped for 24 hours unless force=true.", {"type": "object", "properties": {"text": {"type": "string"}, "chat_id": {"type": ["string", "number", "null"]}, "message_thread_id": {"type": ["string", "number", "null"]}, "dedupeKey": {"type": ["string", "null"]}, "dedupeHours": {"type": "integer", "minimum": 1, "maximum": 168}, "force": {"type": "boolean"}}, "required": ["text"], "additionalProperties": False}, tool_email_send_telegram_message),
     "owlswatch_email_memory_log": ("Append one concise Correo memory line.", {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"], "additionalProperties": False}, tool_email_memory_log),
 }
 
