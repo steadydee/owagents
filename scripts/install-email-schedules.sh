@@ -64,7 +64,7 @@ cat > "$PLIST_DIR/$DAILY_LABEL.plist" <<PLIST
   <key>ProgramArguments</key><array><string>$ROOT/scripts/run-correo-daily-summary.sh</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
-  <key>RunAtLoad</key><false/>
+  <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/openclaw/owlswatch-email-daily-summary.stdout.log</string>
   <key>StandardErrorPath</key><string>/tmp/openclaw/owlswatch-email-daily-summary.stderr.log</string>
 </dict>
@@ -80,7 +80,7 @@ cat > "$PLIST_DIR/$UNANSWERED_LABEL.plist" <<PLIST
   <key>ProgramArguments</key><array><string>$ROOT/scripts/run-correo-unanswered.sh</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
-  <key>RunAtLoad</key><false/>
+  <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/openclaw/owlswatch-email-unanswered.stdout.log</string>
   <key>StandardErrorPath</key><string>/tmp/openclaw/owlswatch-email-unanswered.stderr.log</string>
 </dict>
