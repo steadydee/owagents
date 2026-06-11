@@ -14,6 +14,7 @@ Before designing a new agent or changing an existing one, read `docs/agent-desig
 - Do not give Cotiza email-sending, booking, availability, or final quote status authority.
 - Do not give Correo final email-send authority or Gmail mutation tools beyond explicitly enabled draft creation.
 - Do not give Cobros final email-send authority. Cobros may create Gmail drafts with cuenta de cobro PDF attachments, but never sends them.
+- Do not give Hotel PMS write authority or guest-message sending authority.
 - Operations app changes belong in the Operations repo, not here.
 
 ## Before Committing
@@ -26,6 +27,7 @@ Run:
 ./scripts/smoke-cotiza.sh
 ./scripts/smoke-correo.sh
 ./scripts/smoke-cobros.sh
+./scripts/smoke-hotel.sh
 openclaw --profile owlswatch config validate
 openclaw --profile owlswatch agents list --bindings
 ```

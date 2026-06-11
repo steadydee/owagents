@@ -1,0 +1,24 @@
+{
+  "id": "hotel-pms",
+  "name": "Hotel PMS Tools",
+  "description": "Read-only PMS tools and staff Telegram notifications for the Hotel operations agent.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "hotel_pms_get_tomorrow_arrivals",
+      "hotel_pms_list_arrivals",
+      "hotel_pms_find_reservation",
+      "hotel_pms_get_reservation_context",
+      "hotel_pms_get_dashboard_snapshot",
+      "hotel_pms_get_lifecycle_snapshot",
+      "hotel_telegram_send_message",
+      "hotel_memory_log"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

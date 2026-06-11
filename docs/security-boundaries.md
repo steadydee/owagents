@@ -9,6 +9,7 @@ Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegr
 - `cotiza`: creates quote drafts and Drive quote sheets only.
 - `correo`: creates Email Desk tasks and Gmail drafts only. It does not send final emails.
 - `cobros`: creates cuenta de cobro Drive Doc/PDF packets, Gmail drafts with attached PDFs, and Email Desk review tasks only. It does not send final emails.
+- `hotel`: reads PMS reservation operations data and sends staff-only Telegram notifications. It does not write PMS data or send guest messages.
 
 ## Main
 
@@ -100,6 +101,24 @@ Forbidden:
 - Generate documents for amount mismatch/correction disputes without human review.
 - Use quote prices or historical examples as accounting truth.
 - Access unrelated Operations modules or direct databases.
+
+## Hotel
+
+Allowed:
+
+- Read PMS dashboard, lifecycle, arrival, and reservation context through the PMS tool runtime.
+- Summarize arrivals, in-house guests, open checklist items, balances, and operational notes for staff.
+- Send short staff-only Telegram notifications.
+- Append local memory log lines for scheduled notification history.
+
+Forbidden:
+
+- Send guest messages.
+- Create, modify, cancel, or delete reservations.
+- Toggle checklist items.
+- Confirm availability.
+- Access PMS direct database credentials.
+- Use PMS write, finance, admin, or restricted tools.
 
 ## Tool Policy
 

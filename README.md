@@ -11,6 +11,7 @@ This repo is source and deployment scaffolding. It is not a copy of the live `~/
 - `Cotiza`: quote drafting clerk. Reads quote requests, creates Operations draft rows, and creates Google Drive quote sheets.
 - `Correo`: operational email drafting clerk. Reads Gmail, uses Luna context, creates Email Desk draft tasks, and never sends final email.
 - `Cobros`: cuenta de cobro drafting clerk. Reads accounting requests, creates Drive Doc/PDF packets and Gmail drafts with attached PDFs, and never sends final email.
+- `Hotel`: PMS operations clerk. Reads reservation operations data and sends staff-only Telegram notifications from a separate `hotel` profile/bot.
 
 ## Boundaries
 
@@ -46,3 +47,12 @@ openclaw --profile owlswatch gateway restart
 ```
 
 The deploy script copies source files into the live OpenClaw workspaces and leaves runtime state untouched.
+
+Hotel/PMS operations uses a separate profile:
+
+```sh
+./scripts/deploy-hotel-to-mac-mini.sh
+./scripts/smoke-hotel.sh
+openclaw --profile hotel config validate
+openclaw --profile hotel skills check --agent hotel
+```

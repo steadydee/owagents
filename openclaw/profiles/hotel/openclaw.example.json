@@ -1,0 +1,148 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace-hotel-ops",
+      "skills": [
+        "tomorrow-arrivals"
+      ],
+      "models": {
+        "openai/gpt-5.5": {
+          "agentRuntime": {
+            "id": "codex"
+          }
+        }
+      },
+      "model": {
+        "primary": "openai/gpt-5.5"
+      }
+    },
+    "list": [
+      {
+        "id": "hotel",
+        "name": "Hotel",
+        "default": true,
+        "model": "openai/gpt-5.5",
+        "models": {
+          "openai/gpt-5.5": {
+            "agentRuntime": {
+              "id": "codex"
+            }
+          }
+        },
+        "workspace": "~/.openclaw/workspace-hotel-ops",
+        "agentDir": "~/.openclaw-hotel/agents/hotel/agent",
+        "skills": [
+          "tomorrow-arrivals"
+        ],
+        "tools": {
+          "profile": "minimal",
+          "alsoAllow": [
+            "session_status",
+            "hotel_pms_get_tomorrow_arrivals",
+            "hotel_pms_list_arrivals",
+            "hotel_pms_find_reservation",
+            "hotel_pms_get_reservation_context",
+            "hotel_pms_get_dashboard_snapshot",
+            "hotel_pms_get_lifecycle_snapshot",
+            "hotel_telegram_send_message",
+            "hotel_memory_log"
+          ],
+          "deny": [
+            "exec",
+            "browser",
+            "gateway",
+            "cron",
+            "nodes",
+            "canvas",
+            "group:fs",
+            "group:web",
+            "bundle-mcp"
+          ]
+        }
+      }
+    ]
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 19201,
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "<generate with openclaw doctor --generate-gateway-token>"
+    }
+  },
+  "mcp": {
+    "servers": {
+      "hotel_pms": {
+        "command": "node",
+        "args": [
+          "~/.openclaw/workspace-hotel-ops/tools/hotel_pms/openclaw-plugin.js"
+        ],
+        "env": {
+          "OPENCLAW_CONFIG_PATH": "~/.openclaw-hotel/openclaw.json",
+          "HOTEL_PMS_WORKSPACE": "~/.openclaw/workspace-hotel-ops",
+          "PMS_BASE_URL": "https://pms.owlswatch.com",
+          "PMS_PROPERTY_ID": "owlswatch",
+          "OW_AGENT_TOKEN_SECRET": "<set locally only>",
+          "HOTEL_TIMEZONE": "America/Bogota",
+          "HOTEL_TELEGRAM_BOT_TOKEN": "<set locally only>",
+          "HOTEL_TELEGRAM_NOTIFY_CHAT_ID": "<hotel_group_chat_id>",
+          "HOTEL_TELEGRAM_NOTIFY_THREAD_ID": "<optional_topic_id>"
+        }
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "openai": {
+        "enabled": true
+      },
+      "hotel-pms": {
+        "enabled": true
+      }
+    },
+    "load": {
+      "paths": [
+        "~/.openclaw/workspace-hotel-ops/tools/hotel_pms"
+      ]
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false,
+      "botToken": "<set locally only>",
+      "dmPolicy": "allowlist",
+      "allowFrom": [
+        "<dennis_telegram_user_id>"
+      ],
+      "streaming": {
+        "mode": "off",
+        "preview": {
+          "toolProgress": false
+        },
+        "progress": {
+          "label": false,
+          "toolProgress": false,
+          "maxLines": 1
+        },
+        "block": {
+          "enabled": false
+        }
+      },
+      "groupPolicy": "allowlist",
+      "groups": {
+        "<hotel_group_chat_id>": {
+          "requireMention": false,
+          "groupPolicy": "open",
+          "ingest": true
+        }
+      },
+      "groupAllowFrom": [
+        "<dennis_telegram_user_id>"
+      ]
+    }
+  },
+  "session": {
+    "dmScope": "per-channel-peer"
+  }
+}
