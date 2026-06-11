@@ -2,6 +2,8 @@
 
 This repo manages Owl's Watch OpenClaw agents.
 
+Before designing a new agent or changing an existing one, read `docs/agent-design-guidelines.md`.
+
 ## Hard Rules
 
 - Do not commit secrets, tokens, credentials, service-account JSON, auth state, sessions, memory logs, receipt spools, raw Gmail content, or generated quote sheets.

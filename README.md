@@ -28,7 +28,7 @@ This repo is source and deployment scaffolding. It is not a copy of the live `~/
 - `tools/`: MCP/plugin tool servers.
 - `data/`: versioned business rules and schemas used by agents.
 - `scripts/`: deploy, smoke-test, backup, and safety scripts.
-- `docs/`: architecture, security, Telegram routing, and runbooks.
+- `docs/`: architecture, security, Telegram routing, and runbooks. Start with `docs/agent-design-guidelines.md` before agent work.
 
 ## Normal Deploy
 
