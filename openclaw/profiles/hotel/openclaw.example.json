@@ -100,6 +100,9 @@
       "openai": {
         "enabled": true
       },
+      "codex": {
+        "enabled": true
+      },
       "hotel-pms": {
         "enabled": true
       }
