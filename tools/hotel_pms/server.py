@@ -263,7 +263,16 @@ def visit_phrase(reservation: dict[str, Any]) -> str:
     return "arriving"
 
 
-def normalize_arrival(row: dict[str, Any], detail: dict[str, Any], context: dict[str, Any] | None) -> dict[str, Any]:
+def date_part(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) >= 10 and DATE_RE.match(text[:10]):
+        return text[:10]
+    return None
+
+
+def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: dict[str, Any] | None, movement: str) -> dict[str, Any]:
     reservation = detail.get("reservation") if isinstance(detail.get("reservation"), dict) else detail
     context_reservation = {}
     if isinstance(context, dict):
@@ -284,6 +293,7 @@ def normalize_arrival(row: dict[str, Any], detail: dict[str, Any], context: dict
     count = guest_count(reservation)
     return {
         "reservationId": reservation.get("reservationId") or reservation.get("id") or row.get("reservationId"),
+        "movement": movement,
         "guestName": reservation.get("guestName") or row.get("guestName"),
         "guestCount": count,
         "partyPhrase": f"party of {count}" if count else "party",
@@ -300,24 +310,70 @@ def normalize_arrival(row: dict[str, Any], detail: dict[str, Any], context: dict
     }
 
 
-def tool_hotel_pms_get_tomorrow_arrivals(args: dict[str, Any]) -> dict[str, Any]:
-    config = load_config()
-    date = validate_date("date", args.get("date")) or local_date(config, 1)
-    rows = pms_tool(config, "list_arrivals", {"date": date}) or []
-    arrivals = []
+def normalize_arrival(row: dict[str, Any], detail: dict[str, Any], context: dict[str, Any] | None) -> dict[str, Any]:
+    return normalize_reservation(row, detail, context, "arrival")
+
+
+def enrich_reservations(config: dict[str, Any], rows: list[Any], movement: str) -> list[dict[str, Any]]:
+    reservations = []
     for row in rows:
         if not isinstance(row, dict) or not row.get("reservationId"):
             continue
         detail = pms_tool(config, "get_reservation", {"reservationId": row["reservationId"]}) or {}
         context = pms_tool(config, "get_reservation_context", {"reservationId": row["reservationId"]}) or {}
-        arrivals.append(normalize_arrival(row, detail, context))
+        reservations.append(normalize_reservation(row, detail, context, movement))
+    return reservations
+
+
+def tool_hotel_pms_get_tomorrow_arrivals(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    date = validate_date("date", args.get("date")) or local_date(config, 1)
+    rows = pms_tool(config, "list_arrivals", {"date": date}) or []
+    arrivals = enrich_reservations(config, rows, "arrival")
     return {"ok": True, "date": date, "timezone": cfg_env(config, "HOTEL_TIMEZONE") or DEFAULT_TIMEZONE, "arrivals": arrivals}
+
+
+def tool_hotel_pms_get_tomorrow_summary(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    date = validate_date("date", args.get("date")) or local_date(config, 1)
+    arrivals_raw = pms_tool(config, "list_arrivals", {"date": date}) or []
+    departures_raw = pms_tool(config, "list_departures", {"date": date}) or []
+    in_house_raw = pms_tool(config, "list_in_house_guests", {"date": date}) or []
+    stayover_raw = [
+        row
+        for row in in_house_raw
+        if isinstance(row, dict)
+        and date_part(row.get("arrivalDate")) is not None
+        and date_part(row.get("departureDate")) is not None
+        and date_part(row.get("arrivalDate")) < date
+        and date_part(row.get("departureDate")) > date
+    ]
+    return {
+        "ok": True,
+        "date": date,
+        "timezone": cfg_env(config, "HOTEL_TIMEZONE") or DEFAULT_TIMEZONE,
+        "arrivals": enrich_reservations(config, arrivals_raw, "arrival"),
+        "departures": enrich_reservations(config, departures_raw, "departure"),
+        "stayovers": enrich_reservations(config, stayover_raw, "stayover"),
+    }
 
 
 def tool_hotel_pms_list_arrivals(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
     return {"ok": True, "date": date, "arrivals": pms_tool(config, "list_arrivals", {"date": date}) or []}
+
+
+def tool_hotel_pms_list_departures(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    date = validate_date("date", args.get("date")) or local_date(config, 0)
+    return {"ok": True, "date": date, "departures": pms_tool(config, "list_departures", {"date": date}) or []}
+
+
+def tool_hotel_pms_list_in_house(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    date = validate_date("date", args.get("date")) or local_date(config, 0)
+    return {"ok": True, "date": date, "inHouse": pms_tool(config, "list_in_house_guests", {"date": date}) or []}
 
 
 def tool_hotel_pms_find_reservation(args: dict[str, Any]) -> dict[str, Any]:
@@ -394,6 +450,11 @@ def tool_hotel_memory_log(args: dict[str, Any]) -> dict[str, Any]:
 
 
 TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str, Any]]]] = {
+    "hotel_pms_get_tomorrow_summary": (
+        "Return enriched PMS arrivals, departures, and stayovers for tomorrow or a supplied YYYY-MM-DD date.",
+        {"type": "object", "properties": {"date": {"type": ["string", "null"]}}, "additionalProperties": False},
+        tool_hotel_pms_get_tomorrow_summary,
+    ),
     "hotel_pms_get_tomorrow_arrivals": (
         "Return enriched PMS arrivals for tomorrow or a supplied YYYY-MM-DD date.",
         {"type": "object", "properties": {"date": {"type": ["string", "null"]}}, "additionalProperties": False},
@@ -403,6 +464,16 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         "List PMS arrivals for a supplied date or today.",
         {"type": "object", "properties": {"date": {"type": ["string", "null"]}}, "additionalProperties": False},
         tool_hotel_pms_list_arrivals,
+    ),
+    "hotel_pms_list_departures": (
+        "List PMS departures for a supplied date or today.",
+        {"type": "object", "properties": {"date": {"type": ["string", "null"]}}, "additionalProperties": False},
+        tool_hotel_pms_list_departures,
+    ),
+    "hotel_pms_list_in_house": (
+        "List PMS in-house reservations for a supplied date or today.",
+        {"type": "object", "properties": {"date": {"type": ["string", "null"]}}, "additionalProperties": False},
+        tool_hotel_pms_list_in_house,
     ),
     "hotel_pms_find_reservation": (
         "Search PMS reservations by guest, email, reference, or status.",

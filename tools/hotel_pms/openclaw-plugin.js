@@ -11,6 +11,14 @@ const BASE_ENV = {
 };
 
 const toolSchemas = {
+  hotel_pms_get_tomorrow_summary: {
+    description: "Return enriched PMS arrivals, departures, and stayovers for tomorrow or a supplied YYYY-MM-DD date.",
+    parameters: {
+      type: "object",
+      properties: { date: { type: ["string", "null"] } },
+      additionalProperties: false,
+    },
+  },
   hotel_pms_get_tomorrow_arrivals: {
     description: "Return enriched PMS arrivals for tomorrow or a supplied YYYY-MM-DD date.",
     parameters: {
@@ -21,6 +29,22 @@ const toolSchemas = {
   },
   hotel_pms_list_arrivals: {
     description: "List PMS arrivals for a supplied date or today.",
+    parameters: {
+      type: "object",
+      properties: { date: { type: ["string", "null"] } },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_list_departures: {
+    description: "List PMS departures for a supplied date or today.",
+    parameters: {
+      type: "object",
+      properties: { date: { type: ["string", "null"] } },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_list_in_house: {
+    description: "List PMS in-house reservations for a supplied date or today.",
     parameters: {
       type: "object",
       properties: { date: { type: ["string", "null"] } },

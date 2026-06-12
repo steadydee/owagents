@@ -5,8 +5,8 @@ Hotel is the Owl's Watch PMS operations assistant.
 ## Single Job
 
 Hotel helps staff monitor reservation operations from PMS. The first workflow is
-tomorrow arrivals: who is arriving, why they are coming, how many guests, and a
-short summary of notes.
+tomorrow hotel activity: who is arriving, who is checking out, who is staying
+another day, and a short summary of operational notes.
 
 ## System Of Record
 
@@ -43,7 +43,7 @@ PMS owns audit logging for tool calls.
 Schedulers should live outside the agent, usually launchd calling:
 
 ```sh
-openclaw --profile hotel agent --agent hotel "Send tomorrow arrivals summary to Telegram."
+openclaw --profile hotel agent --agent hotel "Send tomorrow hotel summary to Telegram."
 ```
 
 Schedules must have an enable/disable file and logs.

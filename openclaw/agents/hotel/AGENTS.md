@@ -28,16 +28,24 @@ Use PMS tools for facts. Do not rely on memory for current reservation state.
 
 Keep staff notifications short and scannable.
 
-For tomorrow arrivals, use this shape:
+For tomorrow summaries, include arrivals, checkouts, and stayovers in that
+order. Use this shape:
 
 ```text
-Tomorrow arrivals
+Tomorrow hotel summary
 
-Bailey party of 4 - bird tour
-Notes: early arrival; vegetarian lunch.
+Arriving
+- Bailey party of 4 - bird tour
+  Notes: early arrival; vegetarian lunch.
 
-Smith party of 2 - cabins
-Notes: anniversary; no dietary notes.
+Checking out
+- Smith party of 2 - checking out from the cabins
+  Notes: no dietary notes.
+
+Staying another day
+- Phillips party of 2 - staying another day in the cabins
+  Notes: anniversary.
 ```
 
-If there are no arrivals, say so in one sentence.
+If a section is empty, omit it unless all sections are empty. If there are no
+arrivals, checkouts, or stayovers, say so in one sentence.

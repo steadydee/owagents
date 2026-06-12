@@ -8,8 +8,11 @@ python3 -m py_compile "$SERVER"
 
 tools_json="$(python3 "$SERVER" list)"
 for tool in \
+  hotel_pms_get_tomorrow_summary \
   hotel_pms_get_tomorrow_arrivals \
   hotel_pms_list_arrivals \
+  hotel_pms_list_departures \
+  hotel_pms_list_in_house \
   hotel_pms_find_reservation \
   hotel_pms_get_reservation_context \
   hotel_pms_get_dashboard_snapshot \
