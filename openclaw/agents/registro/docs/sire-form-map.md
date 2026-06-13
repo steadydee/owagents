@@ -38,6 +38,35 @@ Owl's Watch public SIRE constants discovered from the registration form:
   the supplied RUT establishment page for `OWL'S WATCH`.
 - Actividad economica: `Alojamiento rural. (5514)`, value `5514`
 
+Pre-login account registration form ids discovered from the public page:
+
+- `solicitarCuentaUsuario:tipoPersona`: values `1` persona juridica, `2`
+  persona natural con actividad comercial, `3` persona natural.
+- `solicitarCuentaUsuario:nit`, `solicitarCuentaUsuario:dv`, and
+  `solicitarCuentaUsuario:cedula`.
+- `solicitarCuentaUsuario:tipoEmpresaSOM`: economic activity, value `5514`.
+- `solicitarCuentaUsuario:nombreEmpresa` and
+  `solicitarCuentaUsuario:naturaleza`, where private is value `R`.
+- `solicitarCuentaUsuario:email` and
+  `solicitarCuentaUsuario:fechaNacimientoInputDate` for company start date.
+- `solicitarCuentaUsuario:nombreRepresentante`,
+  `solicitarCuentaUsuario:tipoDocEmpresas`, and
+  `solicitarCuentaUsuario:numeroDocumento`.
+- `solicitarCuentaUsuario:upload:file` plus the `Adjuntar Documento` button.
+- `solicitarCuentaUsuario:direccion`, `fax`, `telefono`, and
+  `telefonomovil`.
+- `solicitarCuentaUsuario:departamentos`, `ciudades`, `corregimientos`, and
+  `descripcionAdicional`.
+- Responsible-person fields:
+  `solicitarCuentaUsuario:tipoDocumentoResponsable`,
+  `numeroDocumentoRepresentante`, `primerApellidoSolicitanteRepresentante`,
+  `segundoApellidonombreSolicitanteRepresentante`, `nombreSolicitante`,
+  `cargo`, `movil`, `generoResponsable`, `fechaNacInputDate`,
+  `nacionalidadResponsable`, `emailSolicitanteRepresentante`, and
+  `emailSolicitanteRepresentanteConfirmacion`.
+- `solicitarCuentaUsuario:secureText` is the captcha input and final
+  registration submit is `solicitarCuentaUsuario:j_id192`.
+
 Still recon-gated:
 
 - Codigo de empresa. This is not visible before account approval/login.
