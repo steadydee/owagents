@@ -14,5 +14,37 @@ Record:
 - duplicate/idempotency behavior for repeated entrada or salida attempts
 - failure messages for invalid document data, expired sessions, and city code issues
 
+## Public Recon Findings
+
+Official public page:
+`https://portal.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/registro-sire`
+
+Official portal login:
+`https://apps.migracioncolombia.gov.co/sire/public/login.jsf`
+
+Official public registration path:
+`https://apps.migracioncolombia.gov.co/sire/public/solicitarCuentaUsuario.jsf`
+
+Public SIRE page states the service is virtual, free, and has a `3 dias
+habiles` processing time for the registration response. The login form requires
+tipo de documento, numero de documento, password, and a selected reporting
+person/legal entity. Account registration is required before live automation.
+
+Owl's Watch public SIRE constants discovered from the registration form:
+
+- Tipo de reporte: `Alojamiento y Hospedaje`
+- Departamento: `CALDAS`, value `17`
+- Municipio: `MANIZALES`, value `17001`
+- Actividad economica: `Alojamiento rural. (5514)`, value `5514`
+
+Still recon-gated:
+
+- Codigo de empresa. This is not visible before account approval/login.
+- SIRE credentials and approved reporting person/legal entity selector value.
+- Entrada/salida post-login form selectors, required fields, receipt shape,
+  duplicate behavior, and error messages.
+- Whether the account registration captcha/manual approval flow must be
+  completed by Dennis before automation can observe post-login pages.
+
 After recon, add a separate SIRE browser routine PR. Do not wire live SIRE
 submission into the current Registro processing skill.
