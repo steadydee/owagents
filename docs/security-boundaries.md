@@ -10,6 +10,7 @@ Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegr
 - `correo`: creates Email Desk tasks and Gmail drafts only. It does not send final emails.
 - `cobros`: creates cuenta de cobro Drive Doc/PDF packets, Gmail drafts with attached PDFs, and Email Desk review tasks only. It does not send final emails.
 - `hotel`: reads PMS reservation operations data and sends staff-only Telegram notifications. It does not write PMS data or send guest messages.
+- `registro`: fetches guest ID images from ChakraHQ, extracts identity fields locally, writes registration data to PMS registro tools, submits SIRE reports through the browser on the SIRE domain only after recon, asks Luna for narrow guest fixes, and sends staff-only Telegram notifications. It never messages guests directly, never touches reservations, never reads the PMS database directly, and never handles SIRE credentials.
 
 ## Main
 
@@ -120,6 +121,27 @@ Forbidden:
 - Access PMS direct database credentials.
 - Use PMS write, finance, admin, or restricted tools.
 
+## Registro
+
+Allowed:
+
+- Read and write PMS registration rows only through `registro` classification tools.
+- Record local extraction results, guarded status transitions, validation exceptions, and submission attempts.
+- Ask Luna to send one narrow guest correction request inside the WhatsApp service window.
+- Send short staff-only Telegram notifications for exceptions and sweep summaries.
+- Use a local or tailnet-only vision extractor and deterministic MRZ checksum parsing.
+- Use the browser only for the SIRE portal domain `apps.migracioncolombia.gov.co`, and only after the recon-gated browser routine lands.
+
+Forbidden:
+
+- Direct PMS or Luna database access.
+- Guest messaging outside Luna.
+- Browser navigation outside `apps.migracioncolombia.gov.co`.
+- Live SIRE browser automation before the recon-gated routine is implemented.
+- Invent identity fields, city codes, motives, occupations, or receipt references.
+- Send document images, raw IDs, full government payloads, or tokens to Telegram.
+- Access PMS tools outside the `registro` classification.
+
 ## Tool Policy
 
 Each agent uses `tools.profile: "minimal"` plus explicit `alsoAllow` entries for narrow `owlswatch_*` tools.
@@ -127,7 +149,7 @@ Each agent uses `tools.profile: "minimal"` plus explicit `alsoAllow` entries for
 Broad tools stay denied by default:
 
 - `exec`
-- `browser`
+- `browser` except Registro's documented SIRE-domain-only browser policy
 - `gateway`
 - `cron`
 - `nodes`
