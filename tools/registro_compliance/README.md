@@ -34,4 +34,6 @@ HMAC machine tokens. They do not connect to either database directly.
 - `REGISTRO_TELEGRAM_NOTIFY_CHAT_ID`
 - `REGISTRO_TELEGRAM_NOTIFY_THREAD_ID` optional
 
-Tokens and media spools are runtime-only. Do not commit them.
+Tokens and media spools are runtime-only. Do not commit them. Production
+ID/passport images also need a durable private evidence store before transient
+spool files are deleted.

@@ -7,7 +7,8 @@ Allowed tools:
 - `registro_fetch_media`: reads the PMS media reference without exposing image bytes.
 - `registro_parse_mrz`: deterministic TD3 MRZ parser and checksum validator.
 - `registro_extract_document_vision`: local or tailnet-only vision extractor.
-- `registro_delete_media`: deletes a contained local media file after extraction.
+- `registro_delete_media`: deletes a contained transient local media file only
+  after any required durable evidence copy is confirmed.
 - `registro_record_extraction`: writes extracted/validated fields to PMS.
 - `registro_set_status`: moves PMS registration status through guarded transitions.
 - `registro_flag_exception`: records PMS exception state.

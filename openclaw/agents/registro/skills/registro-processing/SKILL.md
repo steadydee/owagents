@@ -117,8 +117,10 @@ If checksums fail, required fields are missing, or the document indicates a
 minor needing review, record the extraction with validation errors and notify
 staff.
 
-Always call `registro_delete_media` for any local media file returned by a fetch
-or vision step after extraction is recorded.
+Production Owl's Watch registrations require ID/passport image retention for IVA
+exemption evidence. Delete a fetched local media file only after a durable
+evidence copy is confirmed, or when running in an explicit test environment
+where evidence retention is intentionally disabled.
 
 ## Step 3 - TRA Records
 
