@@ -201,6 +201,48 @@
             "bundle-mcp"
           ]
         }
+      },
+      {
+        "id": "registro",
+        "name": "Registro",
+        "model": "openai/gpt-5.5",
+        "models": {
+          "openai/gpt-5.5": {
+            "agentRuntime": {
+              "id": "codex"
+            }
+          }
+        },
+        "workspace": "~/.openclaw/workspace-owlswatch-registro",
+        "skills": ["registro-processing"],
+        "tools": {
+          "profile": "minimal",
+          "alsoAllow": [
+            "registro_list_pending",
+            "registro_get",
+            "registro_fetch_media",
+            "registro_parse_mrz",
+            "registro_extract_document_vision",
+            "registro_delete_media",
+            "registro_record_extraction",
+            "registro_set_status",
+            "registro_flag_exception",
+            "registro_record_submission",
+            "registro_request_guest_fix",
+            "registro_telegram_notify",
+            "browser"
+          ],
+          "deny": [
+            "exec",
+            "gateway",
+            "cron",
+            "nodes",
+            "canvas",
+            "group:fs",
+            "group:web",
+            "bundle-mcp"
+          ]
+        }
       }
     ]
   },
@@ -239,6 +281,12 @@
             },
             "<cobros_topic_id>": {
               "agentId": "cobros",
+              "requireMention": false,
+              "groupPolicy": "open",
+              "ingest": true
+            },
+            "<registro_topic_id>": {
+              "agentId": "registro",
               "requireMention": false,
               "groupPolicy": "open",
               "ingest": true
@@ -321,6 +369,24 @@
           "OWLSWATCH_COBROS_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
           "OWLSWATCH_COBROS_NOTIFY_THREAD_ID": "<optional_cobros_topic_id>"
         }
+      },
+      "registro_compliance": {
+        "command": "python3",
+        "args": ["~/.openclaw/workspace-owlswatch-registro/tools/registro_compliance/server.py"],
+        "env": {
+          "REGISTRO_WORKSPACE": "~/.openclaw/workspace-owlswatch-registro",
+          "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
+          "PMS_BASE_URL": "https://pms.owlswatch.com",
+          "LUNA_BASE_URL": "https://luna.owlswatch.com",
+          "PMS_PROPERTY_ID": "owlswatch",
+          "OW_AGENT_TOKEN_SECRET": "<runtime-only>",
+          "REGISTRO_VISION_ENDPOINT": "<optional-local-or-tailnet-url>",
+          "CHAKRA_ACCESS_TOKEN": "<runtime-only-optional>",
+          "CHAKRA_PLUGIN_ID": "<runtime-only-optional>",
+          "REGISTRO_TELEGRAM_BOT_TOKEN": "<telegram-bot-token-runtime-only>",
+          "REGISTRO_TELEGRAM_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
+          "REGISTRO_TELEGRAM_NOTIFY_THREAD_ID": "<optional_registro_topic_id>"
+        }
       }
     }
   },
@@ -343,6 +409,9 @@
       },
       "owlswatch-cobros": {
         "enabled": true
+      },
+      "registro-compliance": {
+        "enabled": true
       }
     },
     "load": {
@@ -350,7 +419,8 @@
         "~/.openclaw/workspace-owlswatch/tools/owlswatch_intake",
         "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes",
         "~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email",
-        "~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros"
+        "~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros",
+        "~/.openclaw/workspace-owlswatch-registro/tools/registro_compliance"
       ]
     }
   },
