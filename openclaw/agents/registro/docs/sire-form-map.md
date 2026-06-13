@@ -34,17 +34,16 @@ Owl's Watch public SIRE constants discovered from the registration form:
 
 - Tipo de reporte: `Alojamiento y Hospedaje`
 - Departamento: `CALDAS`, value `17`
-- Municipio candidate from RNT/chamber context: `MANIZALES`, value `17001`
-- Municipio candidate from the supplied RUT location: `VILLAMARIA`, value
-  `17873`
+- Municipio: `MANIZALES`, value `17001`. Source trail: RNT/chamber context and
+  the supplied RUT establishment page for `OWL'S WATCH`.
 - Actividad economica: `Alojamiento rural. (5514)`, value `5514`
 
 Still recon-gated:
 
 - Codigo de empresa. This is not visible before account approval/login.
-- Final Owl's Watch SIRE account municipality/address source. Confirm whether
-  the SIRE account should follow the RNT establishment location or the supplied
-  RUT location before hard-coding city selectors.
+- Whether any SIRE post-login screen asks for taxpayer domicilio instead of
+  establishment location. If it does, use the supplied RUT taxpayer-location
+  page for that specific field only.
 - SIRE credentials and approved reporting person/legal entity selector value.
 - Entrada/salida post-login form selectors, required fields, receipt shape,
   duplicate behavior, and error messages.
