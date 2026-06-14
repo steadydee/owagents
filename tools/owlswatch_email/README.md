@@ -6,7 +6,7 @@ The tools are intentionally scoped:
 
 - Gmail tools are read-only unless Gmail draft creation is explicitly enabled.
 - Luna is called only through `get_email_response_context` with a scoped machine token.
-- Operations Email Desk writes go only through `/api/emails/intake` and `/api/emails/scan-runs`.
+- Local task files are used for de-duplication and recovery.
 - Telegram is used only for operational notifications.
 - No tool sends final email.
 
@@ -22,11 +22,6 @@ Required for Luna context:
 - `OW_AGENT_TOKEN_SECRET`
 - `LUNA_BASE_URL`
 
-Required for Operations Email Desk:
-
-- `OPERATIONS_BASE_URL`
-- `EMAIL_AGENT_API_TOKEN_FILE=~/.openclaw-owlswatch/secrets/email-agent-token.tmp`
-
 Optional:
 
 - `OWLSWATCH_EMAIL_NOTIFY_CHAT_ID`
@@ -37,4 +32,4 @@ Gmail draft creation also requires the Workspace domain-wide delegation scope:
 
 `https://www.googleapis.com/auth/gmail.compose`
 
-Do not enable Gmail drafts until Operations review/send boundaries are ready.
+Correo creates Gmail drafts only. Humans review, edit, and send in Gmail.

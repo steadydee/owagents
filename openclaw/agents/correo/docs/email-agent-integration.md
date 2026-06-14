@@ -1,29 +1,21 @@
 # Correo Integration Notes
 
-Correo depends on the Operations Email Desk contract.
+Correo is Gmail-first.
 
-Expected endpoints:
+Correo scans Gmail, drafts replies directly in Gmail, sends concise Telegram
+notifications, and keeps local task files only for de-duplication/recovery.
 
-- `POST /api/emails/intake`
-- `POST /api/emails/scan-runs`
+Correo does not write email draft tasks, scan runs, or review records to
+Operations. Operations remains useful for expenses, quotes, PMS-related systems,
+and cuentas de cobro, but not as the email review surface.
 
-Optional future endpoints used by Operations UI, not directly required by Correo:
-
-- `GET /api/emails/tasks`
-- `GET /api/emails/tasks/:id`
-- `PATCH /api/emails/tasks/:id`
-- `POST /api/emails/tasks/:id/create-gmail-draft`
-- `POST /api/emails/tasks/:id/update-gmail-draft`
-- `POST /api/emails/tasks/:id/send`
-
-Correo should never call send.
+Correo should never call Gmail send.
 
 ## Runtime Secrets
 
 The Mac mini needs these runtime values. Do not commit them.
 
 - `OW_AGENT_TOKEN_SECRET`
-- `EMAIL_AGENT_API_TOKEN_FILE=~/.openclaw-owlswatch/secrets/email-agent-token.tmp`
 - `GOOGLE_APPLICATION_CREDENTIALS`
 
 ## Gmail Scopes
@@ -36,11 +28,12 @@ Gmail draft creation requires:
 
 `https://www.googleapis.com/auth/gmail.compose`
 
-Do not enable `OWLSWATCH_GMAIL_DRAFTS_ENABLED=1` until compose scope is approved and Operations review/send boundaries are live.
+Enable `OWLSWATCH_GMAIL_DRAFTS_ENABLED=1` only after compose scope is approved.
+Humans review, edit, and send directly in Gmail.
 
 ## Scheduling
 
-Use the install script only after Operations Email Desk is ready:
+Use the install script after Gmail read and compose scopes are configured:
 
 ```sh
 ./scripts/install-email-schedules.sh

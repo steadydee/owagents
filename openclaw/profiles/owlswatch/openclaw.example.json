@@ -143,8 +143,6 @@
             "owlswatch_email_read_thread",
             "owlswatch_email_resolve_gmail_url",
             "owlswatch_luna_get_email_response_context",
-            "owlswatch_email_submit_operations_intake",
-            "owlswatch_email_submit_scan_run",
             "owlswatch_email_upsert_task",
             "owlswatch_email_list_open_tasks",
             "owlswatch_email_create_gmail_draft",
@@ -341,8 +339,6 @@
         "env": {
           "OWLSWATCH_EMAIL_WORKSPACE": "~/.openclaw/workspace-owlswatch-correo",
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
-          "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
-          "EMAIL_AGENT_API_TOKEN_FILE": "~/.openclaw-owlswatch/secrets/email-agent-token.tmp",
           "LUNA_BASE_URL": "https://luna.owlswatch.com",
           "OW_AGENT_TOKEN_SECRET": "<runtime-only>",
           "GOOGLE_APPLICATION_CREDENTIALS": "~/.openclaw-owlswatch/secrets/google-service-account.json",
