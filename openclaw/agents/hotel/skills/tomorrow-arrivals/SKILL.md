@@ -117,7 +117,17 @@ Staying another day
 ```
 
 Use the tool's `guestName`, `partyPhrase`, `visitPhrase`, `unitType`,
-`movement`, and notes. Summarize notes. Do not invent missing notes.
+`movement`, `operationalActivities`, and notes. Summarize notes. Do not invent
+missing notes or activities.
+
+If `operationalActivities` includes bird tours, pasadías, day passes, or other
+activities scheduled for tomorrow, include them in the reservation block:
+
+```text
+  Activities: Bird Tour - Half Day x1.
+```
+
+Do not include any activity price or charge amount.
 
 If a note or checklist item mentions pricing, rates, totals, balances, payment,
 deposit, cash, or finance, omit it from the staff-facing message.

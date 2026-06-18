@@ -268,6 +268,16 @@ SENSITIVE_CHECKLIST_MARKERS = (
     "total",
 )
 
+ACTIVITY_MARKERS = (
+    "activity",
+    "bird",
+    "aves",
+    "tour",
+    "pasadia",
+    "pasadía",
+    "day pass",
+)
+
 
 def staff_safe_note(value: Any, max_len: int = 1200) -> str | None:
     text = compact(value, max_len=max_len)
@@ -287,6 +297,50 @@ def staff_safe_checklist_item(item: dict[str, Any]) -> dict[str, Any] | None:
     if any(marker in joined for marker in SENSITIVE_CHECKLIST_MARKERS):
         return None
     return {"key": item.get("key"), "label": item.get("label"), "note": item.get("note")}
+
+
+def activity_label(description: Any) -> str | None:
+    text = compact(description, max_len=160)
+    if not text:
+        return None
+    text = text.replace("—", "-").replace("–", "-")
+    text = re.sub(r"\s*\((?:per person|por persona)\)\s*", "", text, flags=re.I).strip()
+    lowered = text.lower()
+    if any(marker in lowered for marker in SENSITIVE_NOTE_MARKERS):
+        return None
+    return text
+
+
+def operational_activities(context: dict[str, Any] | None, target_date: str | None = None) -> list[dict[str, Any]]:
+    if not isinstance(context, dict) or not isinstance(context.get("charges"), list):
+        return []
+    activities: list[dict[str, Any]] = []
+    seen: set[tuple[str | None, str, int | None]] = set()
+    for charge in context["charges"]:
+        if not isinstance(charge, dict):
+            continue
+        charge_date = date_part(charge.get("chargeDate"))
+        if target_date and charge_date != target_date:
+            continue
+        category = str(charge.get("category") or "").lower()
+        description = str(charge.get("description") or "")
+        joined = f"{category} {description}".lower()
+        if not any(marker in joined for marker in ACTIVITY_MARKERS):
+            continue
+        label = activity_label(description)
+        if not label:
+            continue
+        quantity = charge.get("quantity")
+        safe_quantity = int(quantity) if isinstance(quantity, (int, float)) and quantity > 0 else None
+        key = (charge_date, label, safe_quantity)
+        if key in seen:
+            continue
+        seen.add(key)
+        activity = {"date": charge_date, "description": label}
+        if safe_quantity is not None:
+            activity["quantity"] = safe_quantity
+        activities.append(activity)
+    return activities
 
 
 def guest_count(reservation: dict[str, Any]) -> int | None:
@@ -321,7 +375,7 @@ def date_part(value: Any) -> str | None:
     return None
 
 
-def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: dict[str, Any] | None, movement: str) -> dict[str, Any]:
+def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: dict[str, Any] | None, movement: str, activity_date: str | None = None) -> dict[str, Any]:
     reservation = detail.get("reservation") if isinstance(detail.get("reservation"), dict) else detail
     context_reservation = {}
     if isinstance(context, dict):
@@ -354,6 +408,7 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
         "nights": reservation.get("nights") or row.get("nights"),
         "unitType": reservation.get("unitType") or row.get("unitType"),
         "source": reservation.get("source") or row.get("source"),
+        "operationalActivities": operational_activities(context, activity_date),
         "notes": {key: value for key, value in notes.items() if value not in (None, "", False)},
         "incompleteChecklist": incomplete,
     }
@@ -363,14 +418,14 @@ def normalize_arrival(row: dict[str, Any], detail: dict[str, Any], context: dict
     return normalize_reservation(row, detail, context, "arrival")
 
 
-def enrich_reservations(config: dict[str, Any], rows: list[Any], movement: str) -> list[dict[str, Any]]:
+def enrich_reservations(config: dict[str, Any], rows: list[Any], movement: str, activity_date: str | None = None) -> list[dict[str, Any]]:
     reservations = []
     for row in rows:
         if not isinstance(row, dict) or not row.get("reservationId"):
             continue
         detail = pms_tool(config, "get_reservation", {"reservationId": row["reservationId"]}) or {}
         context = pms_tool(config, "get_reservation_context", {"reservationId": row["reservationId"]}) or {}
-        reservations.append(normalize_reservation(row, detail, context, movement))
+        reservations.append(normalize_reservation(row, detail, context, movement, activity_date))
     return reservations
 
 
@@ -378,7 +433,7 @@ def tool_hotel_pms_get_tomorrow_arrivals(args: dict[str, Any]) -> dict[str, Any]
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 1)
     rows = pms_tool(config, "list_arrivals", {"date": date}) or []
-    arrivals = enrich_reservations(config, rows, "arrival")
+    arrivals = enrich_reservations(config, rows, "arrival", date)
     return {"ok": True, "date": date, "timezone": cfg_env(config, "HOTEL_TIMEZONE") or DEFAULT_TIMEZONE, "arrivals": arrivals}
 
 
@@ -401,9 +456,9 @@ def tool_hotel_pms_get_tomorrow_summary(args: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "date": date,
         "timezone": cfg_env(config, "HOTEL_TIMEZONE") or DEFAULT_TIMEZONE,
-        "arrivals": enrich_reservations(config, arrivals_raw, "arrival"),
-        "departures": enrich_reservations(config, departures_raw, "departure"),
-        "stayovers": enrich_reservations(config, stayover_raw, "stayover"),
+        "arrivals": enrich_reservations(config, arrivals_raw, "arrival", date),
+        "departures": enrich_reservations(config, departures_raw, "departure", date),
+        "stayovers": enrich_reservations(config, stayover_raw, "stayover", date),
     }
 
 
