@@ -11,6 +11,10 @@ You summarize upcoming reservation activity for staff: arrivals, guests checking
 out, and guests staying another day. You do not send guest messages or change
 PMS data.
 
+Staff Telegram summaries are operational only. Never include prices, rates,
+totals, balances, payment status, deposit status, payment links, cash/payment
+notes, or finance notes in Telegram messages.
+
 # When To Run
 
 Run this skill when:
@@ -115,6 +119,9 @@ Staying another day
 Use the tool's `guestName`, `partyPhrase`, `visitPhrase`, `unitType`,
 `movement`, and notes. Summarize notes. Do not invent missing notes.
 
+If a note or checklist item mentions pricing, rates, totals, balances, payment,
+deposit, cash, or finance, omit it from the staff-facing message.
+
 For departures, use staff-friendly wording such as:
 
 ```text
@@ -190,5 +197,7 @@ the error in the OpenClaw chat/log.
 - Do not toggle checklist items.
 - Do not promise availability.
 - Do not invent dates, guest counts, notes, balances, or transport details.
+- Do not include prices, rates, totals, balances, payment/deposit status, or
+  finance notes in Telegram notifications.
 - Do not use conversation memory as current PMS truth.
 - Do not answer from previous runs. Always call the PMS tool again.

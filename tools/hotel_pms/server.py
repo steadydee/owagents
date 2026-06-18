@@ -240,6 +240,55 @@ def compact(value: Any, max_len: int = 1200) -> str | None:
     return text[:max_len]
 
 
+SENSITIVE_NOTE_MARKERS = (
+    "balance",
+    "cash",
+    "cobro",
+    "deposit",
+    "finance",
+    "invoice",
+    "paid",
+    "pay",
+    "payment",
+    "precio",
+    "price",
+    "rate",
+    "tarifa",
+    "total",
+    "valor",
+)
+
+SENSITIVE_CHECKLIST_MARKERS = (
+    "balance",
+    "deposit",
+    "paid",
+    "payment",
+    "price",
+    "rate",
+    "total",
+)
+
+
+def staff_safe_note(value: Any, max_len: int = 1200) -> str | None:
+    text = compact(value, max_len=max_len)
+    if not text:
+        return None
+    lowered = text.lower()
+    if any(marker in lowered for marker in SENSITIVE_NOTE_MARKERS):
+        return None
+    return text
+
+
+def staff_safe_checklist_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    key = str(item.get("key") or "").lower()
+    label = str(item.get("label") or "").lower()
+    note = str(item.get("note") or "").lower()
+    joined = " ".join([key, label, note])
+    if any(marker in joined for marker in SENSITIVE_CHECKLIST_MARKERS):
+        return None
+    return {"key": item.get("key"), "label": item.get("label"), "note": item.get("note")}
+
+
 def guest_count(reservation: dict[str, Any]) -> int | None:
     adults = reservation.get("adultsCount")
     children = reservation.get("childrenCount")
@@ -278,18 +327,20 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
     if isinstance(context, dict):
         context_reservation = context.get("reservation") if isinstance(context.get("reservation"), dict) else {}
     notes = {
-        "specialRequests": compact(reservation.get("specialRequests") or context_reservation.get("specialRequests")),
-        "dietaryNotes": compact(reservation.get("dietaryNotes") or context_reservation.get("dietaryNotes")),
-        "internalNotes": compact(reservation.get("internalNotes") or context_reservation.get("internalNotes")),
+        "specialRequests": staff_safe_note(reservation.get("specialRequests") or context_reservation.get("specialRequests")),
+        "dietaryNotes": staff_safe_note(reservation.get("dietaryNotes") or context_reservation.get("dietaryNotes")),
+        "internalNotes": staff_safe_note(reservation.get("internalNotes") or context_reservation.get("internalNotes")),
         "expectedArrivalTime": compact(reservation.get("expectedArrivalTime")),
         "transportRequested": reservation.get("transportRequested"),
     }
     checklist = context.get("checklist") if isinstance(context, dict) and isinstance(context.get("checklist"), list) else []
-    incomplete = [
-        {"key": item.get("key"), "label": item.get("label"), "note": item.get("note")}
-        for item in checklist
-        if isinstance(item, dict) and not item.get("completed")
-    ]
+    incomplete = []
+    for item in checklist:
+        if not isinstance(item, dict) or item.get("completed"):
+            continue
+        safe_item = staff_safe_checklist_item(item)
+        if safe_item:
+            incomplete.append(safe_item)
     count = guest_count(reservation)
     return {
         "reservationId": reservation.get("reservationId") or reservation.get("id") or row.get("reservationId"),
@@ -303,8 +354,6 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
         "nights": reservation.get("nights") or row.get("nights"),
         "unitType": reservation.get("unitType") or row.get("unitType"),
         "source": reservation.get("source") or row.get("source"),
-        "paymentStatus": reservation.get("paymentStatus") or row.get("paymentStatus"),
-        "balanceDue": reservation.get("balanceDue") or row.get("balanceDue"),
         "notes": {key: value for key, value in notes.items() if value not in (None, "", False)},
         "incompleteChecklist": incomplete,
     }
