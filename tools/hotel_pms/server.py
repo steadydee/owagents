@@ -384,9 +384,10 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
         "specialRequests": staff_safe_note(reservation.get("specialRequests") or context_reservation.get("specialRequests")),
         "dietaryNotes": staff_safe_note(reservation.get("dietaryNotes") or context_reservation.get("dietaryNotes")),
         "internalNotes": staff_safe_note(reservation.get("internalNotes") or context_reservation.get("internalNotes")),
-        "expectedArrivalTime": compact(reservation.get("expectedArrivalTime")),
         "transportRequested": reservation.get("transportRequested"),
     }
+    if movement == "arrival":
+        notes["expectedArrivalTime"] = compact(reservation.get("expectedArrivalTime"))
     checklist = context.get("checklist") if isinstance(context, dict) and isinstance(context.get("checklist"), list) else []
     incomplete = []
     for item in checklist:

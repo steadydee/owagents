@@ -15,6 +15,11 @@ Staff Telegram summaries are operational only. Never include prices, rates,
 totals, balances, payment status, deposit status, payment links, cash/payment
 notes, or finance notes in Telegram messages.
 
+Write staff-facing Telegram summaries in clear Colombian Spanish by default,
+because Owl's Watch workers read these updates. Use English only if the staff
+member explicitly asks in English and the answer is not being sent to the worker
+Telegram group.
+
 # When To Run
 
 Run this skill when:
@@ -87,33 +92,32 @@ departures, and stayovers.
 If there are no arrivals, departures, or stayovers, send:
 
 ```text
-Tomorrow hotel summary
+Resumen hotel para mañana
 
-No PMS hotel activity scheduled for tomorrow.
+No hay actividad hotelera programada para mañana en PMS.
 ```
 
 If there are reservations, group them exactly in this order:
 
-1. Arriving
-2. Checking out
-3. Staying another day
+1. Llegan
+2. Salen
+3. Se quedan otro día
 
 Write one short block per reservation:
 
 ```text
-Tomorrow hotel summary
+Resumen hotel para mañana
 
-Arriving
-- Bailey party of 4 - bird tour
-  Notes: early arrival; vegetarian lunch.
+Llegan
+- Grupo Bailey, 4 personas - tour de aves
+  Notas: llegada temprano; almuerzo vegetariano.
 
-Checking out
-- Smith party of 2 - cabins
-  Notes: no dietary notes.
+Salen
+- Grupo Smith, 2 personas - salida de cabañas
 
-Staying another day
-- Phillips party of 2 - cabins
-  Notes: anniversary.
+Se quedan otro día
+- Grupo Phillips, 2 personas - siguen en cabañas
+  Notas: aniversario.
 ```
 
 Use the tool's `guestName`, `partyPhrase`, `visitPhrase`, `unitType`,
@@ -124,7 +128,7 @@ If `operationalActivities` includes bird tours, pasadías, day passes, or other
 activities scheduled for tomorrow, include them in the reservation block:
 
 ```text
-  Activities: Bird Tour - Half Day x1.
+  Actividades: tour de aves medio día x1.
 ```
 
 Do not include any activity price or charge amount.
@@ -135,19 +139,19 @@ deposit, cash, or finance, omit it from the staff-facing message.
 For departures, use staff-friendly wording such as:
 
 ```text
-- Bailey party of 2 - checking out from the cabins
+- Grupo Bailey, 2 personas - salen de cabañas
 ```
 
 For stayovers, use staff-friendly wording such as:
 
 ```text
-- Phillips party of 2 - staying another day in the cabins
+- Grupo Phillips, 2 personas - siguen otro día en cabañas
 ```
 
 Mention incomplete checklist items only if operationally useful, for example:
 
 ```text
-Open: gate instructions, arrival time.
+Pendiente: instrucciones de portón, hora de llegada.
 ```
 
 Then call `hotel_telegram_send_message` with the final message.
