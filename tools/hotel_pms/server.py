@@ -241,22 +241,38 @@ def compact(value: Any, max_len: int = 1200) -> str | None:
 
 
 SENSITIVE_NOTE_MARKERS = (
+    "amount",
     "balance",
+    "bill",
+    "billing",
     "cash",
     "cobro",
+    "collect",
+    "cop",
+    "debt",
     "deposit",
     "finance",
+    "factura",
     "invoice",
+    "owe",
+    "owing",
+    "outstanding",
     "paid",
+    "pago",
     "pay",
     "payment",
     "precio",
     "price",
     "rate",
+    "revenue",
+    "saldo",
+    "settled",
     "tarifa",
     "total",
     "valor",
 )
+
+CURRENCY_TEXT_RE = re.compile(r"(?i)\bCOP\b|[$]\s*\d")
 
 SENSITIVE_CHECKLIST_MARKERS = (
     "balance",
@@ -286,7 +302,34 @@ def staff_safe_note(value: Any, max_len: int = 1200) -> str | None:
     lowered = text.lower()
     if any(marker in lowered for marker in SENSITIVE_NOTE_MARKERS):
         return None
+    if CURRENCY_TEXT_RE.search(text):
+        return None
     return text
+
+
+def staff_safe_value(value: Any) -> Any:
+    """Recursively redact finance-sensitive fields from broad PMS snapshots."""
+    if isinstance(value, dict):
+        output: dict[str, Any] = {}
+        for key, child in value.items():
+            key_text = str(key).lower()
+            if any(marker in key_text for marker in SENSITIVE_NOTE_MARKERS):
+                continue
+            safe_child = staff_safe_value(child)
+            if safe_child in (None, "", [], {}):
+                continue
+            output[key] = safe_child
+        return output
+    if isinstance(value, list):
+        output = []
+        for child in value:
+            safe_child = staff_safe_value(child)
+            if safe_child not in (None, "", [], {}):
+                output.append(safe_child)
+        return output
+    if isinstance(value, str):
+        return staff_safe_note(value, max_len=2000)
+    return value
 
 
 def staff_safe_checklist_item(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -519,19 +562,22 @@ def tool_hotel_pms_get_tomorrow_summary(args: dict[str, Any]) -> dict[str, Any]:
 def tool_hotel_pms_list_arrivals(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
-    return {"ok": True, "date": date, "arrivals": pms_tool(config, "list_arrivals", {"date": date}) or []}
+    rows = pms_tool(config, "list_arrivals", {"date": date}) or []
+    return {"ok": True, "date": date, "arrivals": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
 
 
 def tool_hotel_pms_list_departures(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
-    return {"ok": True, "date": date, "departures": pms_tool(config, "list_departures", {"date": date}) or []}
+    rows = pms_tool(config, "list_departures", {"date": date}) or []
+    return {"ok": True, "date": date, "departures": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
 
 
 def tool_hotel_pms_list_in_house(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
-    return {"ok": True, "date": date, "inHouse": pms_tool(config, "list_in_house_guests", {"date": date}) or []}
+    rows = pms_tool(config, "list_in_house_guests", {"date": date}) or []
+    return {"ok": True, "date": date, "inHouse": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
 
 
 def tool_hotel_pms_list_reservations(args: dict[str, Any]) -> dict[str, Any]:
@@ -572,26 +618,26 @@ def tool_hotel_pms_get_reservation_context(args: dict[str, Any]) -> dict[str, An
 
 def tool_hotel_pms_get_dashboard_snapshot(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
-    return {"ok": True, "snapshot": pms_tool(config, "get_dashboard_snapshot", {})}
+    return {"ok": True, "snapshot": staff_safe_value(pms_tool(config, "get_dashboard_snapshot", {}))}
 
 
 def tool_hotel_pms_get_lifecycle_snapshot(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
-    return {"ok": True, "snapshot": pms_tool(config, "get_lifecycle_snapshot", {})}
+    return {"ok": True, "snapshot": staff_safe_value(pms_tool(config, "get_lifecycle_snapshot", {}))}
 
 
 def tool_hotel_pms_list_booking_revisions(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     allowed = {"processingStatus", "ackStatus"}
     payload = {k: validate_text(k, v, max_len=80) for k, v in args.items() if k in allowed and v is not None}
-    return {"ok": True, "revisions": pms_tool(config, "list_booking_revisions", payload) or []}
+    return {"ok": True, "revisions": staff_safe_value(pms_tool(config, "list_booking_revisions", payload) or [])}
 
 
 def tool_hotel_pms_list_sync_events(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     allowed = {"status", "direction", "resourceType"}
     payload = {k: validate_text(k, v, max_len=80) for k, v in args.items() if k in allowed and v is not None}
-    return {"ok": True, "events": pms_tool(config, "list_sync_events", payload) or []}
+    return {"ok": True, "events": staff_safe_value(pms_tool(config, "list_sync_events", payload) or [])}
 
 
 def tool_hotel_pms_get_mapping_status(args: dict[str, Any]) -> dict[str, Any]:
@@ -600,7 +646,7 @@ def tool_hotel_pms_get_mapping_status(args: dict[str, Any]) -> dict[str, Any]:
     entity_type = validate_text("entityType", args.get("entityType"), max_len=80) if args.get("entityType") is not None else None
     if entity_type:
         payload["entityType"] = entity_type
-    return {"ok": True, "status": pms_tool(config, "get_mapping_status", payload)}
+    return {"ok": True, "status": staff_safe_value(pms_tool(config, "get_mapping_status", payload))}
 
 
 def tool_hotel_pms_get_ari_outbox_health(args: dict[str, Any]) -> dict[str, Any]:
