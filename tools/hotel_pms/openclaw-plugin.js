@@ -51,6 +51,21 @@ const toolSchemas = {
       additionalProperties: false,
     },
   },
+  hotel_pms_list_reservations: {
+    description: "Search/list PMS reservations with staff-safe operational fields and no finance amounts.",
+    parameters: {
+      type: "object",
+      properties: {
+        search: { type: ["string", "null"] },
+        source: { type: ["string", "null"] },
+        status: { type: ["string", "null"] },
+        dateFrom: { type: ["string", "null"] },
+        dateTo: { type: ["string", "null"] },
+        limit: { type: ["integer", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
   hotel_pms_find_reservation: {
     description: "Search PMS reservations by guest, email, reference, or status.",
     parameters: {
@@ -79,6 +94,41 @@ const toolSchemas = {
   },
   hotel_pms_get_lifecycle_snapshot: {
     description: "Get the PMS guest lifecycle snapshot.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  hotel_pms_list_booking_revisions: {
+    description: "List PMS booking/channel revision inbox rows.",
+    parameters: {
+      type: "object",
+      properties: {
+        processingStatus: { type: ["string", "null"] },
+        ackStatus: { type: ["string", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_list_sync_events: {
+    description: "List PMS sync/channel events with optional status, direction, or resource type filters.",
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: ["string", "null"] },
+        direction: { type: ["string", "null"] },
+        resourceType: { type: ["string", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_get_mapping_status: {
+    description: "Get PMS channel/entity mapping status.",
+    parameters: {
+      type: "object",
+      properties: { entityType: { type: ["string", "null"] } },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_get_ari_outbox_health: {
+    description: "Get PMS channel manager outbound queue health.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   hotel_telegram_send_message: {

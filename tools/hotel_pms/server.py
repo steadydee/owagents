@@ -343,6 +343,59 @@ def operational_activities(context: dict[str, Any] | None, target_date: str | No
     return activities
 
 
+def safe_reservation_summary(row: dict[str, Any]) -> dict[str, Any]:
+    """Return staff-safe reservation fields without pricing or payment data."""
+    allowed = (
+        "reservationId",
+        "guestName",
+        "guestEmail",
+        "source",
+        "sourceLabel",
+        "status",
+        "stage",
+        "stageLabel",
+        "arrivalDate",
+        "departureDate",
+        "nights",
+        "adultsCount",
+        "childrenCount",
+        "unitType",
+    )
+    return {key: row.get(key) for key in allowed if key in row}
+
+
+def safe_context_bundle(context: dict[str, Any] | None) -> dict[str, Any]:
+    """Reduce PMS reservation context to operational data only."""
+    if not isinstance(context, dict):
+        return {}
+    reservation = context.get("reservation") if isinstance(context.get("reservation"), dict) else {}
+    notes = {
+        "specialRequests": staff_safe_note(reservation.get("specialRequests")),
+        "dietaryNotes": staff_safe_note(reservation.get("dietaryNotes")),
+        "internalNotes": staff_safe_note(reservation.get("internalNotes")),
+    }
+    checklist = context.get("checklist") if isinstance(context.get("checklist"), list) else []
+    incomplete = []
+    completed = []
+    for item in checklist:
+        if not isinstance(item, dict):
+            continue
+        safe_item = staff_safe_checklist_item(item)
+        if not safe_item:
+            continue
+        if item.get("completed"):
+            completed.append(safe_item)
+        else:
+            incomplete.append(safe_item)
+    return {
+        "reservation": safe_reservation_summary(reservation),
+        "notes": {key: value for key, value in notes.items() if value},
+        "operationalActivities": operational_activities(context),
+        "incompleteChecklist": incomplete,
+        "completedChecklist": completed,
+    }
+
+
 def guest_count(reservation: dict[str, Any]) -> int | None:
     adults = reservation.get("adultsCount")
     children = reservation.get("childrenCount")
@@ -481,17 +534,40 @@ def tool_hotel_pms_list_in_house(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "date": date, "inHouse": pms_tool(config, "list_in_house_guests", {"date": date}) or []}
 
 
+def tool_hotel_pms_list_reservations(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    allowed = {"search", "source", "status", "dateFrom", "dateTo", "limit"}
+    payload: dict[str, Any] = {}
+    for key in allowed:
+        value = args.get(key)
+        if key in {"dateFrom", "dateTo"}:
+            payload[key] = validate_date(key, value) if value else None
+        elif key == "limit":
+            if value is not None:
+                try:
+                    payload[key] = min(max(int(value), 1), 50)
+                except (TypeError, ValueError) as exc:
+                    raise ToolError("invalid_input", "limit must be a number.") from exc
+        else:
+            payload[key] = validate_text(key, value, max_len=300) if value is not None else None
+    payload = {key: value for key, value in payload.items() if value not in (None, "")}
+    rows = pms_tool(config, "list_reservations", payload) or []
+    return {"ok": True, "filters": payload, "reservations": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
+
+
 def tool_hotel_pms_find_reservation(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     allowed = {"guestName", "email", "sourceReference", "status"}
     payload = {k: validate_text(k, v, max_len=300) for k, v in args.items() if k in allowed}
-    return {"ok": True, "matches": pms_tool(config, "find_reservation", payload) or []}
+    rows = pms_tool(config, "find_reservation", payload) or []
+    return {"ok": True, "matches": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
 
 
 def tool_hotel_pms_get_reservation_context(args: dict[str, Any]) -> dict[str, Any]:
     reservation_id = validate_safe_id("reservationId", args.get("reservationId"))
     config = load_config()
-    return {"ok": True, "context": pms_tool(config, "get_reservation_context", {"reservationId": reservation_id})}
+    context = pms_tool(config, "get_reservation_context", {"reservationId": reservation_id})
+    return {"ok": True, "context": safe_context_bundle(context)}
 
 
 def tool_hotel_pms_get_dashboard_snapshot(args: dict[str, Any]) -> dict[str, Any]:
@@ -502,6 +578,34 @@ def tool_hotel_pms_get_dashboard_snapshot(args: dict[str, Any]) -> dict[str, Any
 def tool_hotel_pms_get_lifecycle_snapshot(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     return {"ok": True, "snapshot": pms_tool(config, "get_lifecycle_snapshot", {})}
+
+
+def tool_hotel_pms_list_booking_revisions(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    allowed = {"processingStatus", "ackStatus"}
+    payload = {k: validate_text(k, v, max_len=80) for k, v in args.items() if k in allowed and v is not None}
+    return {"ok": True, "revisions": pms_tool(config, "list_booking_revisions", payload) or []}
+
+
+def tool_hotel_pms_list_sync_events(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    allowed = {"status", "direction", "resourceType"}
+    payload = {k: validate_text(k, v, max_len=80) for k, v in args.items() if k in allowed and v is not None}
+    return {"ok": True, "events": pms_tool(config, "list_sync_events", payload) or []}
+
+
+def tool_hotel_pms_get_mapping_status(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    payload = {}
+    entity_type = validate_text("entityType", args.get("entityType"), max_len=80) if args.get("entityType") is not None else None
+    if entity_type:
+        payload["entityType"] = entity_type
+    return {"ok": True, "status": pms_tool(config, "get_mapping_status", payload)}
+
+
+def tool_hotel_pms_get_ari_outbox_health(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    return {"ok": True, "health": pms_tool(config, "get_ari_outbox_health", {})}
 
 
 def telegram_token(config: dict[str, Any]) -> str:
@@ -580,6 +684,22 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         {"type": "object", "properties": {"date": {"type": ["string", "null"]}}, "additionalProperties": False},
         tool_hotel_pms_list_in_house,
     ),
+    "hotel_pms_list_reservations": (
+        "Search/list PMS reservations with staff-safe operational fields and no finance amounts.",
+        {
+            "type": "object",
+            "properties": {
+                "search": {"type": ["string", "null"]},
+                "source": {"type": ["string", "null"]},
+                "status": {"type": ["string", "null"]},
+                "dateFrom": {"type": ["string", "null"]},
+                "dateTo": {"type": ["string", "null"]},
+                "limit": {"type": ["integer", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        tool_hotel_pms_list_reservations,
+    ),
     "hotel_pms_find_reservation": (
         "Search PMS reservations by guest, email, reference, or status.",
         {
@@ -608,6 +728,41 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         "Get the PMS guest lifecycle snapshot.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_hotel_pms_get_lifecycle_snapshot,
+    ),
+    "hotel_pms_list_booking_revisions": (
+        "List PMS booking/channel revision inbox rows.",
+        {
+            "type": "object",
+            "properties": {
+                "processingStatus": {"type": ["string", "null"]},
+                "ackStatus": {"type": ["string", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        tool_hotel_pms_list_booking_revisions,
+    ),
+    "hotel_pms_list_sync_events": (
+        "List PMS sync/channel events with optional status, direction, or resource type filters.",
+        {
+            "type": "object",
+            "properties": {
+                "status": {"type": ["string", "null"]},
+                "direction": {"type": ["string", "null"]},
+                "resourceType": {"type": ["string", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        tool_hotel_pms_list_sync_events,
+    ),
+    "hotel_pms_get_mapping_status": (
+        "Get PMS channel/entity mapping status.",
+        {"type": "object", "properties": {"entityType": {"type": ["string", "null"]}}, "additionalProperties": False},
+        tool_hotel_pms_get_mapping_status,
+    ),
+    "hotel_pms_get_ari_outbox_health": (
+        "Get PMS channel manager outbound queue health.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        tool_hotel_pms_get_ari_outbox_health,
     ),
     "hotel_telegram_send_message": (
         "Send a staff-facing Telegram message through the Hotel bot. Never sends guest messages.",

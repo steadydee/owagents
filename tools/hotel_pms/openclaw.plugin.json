@@ -12,10 +12,15 @@
       "hotel_pms_list_arrivals",
       "hotel_pms_list_departures",
       "hotel_pms_list_in_house",
+      "hotel_pms_list_reservations",
       "hotel_pms_find_reservation",
       "hotel_pms_get_reservation_context",
       "hotel_pms_get_dashboard_snapshot",
       "hotel_pms_get_lifecycle_snapshot",
+      "hotel_pms_list_booking_revisions",
+      "hotel_pms_list_sync_events",
+      "hotel_pms_get_mapping_status",
+      "hotel_pms_get_ari_outbox_health",
       "hotel_telegram_send_message",
       "hotel_memory_log"
     ]

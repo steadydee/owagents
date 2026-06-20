@@ -40,10 +40,15 @@ Use only:
 - `hotel_pms_list_arrivals`
 - `hotel_pms_list_departures`
 - `hotel_pms_list_in_house`
+- `hotel_pms_list_reservations`
 - `hotel_pms_find_reservation`
 - `hotel_pms_get_reservation_context`
 - `hotel_pms_get_dashboard_snapshot`
 - `hotel_pms_get_lifecycle_snapshot`
+- `hotel_pms_list_booking_revisions`
+- `hotel_pms_list_sync_events`
+- `hotel_pms_get_mapping_status`
+- `hotel_pms_get_ari_outbox_health`
 - `hotel_telegram_send_message`
 - `hotel_memory_log`
 
@@ -64,6 +69,9 @@ Classify the request as one of:
 - `find_reservation`
 - `reservation_context`
 - `dashboard_or_lifecycle`
+- `reservation_search_or_list`
+- `channel_or_sync_status`
+- `general_pms_question`
 - `unsupported`
 
 If the request is a scheduled instruction such as "Send tomorrow summary to
@@ -181,7 +189,42 @@ If there is one strong match, call `hotel_pms_get_reservation_context`.
 If there are multiple matches, show up to three concise options and ask which
 one.
 
-## Step 5 - Dashboard Or Lifecycle
+## Step 5 - General PMS Questions
+
+For general PMS lookup questions, answer from PMS tools, not memory.
+
+Use:
+
+- `hotel_pms_list_reservations` for searches by name, status, source, or date
+  range.
+- `hotel_pms_get_reservation_context` after a specific reservation is found.
+- `hotel_pms_get_dashboard_snapshot` for broad dashboard questions.
+- `hotel_pms_get_lifecycle_snapshot` for guest lifecycle, runway, and action
+  board questions.
+- `hotel_pms_list_booking_revisions` for booking/channel revision inbox
+  questions.
+- `hotel_pms_list_sync_events`, `hotel_pms_get_mapping_status`, and
+  `hotel_pms_get_ari_outbox_health` for channel manager, sync, mapping, or
+  outbox questions.
+
+Keep answers concise and operational. If a query returns multiple reservations,
+show up to five options and ask which one the staff member means.
+
+Do not answer finance, price, rate, balance, deposit, or payment questions in
+the Hotel Telegram group. Reply:
+
+```text
+Eso es información financiera. Revísalo directamente en PMS.
+```
+
+If staff asks for something Hotel cannot read through its current PMS tools,
+say what is missing. Example:
+
+```text
+No tengo una herramienta PMS para leer esa parte todavía.
+```
+
+## Step 6 - Dashboard Or Lifecycle
 
 For broad questions like "anything important today?" or "what should we watch?",
 call `hotel_pms_get_dashboard_snapshot` and/or `hotel_pms_get_lifecycle_snapshot`

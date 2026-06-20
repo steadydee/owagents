@@ -8,6 +8,10 @@ Allowed tool families:
 - `hotel_telegram_send_message`: staff-only Telegram notification.
 - `hotel_memory_log`: append-only local memory log.
 
+Hotel PMS tools expose operational PMS read context only. Do not use Hotel to
+answer finance, pricing, rate, balance, payment, or deposit questions in a
+worker Telegram group.
+
 Forbidden:
 
 - PMS write tools.
