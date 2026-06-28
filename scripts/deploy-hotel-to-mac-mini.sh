@@ -25,14 +25,22 @@ backup_path "$WORKSPACE/IDENTITY.md" hotel
 backup_path "$WORKSPACE/SOUL.md" hotel
 backup_path "$WORKSPACE/README.md" hotel
 backup_path "$WORKSPACE/TOOLS.md" hotel
-backup_path "$WORKSPACE/skills/tomorrow-arrivals" hotel-skills
+backup_path "$WORKSPACE/skills" hotel-skills
 backup_path "$WORKSPACE/tools/hotel_pms" hotel-tools
 
 echo "Deploying Hotel source"
-mkdir -p "$WORKSPACE/skills/tomorrow-arrivals" "$WORKSPACE/tools/hotel_pms" "$PROFILE_DIR"
+mkdir -p "$WORKSPACE/skills" "$WORKSPACE/tools/hotel_pms" "$PROFILE_DIR"
 rsync -a "$ROOT/openclaw/agents/hotel/AGENTS.md" "$ROOT/openclaw/agents/hotel/IDENTITY.md" "$ROOT/openclaw/agents/hotel/SOUL.md" "$ROOT/openclaw/agents/hotel/README.md" "$ROOT/openclaw/agents/hotel/TOOLS.md" "$WORKSPACE/"
-rsync -a "$ROOT/openclaw/agents/hotel/skills/tomorrow-arrivals/" "$WORKSPACE/skills/tomorrow-arrivals/"
+rsync -a --delete "$ROOT/openclaw/agents/hotel/skills/" "$WORKSPACE/skills/"
 rsync -a --delete --exclude '__pycache__' --exclude '.pytest_cache' "$ROOT/tools/hotel_pms/" "$WORKSPACE/tools/hotel_pms/"
+
+OPENCLAW_GLOBAL_PACKAGE="${OPENCLAW_GLOBAL_PACKAGE:-$(npm root -g 2>/dev/null)/openclaw}"
+if [ -d "$OPENCLAW_GLOBAL_PACKAGE" ]; then
+  mkdir -p "$WORKSPACE/tools/hotel_pms/node_modules"
+  ln -sfn "$OPENCLAW_GLOBAL_PACKAGE" "$WORKSPACE/tools/hotel_pms/node_modules/openclaw"
+else
+  echo "Warning: could not find global OpenClaw package for Hotel plugin SDK link." >&2
+fi
 
 if [ ! -f "$WORKSPACE/USER.md" ]; then
   cp "$ROOT/openclaw/agents/hotel/USER.example.md" "$WORKSPACE/USER.md"

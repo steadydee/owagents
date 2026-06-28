@@ -1,7 +1,7 @@
 {
   "id": "hotel-pms",
   "name": "Hotel PMS Tools",
-  "description": "Read-only PMS tools and staff Telegram notifications for the Hotel operations agent.",
+  "description": "PMS read tools, guarded reservation creation, and staff Telegram notifications for the Hotel operations agent.",
   "activation": {
     "onStartup": true
   },
@@ -21,6 +21,12 @@
       "hotel_pms_list_sync_events",
       "hotel_pms_get_mapping_status",
       "hotel_pms_get_ari_outbox_health",
+      "hotel_pms_prepare_reservation",
+      "hotel_pms_create_reservation",
+      "hotel_registro_get_by_reservation",
+      "hotel_registro_list_guests",
+      "hotel_registro_list_documents",
+      "hotel_registro_extract_reservation",
       "hotel_telegram_send_message",
       "hotel_memory_log"
     ]

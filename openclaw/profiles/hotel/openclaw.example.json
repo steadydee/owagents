@@ -3,7 +3,9 @@
     "defaults": {
       "workspace": "~/.openclaw/workspace-hotel-ops",
       "skills": [
-        "tomorrow-arrivals"
+        "tomorrow-arrivals",
+        "create-reservation",
+        "registro-government"
       ],
       "models": {
         "openai/gpt-5.5": {
@@ -32,7 +34,9 @@
         "workspace": "~/.openclaw/workspace-hotel-ops",
         "agentDir": "~/.openclaw-hotel/agents/hotel/agent",
         "skills": [
-          "tomorrow-arrivals"
+          "tomorrow-arrivals",
+          "create-reservation",
+          "registro-government"
         ],
         "tools": {
           "profile": "minimal",
@@ -52,6 +56,12 @@
             "hotel_pms_list_sync_events",
             "hotel_pms_get_mapping_status",
             "hotel_pms_get_ari_outbox_health",
+            "hotel_pms_prepare_reservation",
+            "hotel_pms_create_reservation",
+            "hotel_registro_get_by_reservation",
+            "hotel_registro_list_guests",
+            "hotel_registro_list_documents",
+            "hotel_registro_extract_reservation",
             "hotel_telegram_send_message",
             "hotel_memory_log"
           ],
@@ -92,6 +102,8 @@
           "PMS_BASE_URL": "https://pms.owlswatch.com",
           "PMS_PROPERTY_ID": "owlswatch",
           "OW_AGENT_TOKEN_SECRET": "<set locally only>",
+          "OPENAI_API_KEY_FILE": "~/.openclaw-hotel/secrets/openai-api-key",
+          "REGISTRO_VISION_MODEL": "gpt-4o",
           "HOTEL_TIMEZONE": "America/Bogota",
           "HOTEL_TELEGRAM_BOT_TOKEN": "<set locally only>",
           "HOTEL_TELEGRAM_NOTIFY_CHAT_ID": "<hotel_group_chat_id>",
@@ -144,6 +156,9 @@
       "groups": {
         "<hotel_group_chat_id>": {
           "requireMention": false,
+          "allowFrom": [
+            "*"
+          ],
           "groupPolicy": "open",
           "ingest": true
         }
@@ -151,6 +166,11 @@
       "groupAllowFrom": [
         "<dennis_telegram_user_id>"
       ]
+    }
+  },
+  "messages": {
+    "groupChat": {
+      "visibleReplies": "automatic"
     }
   },
   "session": {

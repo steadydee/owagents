@@ -15,8 +15,11 @@ import hmac
 import json
 import os
 import re
+import subprocess
 import sys
 import time
+import tempfile
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,14 +30,71 @@ from zoneinfo import ZoneInfo
 WORKSPACE = Path(os.environ.get("HOTEL_PMS_WORKSPACE", "~/.openclaw/workspace-hotel-ops")).expanduser()
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-hotel/openclaw.json")).expanduser()
 MEMORY_DIR = WORKSPACE / "memory"
+RESERVATION_DRAFT_DIR = WORKSPACE / "spool" / "reservation-drafts"
 
 DEFAULT_PMS_BASE_URL = "https://pms.owlswatch.com"
 DEFAULT_PROPERTY_ID = "owlswatch"
 DEFAULT_TIMEZONE = "America/Bogota"
+LOCAL_OCR_SCRIPT = Path(__file__).with_name("apple_vision_ocr.swift")
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\-]{1,300}$")
 TEXT_RE = re.compile(r"^[\s\S]{0,50000}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CONFIRMATION_CODE_RE = re.compile(r"^[A-Z0-9]{4,12}$")
+PENDING_ID_RE = re.compile(r"^[A-Z0-9]{12,32}$")
+
+PMS_READ_TOOLS = (
+    "get_dashboard_snapshot",
+    "get_lifecycle_snapshot",
+    "list_reservations",
+    "get_reservation",
+    "find_reservation",
+    "get_reservation_context",
+    "list_arrivals",
+    "list_departures",
+    "list_in_house_guests",
+    "list_booking_revisions",
+    "list_sync_events",
+    "get_mapping_status",
+    "get_ari_outbox_health",
+)
+
+PMS_REGISTRO_READ_TOOLS = (
+    "registro_get",
+    "registro_get_by_reservation",
+    "registro_list_guests",
+    "registro_list_documents",
+    "registro_fetch_document",
+)
+
+PMS_REGISTRO_WRITE_TOOLS = (
+    "registro_record_guest_extraction",
+    "registro_record_guest_submission",
+    "registro_record_guest_submission_error",
+    "registro_mark_guest_needs_review",
+)
+
+REGISTRO_DOCUMENT_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+}
+
+OCR_MONTHS = {
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
+}
 
 
 class ToolError(Exception):
@@ -137,6 +197,362 @@ def validate_date(name: str, value: Any | None) -> str | None:
     return text
 
 
+def validate_confirmation_code(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    if not CONFIRMATION_CODE_RE.match(text):
+        raise ToolError("invalid_input", "confirmationCode must be the PMS confirmation code, for example A7K2.")
+    return text
+
+
+def validate_pending_id(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    if not PENDING_ID_RE.match(text):
+        raise ToolError("invalid_input", "pendingId is malformed.")
+    return text
+
+
+def normalized_confirmation_text(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"^[\s¡!¿?\"']+|[\s.!¡!¿?\"']+$", "", text)
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in text if not unicodedata.combining(ch)).strip()
+
+
+def validate_yes_confirmation(value: Any) -> str:
+    normalized = normalized_confirmation_text(value)
+    if normalized not in {"si", "s", "yes", "y"}:
+        raise ToolError("confirmation_required", "Para crear la reserva, responde exactamente si.")
+    return normalized
+
+
+def validate_int(name: str, value: Any, min_value: int = 0, max_value: int = 100) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ToolError("invalid_input", f"{name} must be a number.")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ToolError("invalid_input", f"{name} must be a number.") from exc
+    if parsed < min_value or parsed > max_value:
+        raise ToolError("invalid_input", f"{name} must be between {min_value} and {max_value}.")
+    return parsed
+
+
+def validate_bool(name: str, value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ToolError("invalid_input", f"{name} must be a boolean.")
+
+
+def clean_payload(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: child for key, child in value.items() if child not in (None, "", [], {})}
+
+
+def validate_source_metadata(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ToolError("invalid_input", "sourceMetadata must be an object.")
+    allowed = {
+        "telegramChatId",
+        "telegramUserId",
+        "telegramMessageId",
+        "telegramMessageThreadId",
+        "telegramUsername",
+        "telegramDisplayName",
+        "source",
+    }
+    metadata: dict[str, Any] = {}
+    for key, child in value.items():
+        if key not in allowed:
+            continue
+        if isinstance(child, (int, float)):
+            metadata[key] = str(int(child))
+        elif isinstance(child, str):
+            metadata[key] = validate_text(f"sourceMetadata.{key}", child, max_len=300)
+        elif child is not None:
+            raise ToolError("invalid_input", f"sourceMetadata.{key} is malformed.")
+    return clean_payload(metadata)
+
+
+def merge_source_metadata(*values: Any) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    for value in values:
+        metadata = validate_source_metadata(value)
+        if metadata:
+            merged.update(metadata)
+    return clean_payload(merged)
+
+
+def validate_unit_requests(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 6:
+        raise ToolError("invalid_input", "unitAllocations must be a short array.")
+    output: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ToolError("invalid_input", f"unitAllocations[{index}] must be an object.")
+        unit_code = validate_text(f"unitAllocations[{index}].unitCode", item.get("unitCode"), max_len=80)
+        if unit_code and unit_code not in ("cabin", "guide-cabin"):
+            raise ToolError("invalid_input", "unitAllocations unitCode must be cabin or guide-cabin.")
+        quantity = validate_int(f"unitAllocations[{index}].quantity", item.get("quantity"), min_value=1, max_value=10) or 1
+        label = validate_text(f"unitAllocations[{index}].label", item.get("label"), max_len=160)
+        output.append(clean_payload({"unitCode": unit_code, "quantity": quantity, "label": label}))
+    return output
+
+
+def validate_linked_activities(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 12:
+        raise ToolError("invalid_input", "linkedActivities must be a short array.")
+    output: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ToolError("invalid_input", f"linkedActivities[{index}] must be an object.")
+        booking_type = validate_text(f"linkedActivities[{index}].bookingType", item.get("bookingType"), max_len=40)
+        if booking_type not in ("bird_tour", "day_pass"):
+            raise ToolError("invalid_input", "linked activity bookingType must be bird_tour or day_pass.")
+        output.append(clean_payload({
+            "bookingType": booking_type,
+            "date": validate_date(f"linkedActivities[{index}].date", item.get("date")),
+            "participants": validate_int(f"linkedActivities[{index}].participants", item.get("participants"), min_value=1, max_value=100),
+            "notes": validate_text(f"linkedActivities[{index}].notes", item.get("notes"), max_len=600),
+        }))
+    return output
+
+
+def validate_prepare_payload(args: dict[str, Any]) -> dict[str, Any]:
+    if "rawText" in args or "requestText" in args:
+        raise ToolError("invalid_input", "Use sourceText only for original staff text validation.")
+    booking_type = validate_text("bookingType", args.get("bookingType"), max_len=40)
+    if booking_type and booking_type not in ("overnight_stay", "bird_tour", "day_pass"):
+        raise ToolError("invalid_input", "bookingType must be overnight_stay, bird_tour, or day_pass.")
+    source = validate_text("source", args.get("source"), max_len=40)
+    if source and source not in ("direct", "other"):
+        raise ToolError("invalid_input", "Hotel-created reservations may only use direct or other source.")
+    commercial_track = validate_text("commercialTrack", args.get("commercialTrack"), max_len=40)
+    if commercial_track and commercial_track not in ("direct_guest", "operator"):
+        raise ToolError("invalid_input", "commercialTrack must be direct_guest or operator.")
+    payer = validate_text("payerResponsibility", args.get("payerResponsibility"), max_len=40)
+    if payer and payer not in ("guest", "operator"):
+        raise ToolError("invalid_input", "payerResponsibility must be guest or operator.")
+
+    unit_allocations_input = args.get("unitAllocations")
+    if unit_allocations_input is None:
+        unit_allocations_input = args.get("unitRequests")
+
+    payload = {
+        "bookingType": booking_type,
+        "guestName": validate_text("guestName", args.get("guestName"), max_len=300),
+        "guestEmail": validate_text("guestEmail", args.get("guestEmail"), max_len=300),
+        "guestPhone": validate_text("guestPhone", args.get("guestPhone"), max_len=80),
+        "operatorName": validate_text("operatorName", args.get("operatorName"), max_len=300),
+        "source": source,
+        "commercialTrack": commercial_track,
+        "payerResponsibility": payer,
+        "sourceReference": validate_text("sourceReference", args.get("sourceReference"), max_len=300),
+        "arrivalDate": validate_date("arrivalDate", args.get("arrivalDate")),
+        "departureDate": validate_date("departureDate", args.get("departureDate")),
+        "visitDate": validate_date("visitDate", args.get("visitDate")),
+        "adultsCount": validate_int("adultsCount", args.get("adultsCount"), min_value=1, max_value=100),
+        "childrenCount": validate_int("childrenCount", args.get("childrenCount"), min_value=0, max_value=100),
+        "infantsCount": validate_int("infantsCount", args.get("infantsCount"), min_value=0, max_value=20),
+        "unitAllocations": validate_unit_requests(unit_allocations_input),
+        "expectedArrivalTime": validate_text("expectedArrivalTime", args.get("expectedArrivalTime"), max_len=80),
+        "transportRequested": validate_bool("transportRequested", args.get("transportRequested")),
+        "dietaryNotes": validate_text("dietaryNotes", args.get("dietaryNotes"), max_len=1000),
+        "specialRequests": validate_text("specialRequests", args.get("specialRequests"), max_len=1000),
+        "internalNotes": validate_text("internalNotes", args.get("internalNotes"), max_len=1000),
+        "linkedActivities": validate_linked_activities(args.get("linkedActivities")),
+        "sourceMetadata": validate_source_metadata(args.get("sourceMetadata")),
+    }
+    return clean_payload(payload)
+
+
+def source_text_explicitly_says_one_guest(args: dict[str, Any]) -> bool:
+    source_text = validate_text("sourceText", args.get("sourceText"), max_len=1200)
+    if not source_text:
+        return False
+    normalized = unicodedata.normalize("NFKD", source_text)
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return bool(EXPLICIT_SINGLE_GUEST_RE.search(normalized))
+
+
+def ambiguous_single_guest_guard(args: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("bookingType") in {"overnight_stay", "bird_tour", "day_pass"} and not any(
+        payload.get(key) is not None for key in ("adultsCount", "childrenCount", "infantsCount")
+    ):
+        return {
+            "status": "needs_info",
+            "missingFields": ["guest_count"],
+            "question": "¿Cuántas personas son?",
+            "reason": "guest_count_missing",
+        }
+    if payload.get("adultsCount") != 1:
+        return None
+    if source_text_explicitly_says_one_guest(args):
+        return None
+    return {
+        "status": "needs_info",
+        "missingFields": ["guest_count"],
+        "question": "¿Cuántas personas son?",
+        "reason": "guest_count_unclear",
+    }
+
+
+def source_text_date_year_guard(args: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
+    has_tool_date = any(payload.get(key) for key in ("arrivalDate", "departureDate", "visitDate"))
+    has_tool_date = has_tool_date or any(activity.get("date") for activity in payload.get("linkedActivities", []))
+    if not has_tool_date:
+        return None
+
+    source_text = validate_text("sourceText", args.get("sourceText"), max_len=1200)
+    if not source_text:
+        return None
+
+    normalized = unicodedata.normalize("NFKD", source_text)
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    if EXPLICIT_YEAR_RE.search(normalized) or RELATIVE_DATE_RE.search(normalized):
+        return None
+
+    if MONTH_OR_NUMERIC_DATE_RE.search(normalized):
+        return {
+            "status": "needs_info",
+            "missingFields": ["date_year"],
+            "question": "¿De qué año es la reserva?",
+            "reason": "date_year_missing",
+        }
+
+    return {
+        "status": "needs_info",
+        "missingFields": ["date"],
+        "question": "¿Para qué fecha y año es la reserva?",
+        "reason": "date_source_unclear",
+    }
+
+
+def parse_expiry(value: Any) -> dt.datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ToolError("pms_contract_error", "PMS response did not include expiresAt.")
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ToolError("pms_contract_error", "PMS response included malformed expiresAt.") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def draft_file_for_code(code: str) -> Path:
+    return RESERVATION_DRAFT_DIR / f"{code}.json"
+
+
+def draft_file_for_pending_id(pending_id: str) -> Path:
+    return RESERVATION_DRAFT_DIR / f"pending-{pending_id}.json"
+
+
+def generate_pending_id(code: str, token: str) -> str:
+    entropy = os.urandom(16).hex()
+    digest = hashlib.sha256(f"{code}:{token}:{now_iso()}:{entropy}".encode("utf-8")).hexdigest()
+    return digest[:16].upper()
+
+
+def cleanup_expired_reservation_drafts() -> None:
+    if not RESERVATION_DRAFT_DIR.exists():
+        return
+    for path in RESERVATION_DRAFT_DIR.glob("*.json"):
+        try:
+            data = json.loads(path.read_text())
+            expires_at = parse_expiry(data.get("expiresAt"))
+            if expires_at <= now_utc():
+                path.unlink(missing_ok=True)
+        except Exception:
+            continue
+
+
+def store_reservation_draft(pms_result: dict[str, Any], request_payload: dict[str, Any]) -> str:
+    code = validate_confirmation_code(pms_result.get("confirmationCode"))
+    token = pms_result.get("preparedToken")
+    if not isinstance(token, str) or not token.strip():
+        raise ToolError("pms_contract_error", "PMS ready response did not include preparedToken.")
+    expires_at = parse_expiry(pms_result.get("expiresAt"))
+    if expires_at <= now_utc():
+        raise ToolError("pms_contract_error", "PMS returned an already expired preparedToken.")
+
+    cleanup_expired_reservation_drafts()
+    RESERVATION_DRAFT_DIR.mkdir(parents=True, exist_ok=True)
+    pending_id = generate_pending_id(code, token)
+    payload = {
+        "pendingId": pending_id,
+        "confirmationCode": code,
+        "preparedToken": token,
+        "expiresAt": pms_result.get("expiresAt"),
+        "summary": staff_safe_value(pms_result.get("summary")),
+        "idempotencyKey": pms_result.get("idempotencyKey"),
+        "requestPayload": request_payload,
+        "sourceMetadata": request_payload.get("sourceMetadata"),
+        "createdAt": now_iso(),
+        "status": "prepared",
+    }
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    draft_file_for_pending_id(pending_id).write_text(text, encoding="utf-8")
+    # Keep a code-indexed copy for backwards compatibility with older CREAR <CODE> prompts.
+    draft_file_for_code(code).write_text(text, encoding="utf-8")
+    return pending_id
+
+
+def load_reservation_draft(identifier: str, by_pending_id: bool = False) -> dict[str, Any]:
+    if by_pending_id:
+        pending_id = validate_pending_id(identifier)
+        path = draft_file_for_pending_id(pending_id)
+    else:
+        code = validate_confirmation_code(identifier)
+        path = draft_file_for_code(code)
+    if not path.exists():
+        raise ToolError("prepared_draft_not_found", "No pending reservation draft found for that confirmation.")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ToolError("prepared_draft_invalid", "Pending reservation draft is unreadable.") from exc
+    expires_at = parse_expiry(data.get("expiresAt"))
+    if expires_at <= now_utc():
+        path.unlink(missing_ok=True)
+        raise ToolError("prepared_draft_expired", "That reservation confirmation code has expired.")
+    return data
+
+
+def mark_reservation_draft_created(draft: dict[str, Any], result: dict[str, Any]) -> None:
+    code = draft.get("confirmationCode")
+    pending_id = draft.get("pendingId")
+    paths: list[Path] = []
+    if isinstance(pending_id, str) and PENDING_ID_RE.match(pending_id):
+        paths.append(draft_file_for_pending_id(pending_id))
+    if isinstance(code, str) and CONFIRMATION_CODE_RE.match(code):
+        paths.append(draft_file_for_code(code))
+    for path in paths:
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        data["status"] = "created"
+        data["createdReservation"] = staff_safe_value(result)
+        data["createdAtPms"] = now_iso()
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def pms_base_url(config: dict[str, Any]) -> str:
     raw = cfg_env(config, "PMS_BASE_URL") or DEFAULT_PMS_BASE_URL
     parsed = urllib.parse.urlparse(raw)
@@ -157,22 +573,61 @@ def pms_property_id(config: dict[str, Any]) -> str:
     return validate_safe_id("PMS_PROPERTY_ID", raw) or DEFAULT_PROPERTY_ID
 
 
-def sign_pms_token(config: dict[str, Any]) -> str:
+def token_profile(profile: str) -> dict[str, Any]:
+    if profile == "prepare":
+        return {
+            "credential_id": "hotel-openclaw-reservation-prepare",
+            "permissions": ["pms.read"],
+            "allowed_classifications": ["read", "draft"],
+            "allowed_tools": ["agent_prepare_reservation"],
+        }
+    if profile == "create":
+        return {
+            "credential_id": "hotel-openclaw-reservation-create",
+            "permissions": ["pms.read", "pms.write"],
+            "allowed_classifications": ["guarded_write"],
+            "allowed_tools": ["agent_create_reservation"],
+        }
+    if profile == "registro_read":
+        return {
+            "credential_id": "hotel-openclaw-registro-read",
+            "permissions": ["pms.registro.read"],
+            "allowed_classifications": ["registro"],
+            "allowed_tools": list(PMS_REGISTRO_READ_TOOLS),
+        }
+    if profile == "registro_write":
+        return {
+            "credential_id": "hotel-openclaw-registro-write",
+            "permissions": ["pms.registro.write"],
+            "allowed_classifications": ["registro"],
+            "allowed_tools": list(PMS_REGISTRO_WRITE_TOOLS),
+        }
+    return {
+        "credential_id": "hotel-openclaw-readonly",
+        "permissions": ["pms.read"],
+        "allowed_classifications": ["read"],
+        "allowed_tools": list(PMS_READ_TOOLS),
+    }
+
+
+def sign_pms_token(config: dict[str, Any], profile: str = "read") -> str:
     now = int(time.time())
+    token = token_profile(profile)
     payload = {
         "typ": "agent_access",
         "iss": "owhub",
         "aud": "pms",
         "agentId": "hotel",
-        "credentialId": "hotel-openclaw-readonly",
+        "credentialId": token["credential_id"],
         "actorLabel": "Hotel OpenClaw Agent",
-        "permissions": ["pms.read"],
+        "permissions": token["permissions"],
         "propertyIds": [pms_property_id(config)],
-        "allowedToolClassifications": ["read"],
+        "allowedToolClassifications": token["allowed_classifications"],
+        "allowedTools": token["allowed_tools"],
         "activePropertyId": pms_property_id(config),
         "iat": now,
         "exp": now + 300,
-        "jti": hashlib.sha256(f"hotel-{now}-{os.getpid()}".encode()).hexdigest()[:24],
+        "jti": hashlib.sha256(f"hotel-{profile}-{now}-{os.getpid()}".encode()).hexdigest()[:24],
     }
     encoded = b64url(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = hmac.new(pms_agent_secret(config).encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).digest()
@@ -205,13 +660,13 @@ def http_json(url: str, payload: dict[str, Any], headers: dict[str, str] | None 
         raise ToolError("network_error", "Network request failed.", retryable=True) from exc
 
 
-def pms_tool(config: dict[str, Any], tool_name: str, input_payload: dict[str, Any] | None = None) -> Any:
+def pms_tool(config: dict[str, Any], tool_name: str, input_payload: dict[str, Any] | None = None, profile: str = "read") -> Any:
     tool_name = validate_safe_id("tool_name", tool_name) or ""
     response = http_json(
         f"{pms_base_url(config)}/api/tools/{tool_name}",
         input_payload or {},
         {
-            "Authorization": f"Bearer {sign_pms_token(config)}",
+            "Authorization": f"Bearer {sign_pms_token(config, profile)}",
             "x-ow-request-source": "internal_agent",
             "x-ow-correlation-id": f"hotel-{int(time.time())}-{os.getpid()}",
         },
@@ -220,6 +675,652 @@ def pms_tool(config: dict[str, Any], tool_name: str, input_payload: dict[str, An
     if response.get("success") is False:
         raise ToolError("pms_error", "PMS tool runtime returned an error.", retryable=False)
     return response.get("data")
+
+
+def extract_response_text(data: dict[str, Any]) -> str:
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"]
+    chunks: list[str] = []
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content") or []:
+            if isinstance(content, dict) and content.get("type") in {"output_text", "text"}:
+                text = content.get("text")
+                if isinstance(text, str):
+                    chunks.append(text)
+    return "".join(chunks).strip()
+
+
+def registro_vision_api_key(config: dict[str, Any]) -> str | None:
+    return (
+        cfg_file(config, "REGISTRO_VISION_API_KEY")
+        or cfg_file(config, "OPENAI_API_KEY")
+        or cfg_env(config, "REGISTRO_VISION_API_KEY")
+        or cfg_env(config, "OPENAI_API_KEY")
+        or cfg_env(config, "OWLSWATCH_VISION_API_KEY")
+    )
+
+
+def registro_vision_model(config: dict[str, Any]) -> str:
+    return cfg_env(config, "REGISTRO_VISION_MODEL") or cfg_env(config, "OWLSWATCH_VISION_MODEL") or "gpt-4o"
+
+
+def scrub_registro_metadata(value: Any) -> Any:
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, child in value.items():
+            lowered = key.lower()
+            if any(marker in lowered for marker in ("token", "fetchurl", "url", "base64", "filedata", "bytes")):
+                if lowered in {"filesizebytes", "sizebytes"}:
+                    safe[key] = child
+                continue
+            safe[key] = scrub_registro_metadata(child)
+        return safe
+    if isinstance(value, list):
+        return [scrub_registro_metadata(item) for item in value]
+    return value
+
+
+def registration_id_from(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    candidates = [
+        value.get("registrationId"),
+        value.get("id"),
+    ]
+    registration = value.get("registration")
+    if isinstance(registration, dict):
+        candidates.extend([registration.get("registrationId"), registration.get("id")])
+    for candidate in candidates:
+        if candidate:
+            return str(candidate)
+    return None
+
+
+def guests_from_registro_response(value: Any, registration_id: str | None = None) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if not isinstance(value, dict):
+        return []
+    for key in ("guests", "registrationGuests", "registroGuests"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            return [item for item in rows if isinstance(item, dict)]
+    registration = value.get("registration")
+    if isinstance(registration, dict):
+        nested = guests_from_registro_response(registration, registration_id)
+        if nested:
+            return nested
+    # Legacy single-guest PMS shape: treat the registration as the primary guest.
+    guest_id = value.get("registrationGuestId") or value.get("guestId") or value.get("id") or registration_id
+    if guest_id:
+        return [{
+            "registrationGuestId": guest_id,
+            "role": "primary",
+            "displayName": value.get("guestName") or value.get("displayName"),
+            "documentType": value.get("documentType"),
+            "documentNumber": value.get("documentNumber"),
+            "nationality": value.get("nationality"),
+            "dateOfBirth": value.get("dateOfBirth"),
+            "extractionStatus": value.get("extractionStatus") or value.get("status"),
+        }]
+    return []
+
+
+def documents_from_registro_response(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if not isinstance(value, dict):
+        return []
+    for key in ("documents", "registrationDocuments", "files"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            return [item for item in rows if isinstance(item, dict)]
+    return []
+
+
+def guest_id_from(value: dict[str, Any]) -> str | None:
+    for key in ("registrationGuestId", "guestId", "registroGuestId", "id"):
+        if value.get(key):
+            return str(value[key])
+    return None
+
+
+def document_guest_id(value: dict[str, Any]) -> str | None:
+    for key in ("registrationGuestId", "guestId", "registroGuestId", "holderGuestId"):
+        if value.get(key):
+            return str(value[key])
+    return None
+
+
+def document_id_from(value: dict[str, Any]) -> str | None:
+    for key in ("documentId", "id"):
+        if value.get(key):
+            return str(value[key])
+    return None
+
+
+def document_fetch_token(value: dict[str, Any]) -> str | None:
+    for key in ("fetchToken", "documentFetchToken", "token"):
+        token = value.get(key)
+        if isinstance(token, str) and token:
+            return token
+    fetch = value.get("fetch")
+    if isinstance(fetch, dict):
+        token = fetch.get("token") or fetch.get("fetchToken")
+        if isinstance(token, str) and token:
+            return token
+    return None
+
+
+def fetch_response_base64(value: dict[str, Any]) -> str | None:
+    for key in ("base64", "fileBase64", "contentBase64", "dataBase64", "bodyBase64", "fileDataBase64"):
+        data = value.get(key)
+        if isinstance(data, str) and data:
+            return data
+    file_value = value.get("file")
+    if isinstance(file_value, dict):
+        return fetch_response_base64(file_value)
+    return None
+
+
+def fetch_response_content_type(fetch: dict[str, Any], document: dict[str, Any]) -> str | None:
+    for source in (fetch, fetch.get("file") if isinstance(fetch.get("file"), dict) else {}, document):
+        if not isinstance(source, dict):
+            continue
+        for key in ("contentType", "mimeType"):
+            value = source.get(key)
+            if isinstance(value, str) and value:
+                return value.lower()
+    return None
+
+
+def normalize_registro_doc_type(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = unicodedata.normalize("NFKD", str(value).lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    if "pass" in normalized or "pasaporte" in normalized:
+        return "passport"
+    if "cedula" in normalized or "id" in normalized or "identity" in normalized or "card" in normalized:
+        return "id_card"
+    if "other" in normalized or "otro" in normalized:
+        return "other"
+    return None
+
+
+def split_surnames(surname: Any) -> tuple[str | None, str | None]:
+    if not isinstance(surname, str):
+        return None, None
+    parts = [part for part in surname.strip().split() if part]
+    if not parts:
+        return None, None
+    if len(parts) == 1:
+        return parts[0], None
+    return parts[0], " ".join(parts[1:])
+
+
+def normalize_date_string(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    text = value[:10]
+    if DATE_RE.match(text):
+        try:
+            dt.date.fromisoformat(text)
+            return text
+        except ValueError:
+            return None
+    return None
+
+
+def mrz_char_value(char: str) -> int | None:
+    if char.isdigit():
+        return int(char)
+    if "A" <= char <= "Z":
+        return ord(char) - ord("A") + 10
+    if char == "<":
+        return 0
+    return None
+
+
+def mrz_check_digit(field: str) -> int | None:
+    weights = (7, 3, 1)
+    total = 0
+    for index, char in enumerate(field):
+        value = mrz_char_value(char)
+        if value is None:
+            return None
+        total += value * weights[index % len(weights)]
+    return total % 10
+
+
+def mrz_check_ok(field: str, digit: str) -> bool | None:
+    if not isinstance(digit, str) or not digit.isdigit():
+        return None
+    expected = mrz_check_digit(field)
+    if expected is None:
+        return None
+    return expected == int(digit)
+
+
+def mrz_date(value: str, kind: str) -> str | None:
+    if not re.match(r"^\d{6}$", value or ""):
+        return None
+    yy = int(value[:2])
+    month = int(value[2:4])
+    day = int(value[4:6])
+    year = 2000 + yy
+    today = now_utc().date()
+    if kind == "birth":
+        try:
+            candidate = dt.date(year, month, day)
+        except ValueError:
+            return None
+        if candidate > today:
+            year -= 100
+    elif kind == "expiry" and year < today.year - 5:
+        year += 100
+    try:
+        return dt.date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def mrz_clean_name(value: str) -> str | None:
+    text = " ".join(part for part in value.replace("<", " ").split() if part)
+    return text or None
+
+
+def usable_mrz_name(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(part for part in value.strip().split() if part)
+    if not text or len(text) > 32:
+        return None
+    if re.search(r"R{5,}|E{5,}|<{2,}", text):
+        return None
+    return text
+
+
+def parse_passport_mrz_line2(line2: str) -> dict[str, Any]:
+    if len(line2) < 28:
+        return {}
+    doc_number_field = line2[:9]
+    birth_field = line2[13:19]
+    expiry_field = line2[21:27]
+    if not re.match(r"^[A-Z0-9<]{9}\d[A-Z<]{3}\d{6}\d[MF<]\d{6}\d", line2[:28]):
+        return {}
+    checks = [
+        value
+        for value in (
+            mrz_check_ok(doc_number_field, line2[9:10]),
+            mrz_check_ok(birth_field, line2[19:20]),
+            mrz_check_ok(expiry_field, line2[27:28]),
+        )
+        if value is not None
+    ]
+    return {
+        "docNumber": doc_number_field.replace("<", "") or None,
+        "nationalityIso": line2[10:13].replace("<", "") or None,
+        "fechaNacimiento": mrz_date(birth_field, "birth"),
+        "sexo": None if line2[20:21] in ("", "<") else line2[20:21],
+        "docExpiry": mrz_date(expiry_field, "expiry"),
+        "mrzChecksumsOk": all(checks) if checks else None,
+    }
+
+
+def parse_passport_mrz(raw_text: Any) -> dict[str, Any]:
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return {}
+    candidates: list[str] = []
+    for line in raw_text.upper().splitlines():
+        compact = re.sub(r"[^A-Z0-9<]", "", line)
+        if len(compact) >= 30 and ("<" in compact or parse_passport_mrz_line2(compact[:44])):
+            candidates.append(compact)
+    for index, line1 in enumerate(candidates):
+        if line1.startswith("PE"):
+            line1 = "P<" + line1[2:]
+        elif line1.startswith("P") and not line1.startswith("P<") and len(line1) > 2:
+            line1 = "P<" + line1[2:]
+        if not line1.startswith("P<") or index + 1 >= len(candidates):
+            continue
+        line2 = candidates[index + 1]
+        line2_parsed = parse_passport_mrz_line2(line2[:44])
+        if not line2_parsed:
+            continue
+        line1 = line1[:44]
+        surname_field, _, given_field = line1[5:].partition("<<")
+        return {
+            **line2_parsed,
+            "primerApellido": mrz_clean_name(surname_field),
+            "nombres": mrz_clean_name(given_field),
+        }
+    for line2 in candidates:
+        line2_parsed = parse_passport_mrz_line2(line2[:44])
+        if line2_parsed:
+            return line2_parsed
+    return {}
+
+
+def parse_ocr_date(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    match = re.search(r"\b(\d{1,2})\s+([A-Z]{3})\s+(\d{4})\b", value.upper())
+    if not match:
+        return normalize_date_string(value)
+    month = OCR_MONTHS.get(match.group(2))
+    if not month:
+        return None
+    try:
+        return dt.date(int(match.group(3)), month, int(match.group(1))).isoformat()
+    except ValueError:
+        return None
+
+
+def next_ocr_value(lines: list[str], label_pattern: str) -> str | None:
+    pattern = re.compile(label_pattern, re.I)
+    for index, line in enumerate(lines):
+        if not pattern.search(line):
+            continue
+        for candidate in lines[index + 1:index + 5]:
+            text = candidate.strip()
+            if text and not pattern.search(text):
+                return text
+    return None
+
+
+def likely_name_line(value: str) -> bool:
+    text = value.strip()
+    if not re.match(r"^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '\\-]{1,40}$", text):
+        return False
+    blocked = {
+        "PASSPORT",
+        "UNITED STATES",
+        "UNITED STATES OF AMERICA",
+        "NATURE",
+        "DATE",
+        "SEX",
+        "USA",
+        "MOLDOVA",
+        "INDIA",
+    }
+    upper = text.upper()
+    return not any(word in upper for word in blocked)
+
+
+def ocr_names_from_lines(lines: list[str]) -> tuple[str | None, str | None]:
+    surname = next_ocr_value(lines, r"surname|apellido")
+    given = next_ocr_value(lines, r"given|pr[eé]nom|nombres|names|naines")
+    for index, line in enumerate(lines):
+        if re.search(r"given|pr[eé]nom|nombres|names|naines", line, re.I):
+            if not surname:
+                for previous in reversed(lines[max(0, index - 4):index]):
+                    if likely_name_line(previous):
+                        surname = previous.strip()
+                        break
+            if not given:
+                for candidate in lines[index + 1:index + 5]:
+                    if likely_name_line(candidate):
+                        given = candidate.strip()
+                        break
+    if surname and not likely_name_line(surname):
+        surname = None
+    if given and not likely_name_line(given):
+        given = None
+    return surname, given
+
+
+def split_display_name(display_name: Any) -> tuple[str | None, str | None]:
+    if not isinstance(display_name, str) or not display_name.strip():
+        return None, None
+    parts = [part for part in display_name.strip().split() if part]
+    if len(parts) <= 1:
+        return display_name.strip(), None
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def apple_vision_ocr_text(content_type: str, encoded_file: str) -> str | None:
+    if not LOCAL_OCR_SCRIPT.exists() or not content_type.startswith("image/"):
+        return None
+    suffix = ".png" if "png" in content_type else ".jpg"
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+            tmp_path = Path(handle.name)
+            handle.write(base64.b64decode(encoded_file))
+        try:
+            result = subprocess.run(
+                ["/usr/bin/swift", str(LOCAL_OCR_SCRIPT), str(tmp_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=45,
+            )
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except Exception:
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    lines = payload.get("lines")
+    if not isinstance(lines, list):
+        return None
+    return "\n".join(str(line).strip() for line in lines if str(line).strip()) or None
+
+
+def local_extract_registro_document(content_type: str, encoded_file: str, guest: dict[str, Any]) -> dict[str, Any] | None:
+    raw_text = apple_vision_ocr_text(content_type, encoded_file)
+    if not raw_text:
+        return None
+    lines = raw_text.splitlines()
+    mrz = parse_passport_mrz(raw_text)
+    ocr_surname, ocr_given = ocr_names_from_lines(lines)
+    given_from_guest, surname_from_guest = split_display_name(guest.get("displayName"))
+    surname = ocr_surname or usable_mrz_name(mrz.get("primerApellido")) or surname_from_guest
+    given_names = ocr_given or usable_mrz_name(mrz.get("nombres")) or given_from_guest
+    date_of_birth = mrz.get("fechaNacimiento") or parse_ocr_date(next_ocr_value(lines, r"birth|naissance|nacimiento") or "")
+    expiry = mrz.get("docExpiry") or parse_ocr_date(next_ocr_value(lines, r"expiration|expiry|expiraci[oó]n|caducidad") or "")
+    issue = parse_ocr_date(next_ocr_value(lines, r"issue|d[eé]livrance|expedici[oó]n") or "")
+    nationality = mrz.get("nationalityIso") or ("USA" if "UNITED STATES" in raw_text.upper() else None)
+    if not any([mrz.get("docNumber"), date_of_birth, surname, given_names]):
+        return None
+    return normalize_registro_extraction({
+        "documentType": "passport" if mrz or "PASSPORT" in raw_text.upper() else None,
+        "documentNumber": mrz.get("docNumber"),
+        "nationalityIso": nationality,
+        "nationalityLabel": "UNITED STATES OF AMERICA" if nationality == "USA" else None,
+        "surname": surname,
+        "primerApellido": surname,
+        "segundoApellido": None,
+        "givenNames": given_names,
+        "nombres": given_names,
+        "dateOfBirth": date_of_birth,
+        "sex": mrz.get("sexo"),
+        "documentExpirationDate": expiry,
+        "documentIssueDate": issue,
+        "documentIssuingCountry": "UNITED STATES OF AMERICA" if nationality == "USA" else None,
+        "mrzChecksumsOk": mrz.get("mrzChecksumsOk"),
+        "confidence": 85 if mrz.get("docNumber") else 60,
+        "flags": [] if mrz.get("docNumber") else ["mrz_not_found"],
+        "extractionMethod": "apple_vision_mrz_ocr",
+        "rawVisibleText": raw_text,
+    })
+
+
+def normalize_registro_extraction(parsed: dict[str, Any]) -> dict[str, Any]:
+    mrz = parse_passport_mrz(parsed.get("rawVisibleText"))
+    doc_type = normalize_registro_doc_type(parsed.get("documentType"))
+    primer_apellido = parsed.get("primerApellido") or usable_mrz_name(mrz.get("primerApellido"))
+    segundo_apellido = parsed.get("segundoApellido")
+    if not primer_apellido:
+        primer_apellido, segundo_from_surname = split_surnames(parsed.get("surname"))
+        segundo_apellido = segundo_apellido or segundo_from_surname
+    nombres = parsed.get("givenNames") or parsed.get("nombres") or usable_mrz_name(mrz.get("nombres"))
+    display_name = " ".join(str(part).strip() for part in (nombres, primer_apellido, segundo_apellido) if part).strip() or None
+    confidence = parsed.get("confidence")
+    if not isinstance(confidence, (int, float)):
+        confidence = 0
+    model_confidence = max(0.0, min(1.0, float(confidence) / 100 if confidence > 1 else float(confidence)))
+    flags = parsed.get("flags") if isinstance(parsed.get("flags"), list) else []
+    warnings = [str(flag)[:160] for flag in flags if str(flag).strip()]
+    blocking_flags = {
+        "not_identity_document",
+        "document_unreadable",
+        "no_document_visible",
+        "multiple_documents_visible",
+        "mrz_checksum_failed",
+    }
+    errors = [flag for flag in warnings if flag in blocking_flags]
+    if isinstance(mrz.get("mrzChecksumsOk"), bool):
+        mrz_checksums_ok = mrz.get("mrzChecksumsOk")
+    else:
+        mrz_checksums_ok = parsed.get("mrzChecksumsOk") if isinstance(parsed.get("mrzChecksumsOk"), bool) else None
+    if mrz_checksums_ok is False and "mrz_checksum_failed" not in errors:
+        errors.append("mrz_checksum_failed")
+    required_checks = {
+        "document_number_missing": mrz.get("docNumber") or parsed.get("documentNumber"),
+        "name_missing": nombres,
+        "surname_missing": primer_apellido,
+        "nationality_missing": mrz.get("nationalityIso") or parsed.get("nationalityIso") or parsed.get("nationalityLabel"),
+        "birth_date_missing": mrz.get("fechaNacimiento") or parsed.get("dateOfBirth") or parsed.get("fechaNacimiento"),
+    }
+    for flag, value in required_checks.items():
+        if not value and flag not in errors:
+            errors.append(flag)
+    visible_core_fields = sum(1 for value in required_checks.values() if value)
+    optional_fields = [
+        doc_type,
+        mrz.get("sexo") or parsed.get("sex") or parsed.get("sexo"),
+        mrz.get("docExpiry") or parsed.get("documentExpirationDate") or parsed.get("docExpiry"),
+        parsed.get("documentIssueDate"),
+        parsed.get("documentIssuingCountry"),
+    ]
+    visible_optional_fields = sum(1 for value in optional_fields if value)
+    heuristic_confidence = min(0.95, (visible_core_fields * 0.16) + (visible_optional_fields * 0.04))
+    confidence_value = max(model_confidence, heuristic_confidence)
+    if confidence_value < 0.65 and errors:
+        errors.append("low_confidence")
+    nationality_iso = mrz.get("nationalityIso") or parsed.get("nationalityIso")
+    sire_required = None
+    if isinstance(nationality_iso, str) and nationality_iso:
+        sire_required = nationality_iso.strip().upper() not in {"COL", "CO", "COLOMBIA"}
+    return {
+        "docType": doc_type,
+        "docNumber": mrz.get("docNumber") or parsed.get("documentNumber"),
+        "nationalityIso": nationality_iso.strip().upper() if isinstance(nationality_iso, str) and nationality_iso else None,
+        "nationalityLabel": parsed.get("nationalityLabel"),
+        "primerApellido": primer_apellido,
+        "segundoApellido": segundo_apellido,
+        "nombres": nombres,
+        "firstName": nombres,
+        "lastName": " ".join(str(part).strip() for part in (primer_apellido, segundo_apellido) if part).strip() or None,
+        "displayName": display_name,
+        "fechaNacimiento": mrz.get("fechaNacimiento") or normalize_date_string(parsed.get("dateOfBirth") or parsed.get("fechaNacimiento")),
+        "sexo": mrz.get("sexo") or parsed.get("sex") or parsed.get("sexo"),
+        "docExpiry": mrz.get("docExpiry") or normalize_date_string(parsed.get("documentExpirationDate") or parsed.get("docExpiry")),
+        "docIssueDate": normalize_date_string(parsed.get("documentIssueDate")),
+        "docIssuingCountry": parsed.get("documentIssuingCountry"),
+        "sireRequired": sire_required,
+        "extractionMethod": parsed.get("extractionMethod") or "openai_vision_document",
+        "mrzChecksumsOk": mrz_checksums_ok,
+        "extractionConfidence": confidence_value,
+        "validationErrors": errors,
+        "warnings": warnings,
+        "rawVisibleText": parsed.get("rawVisibleText"),
+    }
+
+
+def openai_extract_registro_document(api_key: str, model: str, content_type: str, encoded_file: str, context: dict[str, Any]) -> dict[str, Any]:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "documentType": {"type": ["string", "null"], "enum": ["passport", "id_card", "other", None]},
+            "documentNumber": {"type": ["string", "null"]},
+            "nationalityIso": {"type": ["string", "null"], "description": "ISO 3166 nationality/citizenship code if clearly visible or inferable from explicit country text."},
+            "nationalityLabel": {"type": ["string", "null"]},
+            "surname": {"type": ["string", "null"]},
+            "primerApellido": {"type": ["string", "null"]},
+            "segundoApellido": {"type": ["string", "null"]},
+            "givenNames": {"type": ["string", "null"]},
+            "nombres": {"type": ["string", "null"]},
+            "dateOfBirth": {"type": ["string", "null"], "description": "YYYY-MM-DD if clearly visible."},
+            "sex": {"type": ["string", "null"]},
+            "documentExpirationDate": {"type": ["string", "null"], "description": "YYYY-MM-DD if clearly visible."},
+            "documentIssueDate": {"type": ["string", "null"], "description": "YYYY-MM-DD if clearly visible."},
+            "documentIssuingCountry": {"type": ["string", "null"]},
+            "mrzChecksumsOk": {"type": ["boolean", "null"]},
+            "confidence": {"type": "number"},
+            "flags": {"type": "array", "items": {"type": "string"}},
+            "rawVisibleText": {"type": ["string", "null"]},
+        },
+        "required": [
+            "documentType",
+            "documentNumber",
+            "nationalityIso",
+            "nationalityLabel",
+            "surname",
+            "primerApellido",
+            "segundoApellido",
+            "givenNames",
+            "nombres",
+            "dateOfBirth",
+            "sex",
+            "documentExpirationDate",
+            "documentIssueDate",
+            "documentIssuingCountry",
+            "mrzChecksumsOk",
+            "confidence",
+            "flags",
+            "rawVisibleText",
+        ],
+    }
+    instructions = (
+        "Extract legal identity fields from this guest passport or identity-card image for hotel government reporting in Colombia. "
+        "Use only what is visible on the document. Never invent missing values. "
+        "Return dates as YYYY-MM-DD. Use documentType passport, id_card, or other. "
+        "For passports, use MRZ when visible and set mrzChecksumsOk only if you can verify it. "
+        "Confidence is 0-100; use high confidence when core fields are clearly readable, not 0. "
+        "If the image is unclear, return null fields and flags."
+    )
+    prompt = {
+        "reservationGuestId": context.get("registrationGuestId"),
+        "documentId": context.get("documentId"),
+        "fileName": context.get("fileName"),
+    }
+    payload = {
+        "model": model,
+        "input": [{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": f"{instructions}\nContext: {json.dumps(prompt, ensure_ascii=False)}"},
+                {"type": "input_image", "image_url": f"data:{content_type};base64,{encoded_file}"},
+            ],
+        }],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "registro_document_extraction",
+                "strict": True,
+                "schema": schema,
+            }
+        },
+    }
+    data = http_json("https://api.openai.com/v1/responses", payload, {"Authorization": f"Bearer {api_key}"}, timeout=90)
+    text = extract_response_text(data)
+    if not text:
+        raise ToolError("vision_response_empty", "Vision returned no structured text.", retryable=True)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ToolError("vision_response_invalid", "Vision returned invalid JSON.", retryable=True) from exc
+    if not isinstance(parsed, dict):
+        raise ToolError("vision_response_invalid", "Vision returned invalid JSON shape.", retryable=True)
+    return normalize_registro_extraction(parsed)
 
 
 def local_date(config: dict[str, Any], offset_days: int = 0) -> str:
@@ -272,6 +1373,15 @@ SENSITIVE_NOTE_MARKERS = (
     "valor",
 )
 
+SENSITIVE_RESULT_KEY_MARKERS = (
+    "authorization",
+    "payloadhash",
+    "preparedtoken",
+    "secret",
+    "signature",
+    "token",
+)
+
 CURRENCY_TEXT_RE = re.compile(r"(?i)\bCOP\b|[$]\s*\d")
 
 SENSITIVE_CHECKLIST_MARKERS = (
@@ -294,6 +1404,23 @@ ACTIVITY_MARKERS = (
     "day pass",
 )
 
+EXPLICIT_SINGLE_GUEST_RE = re.compile(
+    r"(?i)\b(?:1|un|una|one)\s+(?:persona|pax|adulto|adult|cliente|client|huesped|hu[eé]sped|guest|pasajero|passenger)\b|"
+    r"\b(?:solo|sola|single|individual)\b"
+)
+EXPLICIT_YEAR_RE = re.compile(r"\b20\d{2}\b")
+MONTH_OR_NUMERIC_DATE_RE = re.compile(
+    r"(?i)\b(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
+    r"january|february|march|april|may|june|july|august|september|october|november|december|"
+    r"ene|feb|mar|abr|jun|jul|ago|sep|sept|oct|nov|dic|jan|apr|aug|dec)\b|"
+    r"\b\d{1,2}\s*[-/]\s*\d{1,2}(?:\s*[-/]\s*\d{2,4})?\b"
+)
+RELATIVE_DATE_RE = re.compile(
+    r"(?i)\b(?:hoy|mañana|manana|pasado\s+mañana|pasado\s+manana|tomorrow|today|"
+    r"lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+)
+
 
 def staff_safe_note(value: Any, max_len: int = 1200) -> str | None:
     text = compact(value, max_len=max_len)
@@ -313,6 +1440,9 @@ def staff_safe_value(value: Any) -> Any:
         output: dict[str, Any] = {}
         for key, child in value.items():
             key_text = str(key).lower()
+            normalized_key = re.sub(r"[^a-z0-9]", "", key_text)
+            if any(marker in normalized_key for marker in SENSITIVE_RESULT_KEY_MARKERS):
+                continue
             if any(marker in key_text for marker in SENSITIVE_NOTE_MARKERS):
                 continue
             safe_child = staff_safe_value(child)
@@ -397,12 +1527,17 @@ def safe_reservation_summary(row: dict[str, Any]) -> dict[str, Any]:
         "status",
         "stage",
         "stageLabel",
+        "bookingType",
         "arrivalDate",
         "departureDate",
         "nights",
         "adultsCount",
         "childrenCount",
         "unitType",
+        "unitCode",
+        "unitName",
+        "unitSummary",
+        "unitAllocations",
     )
     return {key: row.get(key) for key in allowed if key in row}
 
@@ -451,15 +1586,79 @@ def guest_count(reservation: dict[str, Any]) -> int | None:
     return total if found else None
 
 
-def visit_phrase(reservation: dict[str, Any]) -> str:
-    unit = str(reservation.get("unitType") or "").lower()
+def unit_text(reservation: dict[str, Any]) -> str:
+    values: list[str] = []
+    for key in ("unitType", "unitCode", "unitName", "unitSummary"):
+        value = reservation.get(key)
+        if value not in (None, ""):
+            values.append(str(value))
+    allocations = reservation.get("unitAllocations")
+    if isinstance(allocations, list):
+        for allocation in allocations:
+            if not isinstance(allocation, dict):
+                continue
+            for key in ("unitType", "unitCode", "unitName", "label"):
+                value = allocation.get(key)
+                if value not in (None, ""):
+                    values.append(str(value))
+    return " ".join(values).lower()
+
+
+def booking_category(reservation: dict[str, Any]) -> str:
+    booking_type = str(reservation.get("bookingType") or "").lower()
+    unit = unit_text(reservation)
     notes = " ".join(str(reservation.get(k) or "") for k in ("specialRequests", "internalNotes", "dietaryNotes")).lower()
-    nights = int(reservation.get("nights") or 0)
-    if "cabin" in unit or "caba" in unit or nights > 0:
-        return "staying in the cabins"
+    if booking_type == "day_pass":
+        return "day_pass"
+    if booking_type == "bird_tour":
+        return "bird_tour"
+    if booking_type == "overnight_stay":
+        if "guide-cabin" in unit or "guide cabin" in unit or "guide room" in unit or "habitacion de guia" in unit or "habitación de guía" in unit:
+            if "cabin" in unit.replace("guide-cabin", "").replace("guide cabin", "") or "caba" in unit:
+                return "cabin"
+            return "guide_room"
+        if "cabin" in unit or "caba" in unit:
+            return "cabin"
+        return "overnight_unassigned"
+    if booking_type == "guide_room":
+        return "guide_room"
     if "bird" in unit or "bird" in notes or "aves" in notes or "tour" in notes:
-        return "arriving for a bird tour"
-    return "arriving"
+        return "bird_tour"
+    if "day pass" in notes or "pasadia" in notes or "pasadía" in notes:
+        return "day_pass"
+    if "cabin" in unit or "caba" in unit:
+        return "cabin"
+    return "unknown"
+
+
+SAME_DAY_ACTIVITY_CATEGORIES = {"day_pass", "bird_tour"}
+
+
+def is_same_day_activity(reservation: dict[str, Any]) -> bool:
+    return booking_category(reservation) in SAME_DAY_ACTIVITY_CATEGORIES
+
+
+def filter_lodging_movements(rows: list[Any]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict) and not is_same_day_activity(row)
+    ]
+
+
+def visit_phrase(reservation: dict[str, Any]) -> str:
+    category = booking_category(reservation)
+    if category == "cabin":
+        return "cabañas"
+    if category == "day_pass":
+        return "pasadía"
+    if category == "bird_tour":
+        return "tour de aves"
+    if category == "guide_room":
+        return "habitación de guía"
+    if category == "overnight_unassigned":
+        return "reserva de noche sin unidad asignada"
+    return "reserva sin tipo definido"
 
 
 def date_part(value: Any) -> str | None:
@@ -476,6 +1675,7 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
     context_reservation = {}
     if isinstance(context, dict):
         context_reservation = context.get("reservation") if isinstance(context.get("reservation"), dict) else {}
+    classification = {**row, **context_reservation, **reservation}
     notes = {
         "specialRequests": staff_safe_note(reservation.get("specialRequests") or context_reservation.get("specialRequests")),
         "dietaryNotes": staff_safe_note(reservation.get("dietaryNotes") or context_reservation.get("dietaryNotes")),
@@ -492,18 +1692,24 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
         safe_item = staff_safe_checklist_item(item)
         if safe_item:
             incomplete.append(safe_item)
-    count = guest_count(reservation)
+    count = guest_count(classification)
     return {
         "reservationId": reservation.get("reservationId") or reservation.get("id") or row.get("reservationId"),
         "movement": movement,
         "guestName": reservation.get("guestName") or row.get("guestName"),
         "guestCount": count,
         "partyPhrase": f"party of {count}" if count else "party",
-        "visitPhrase": visit_phrase(reservation),
+        "bookingType": classification.get("bookingType"),
+        "bookingCategory": booking_category(classification),
+        "visitPhrase": visit_phrase(classification),
         "arrivalDate": reservation.get("arrivalDate") or row.get("arrivalDate"),
         "departureDate": reservation.get("departureDate") or row.get("departureDate"),
         "nights": reservation.get("nights") or row.get("nights"),
         "unitType": reservation.get("unitType") or row.get("unitType"),
+        "unitCode": classification.get("unitCode"),
+        "unitName": classification.get("unitName"),
+        "unitSummary": classification.get("unitSummary"),
+        "unitAllocations": classification.get("unitAllocations"),
         "source": reservation.get("source") or row.get("source"),
         "operationalActivities": operational_activities(context, activity_date),
         "notes": {key: value for key, value in notes.items() if value not in (None, "", False)},
@@ -538,12 +1744,13 @@ def tool_hotel_pms_get_tomorrow_summary(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 1)
     arrivals_raw = pms_tool(config, "list_arrivals", {"date": date}) or []
-    departures_raw = pms_tool(config, "list_departures", {"date": date}) or []
+    departures_raw = filter_lodging_movements(pms_tool(config, "list_departures", {"date": date}) or [])
     in_house_raw = pms_tool(config, "list_in_house_guests", {"date": date}) or []
     stayover_raw = [
         row
         for row in in_house_raw
         if isinstance(row, dict)
+        and not is_same_day_activity(row)
         and date_part(row.get("arrivalDate")) is not None
         and date_part(row.get("departureDate")) is not None
         and date_part(row.get("arrivalDate")) < date
@@ -569,7 +1776,7 @@ def tool_hotel_pms_list_arrivals(args: dict[str, Any]) -> dict[str, Any]:
 def tool_hotel_pms_list_departures(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
-    rows = pms_tool(config, "list_departures", {"date": date}) or []
+    rows = filter_lodging_movements(pms_tool(config, "list_departures", {"date": date}) or [])
     return {"ok": True, "date": date, "departures": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
 
 
@@ -652,6 +1859,267 @@ def tool_hotel_pms_get_mapping_status(args: dict[str, Any]) -> dict[str, Any]:
 def tool_hotel_pms_get_ari_outbox_health(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     return {"ok": True, "health": pms_tool(config, "get_ari_outbox_health", {})}
+
+
+def tool_hotel_pms_prepare_reservation(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    payload = validate_prepare_payload(args)
+    date_guard = source_text_date_year_guard(args, payload)
+    if date_guard:
+        return {"ok": True, "prepare": date_guard}
+    count_guard = ambiguous_single_guest_guard(args, payload)
+    if count_guard:
+        return {"ok": True, "prepare": count_guard}
+    result = pms_tool(config, "agent_prepare_reservation", payload, profile="prepare")
+    if not isinstance(result, dict):
+        raise ToolError("pms_contract_error", "PMS prepare response was malformed.")
+
+    status = result.get("status")
+    safe_result = staff_safe_value(result)
+    if status == "ready":
+        pending_id = store_reservation_draft(result, payload)
+        if not isinstance(safe_result, dict):
+            safe_result = {}
+        safe_result.pop("confirmationCode", None)
+        safe_result["pendingId"] = pending_id
+        safe_result["confirmationRequired"] = True
+        safe_result["instruction"] = "Responde si para confirmar y crearla en PMS."
+    return {"ok": True, "prepare": safe_result}
+
+
+def tool_hotel_pms_create_reservation(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    pending_id_raw = args.get("pendingId")
+    confirmation_code_raw = args.get("confirmationCode")
+    if pending_id_raw is not None:
+        pending_id = validate_pending_id(pending_id_raw)
+        validate_yes_confirmation(args.get("confirmationText"))
+        draft = load_reservation_draft(pending_id, by_pending_id=True)
+        code = validate_confirmation_code(draft.get("confirmationCode"))
+    elif confirmation_code_raw is not None:
+        code = validate_confirmation_code(confirmation_code_raw)
+        draft = load_reservation_draft(code)
+    else:
+        raise ToolError("invalid_input", "pendingId or confirmationCode is required.")
+    prepared_token = draft.get("preparedToken")
+    if not isinstance(prepared_token, str) or not prepared_token.strip():
+        raise ToolError("prepared_draft_invalid", "Pending reservation draft is missing its PMS token.")
+
+    source_metadata = merge_source_metadata(draft.get("sourceMetadata"), args.get("sourceMetadata"))
+    payload = clean_payload({
+        "preparedToken": prepared_token,
+        "confirmationCode": code,
+        "idempotencyKey": validate_safe_id("idempotencyKey", args.get("idempotencyKey"), required=False) or draft.get("idempotencyKey"),
+        "sourceMetadata": source_metadata,
+    })
+    result = pms_tool(config, "agent_create_reservation", payload, profile="create")
+    if not isinstance(result, dict):
+        raise ToolError("pms_contract_error", "PMS create response was malformed.")
+
+    safe_result = staff_safe_value(result)
+    if isinstance(safe_result, dict):
+        reservation_id = safe_result.get("reservationId") or safe_result.get("id")
+        if isinstance(reservation_id, str) and "pmsUrl" not in safe_result and "url" not in safe_result:
+            safe_result["pmsUrl"] = f"{pms_base_url(config)}/reservations/{urllib.parse.quote(reservation_id)}"
+    mark_reservation_draft_created(draft, result)
+    return {"ok": True, "reservation": safe_result}
+
+
+def tool_hotel_registro_get_by_reservation(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    reservation_id = validate_safe_id("reservationId", args.get("reservationId"))
+    result = pms_tool(config, "registro_get_by_reservation", {"reservationId": reservation_id}, profile="registro_read")
+    registration_id = registration_id_from(result)
+    return {
+        "ok": True,
+        "reservationId": reservation_id,
+        "hasRegistration": bool(registration_id),
+        "registrationId": registration_id,
+        "registration": scrub_registro_metadata(result),
+    }
+
+
+def tool_hotel_registro_list_guests(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    registration_id = validate_safe_id("registrationId", args.get("registrationId"))
+    result = pms_tool(config, "registro_list_guests", {"registrationId": registration_id}, profile="registro_read")
+    guests = guests_from_registro_response(result, registration_id)
+    return {"ok": True, "registrationId": registration_id, "guests": scrub_registro_metadata(guests)}
+
+
+def tool_hotel_registro_list_documents(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    registration_id = validate_safe_id("registrationId", args.get("registrationId"))
+    registration_guest_id = validate_safe_id("registrationGuestId", args.get("registrationGuestId"), required=False)
+    payload = clean_payload({"registrationId": registration_id, "registrationGuestId": registration_guest_id})
+    result = pms_tool(config, "registro_list_documents", payload, profile="registro_read")
+    documents = documents_from_registro_response(result)
+    if registration_guest_id:
+        documents = [
+            doc for doc in documents
+            if not document_guest_id(doc) or document_guest_id(doc) == registration_guest_id
+        ]
+    return {"ok": True, "registrationId": registration_id, "registrationGuestId": registration_guest_id, "documents": scrub_registro_metadata(documents)}
+
+
+def record_guest_needs_review(config: dict[str, Any], registration_id: str, registration_guest_id: str, reason: str) -> dict[str, Any] | None:
+    try:
+        return pms_tool(
+            config,
+            "registro_mark_guest_needs_review",
+            {"registrationId": registration_id, "registrationGuestId": registration_guest_id, "reason": reason[:1000]},
+            profile="registro_write",
+        )
+    except ToolError:
+        return None
+
+
+def extract_guest_document(
+    config: dict[str, Any],
+    registration_id: str,
+    guest: dict[str, Any],
+    document: dict[str, Any],
+    record: bool,
+) -> dict[str, Any]:
+    registration_guest_id = guest_id_from(guest)
+    document_id = document_id_from(document)
+    if not registration_guest_id:
+        return {"status": "needs_review", "reason": "missing_registration_guest_id", "document": scrub_registro_metadata(document)}
+    if not document_id:
+        reason = "missing_document_id"
+        if record:
+            record_guest_needs_review(config, registration_id, registration_guest_id, reason)
+        return {"registrationGuestId": registration_guest_id, "status": "needs_review", "reason": reason}
+    fetch_token = document_fetch_token(document)
+    if not fetch_token:
+        reason = "document_fetch_token_missing"
+        if record:
+            record_guest_needs_review(config, registration_id, registration_guest_id, reason)
+        return {"registrationGuestId": registration_guest_id, "documentId": document_id, "status": "needs_review", "reason": reason}
+    fetch = pms_tool(
+        config,
+        "registro_fetch_document",
+        {"registrationId": registration_id, "registrationGuestId": registration_guest_id, "documentId": document_id, "fetchToken": fetch_token},
+        profile="registro_read",
+    )
+    if not isinstance(fetch, dict):
+        raise ToolError("pms_contract_error", "PMS document fetch response was malformed.")
+    content_type = fetch_response_content_type(fetch, document)
+    if content_type not in REGISTRO_DOCUMENT_CONTENT_TYPES:
+        reason = f"unsupported_document_content_type:{content_type or 'unknown'}"
+        if record:
+            record_guest_needs_review(config, registration_id, registration_guest_id, reason)
+        return {"registrationGuestId": registration_guest_id, "documentId": document_id, "status": "needs_review", "reason": reason}
+    encoded_file = fetch_response_base64(fetch)
+    if not encoded_file:
+        reason = "document_bytes_missing"
+        if record:
+            record_guest_needs_review(config, registration_id, registration_guest_id, reason)
+        return {"registrationGuestId": registration_guest_id, "documentId": document_id, "status": "needs_review", "reason": reason}
+    extraction = local_extract_registro_document(content_type, encoded_file, guest)
+    if extraction is None:
+        api_key = registro_vision_api_key(config)
+        if not api_key:
+            reason = "registro_vision_provider_not_configured"
+            if record:
+                record_guest_needs_review(config, registration_id, registration_guest_id, reason)
+            return {"registrationGuestId": registration_guest_id, "documentId": document_id, "status": "needs_review", "reason": reason}
+        extraction = openai_extract_registro_document(
+            api_key,
+            registro_vision_model(config),
+            content_type,
+            encoded_file,
+            {"registrationGuestId": registration_guest_id, "documentId": document_id, "fileName": document.get("fileName")},
+        )
+    record_result = None
+    if record:
+        payload = clean_payload({
+            "registrationId": registration_id,
+            "registrationGuestId": registration_guest_id,
+            "documentId": document_id,
+            "docType": extraction.get("docType"),
+            "docNumber": extraction.get("docNumber"),
+            "nationalityIso": extraction.get("nationalityIso"),
+            "nationalityLabel": extraction.get("nationalityLabel"),
+            "primerApellido": extraction.get("primerApellido"),
+            "segundoApellido": extraction.get("segundoApellido"),
+            "nombres": extraction.get("nombres"),
+            "firstName": extraction.get("firstName"),
+            "lastName": extraction.get("lastName"),
+            "displayName": extraction.get("displayName"),
+            "fechaNacimiento": extraction.get("fechaNacimiento"),
+            "sexo": extraction.get("sexo"),
+            "docExpiry": extraction.get("docExpiry"),
+            "docIssueDate": extraction.get("docIssueDate"),
+            "docIssuingCountry": extraction.get("docIssuingCountry"),
+            "sireRequired": extraction.get("sireRequired"),
+            "extractionMethod": extraction.get("extractionMethod"),
+            "mrzChecksumsOk": extraction.get("mrzChecksumsOk"),
+            "extractionConfidence": extraction.get("extractionConfidence"),
+            "validationErrors": extraction.get("validationErrors"),
+        })
+        record_result = pms_tool(config, "registro_record_guest_extraction", payload, profile="registro_write")
+    return {
+        "registrationGuestId": registration_guest_id,
+        "documentId": document_id,
+        "fileName": document.get("fileName"),
+        "contentType": content_type,
+        "status": "extracted_with_review_flags" if extraction.get("validationErrors") else "extracted",
+        "extraction": {key: value for key, value in extraction.items() if key != "rawVisibleText"},
+        "recorded": scrub_registro_metadata(record_result) if record_result is not None else None,
+    }
+
+
+def tool_hotel_registro_extract_reservation(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    reservation_id = validate_safe_id("reservationId", args.get("reservationId"))
+    record = validate_bool("record", args.get("record"))
+    if record is None:
+        record = True
+    registration_lookup = pms_tool(config, "registro_get_by_reservation", {"reservationId": reservation_id}, profile="registro_read")
+    registration_id = registration_id_from(registration_lookup)
+    if not registration_id:
+        return {
+            "ok": True,
+            "reservationId": reservation_id,
+            "status": "no_registration",
+            "message": "No Registro record exists for this reservation yet.",
+        }
+    guests_result = pms_tool(config, "registro_list_guests", {"registrationId": registration_id}, profile="registro_read")
+    guests = guests_from_registro_response(guests_result, registration_id)
+    documents_result = pms_tool(config, "registro_list_documents", {"registrationId": registration_id}, profile="registro_read")
+    documents = documents_from_registro_response(documents_result)
+    outputs: list[dict[str, Any]] = []
+    for guest in guests:
+        registration_guest_id = guest_id_from(guest)
+        guest_documents = [
+            document for document in documents
+            if registration_guest_id and document_guest_id(document) == registration_guest_id
+        ]
+        if not guest_documents and len(guests) == 1:
+            guest_documents = documents
+        if not guest_documents:
+            reason = "no_document_for_guest"
+            if registration_guest_id and record:
+                record_guest_needs_review(config, registration_id, registration_guest_id, reason)
+            outputs.append({
+                "registrationGuestId": registration_guest_id,
+                "displayName": guest.get("displayName") or guest.get("guestName"),
+                "status": "needs_review",
+                "reason": reason,
+            })
+            continue
+        outputs.append(extract_guest_document(config, registration_id, guest, guest_documents[0], record))
+    return {
+        "ok": True,
+        "reservationId": reservation_id,
+        "registrationId": registration_id,
+        "record": record,
+        "guestCount": len(guests),
+        "documentCount": len(documents),
+        "results": outputs,
+        "registration": scrub_registro_metadata(registration_lookup),
+    }
 
 
 def telegram_token(config: dict[str, Any]) -> str:
@@ -761,7 +2229,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         tool_hotel_pms_find_reservation,
     ),
     "hotel_pms_get_reservation_context": (
-        "Get read-only PMS reservation context, finance summary, checklist, and invoice metadata.",
+        "Get read-only staff-safe PMS reservation context, checklist, and operational metadata.",
         {"type": "object", "properties": {"reservationId": {"type": "string"}}, "required": ["reservationId"], "additionalProperties": False},
         tool_hotel_pms_get_reservation_context,
     ),
@@ -809,6 +2277,114 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         "Get PMS channel manager outbound queue health.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_hotel_pms_get_ari_outbox_health,
+    ),
+    "hotel_pms_prepare_reservation": (
+        "Prepare and validate a PMS reservation from normalized staff intent. No PMS reservation is created.",
+        {
+            "type": "object",
+            "properties": {
+                "bookingType": {"type": ["string", "null"]},
+                "guestName": {"type": ["string", "null"]},
+                "guestEmail": {"type": ["string", "null"]},
+                "guestPhone": {"type": ["string", "null"]},
+                "operatorName": {"type": ["string", "null"]},
+                "sourceText": {"type": ["string", "null"]},
+                "source": {"type": ["string", "null"]},
+                "commercialTrack": {"type": ["string", "null"]},
+                "payerResponsibility": {"type": ["string", "null"]},
+                "sourceReference": {"type": ["string", "null"]},
+                "arrivalDate": {"type": ["string", "null"]},
+                "departureDate": {"type": ["string", "null"]},
+                "visitDate": {"type": ["string", "null"]},
+                "adultsCount": {"type": ["integer", "null"]},
+                "childrenCount": {"type": ["integer", "null"]},
+                "infantsCount": {"type": ["integer", "null"]},
+                "unitAllocations": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "unitCode": {"type": ["string", "null"]},
+                            "quantity": {"type": ["integer", "null"]},
+                            "label": {"type": ["string", "null"]},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "expectedArrivalTime": {"type": ["string", "null"]},
+                "transportRequested": {"type": ["boolean", "null"]},
+                "dietaryNotes": {"type": ["string", "null"]},
+                "specialRequests": {"type": ["string", "null"]},
+                "internalNotes": {"type": ["string", "null"]},
+                "linkedActivities": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "bookingType": {"type": ["string", "null"]},
+                            "date": {"type": ["string", "null"]},
+                            "participants": {"type": ["integer", "null"]},
+                            "notes": {"type": ["string", "null"]},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "sourceMetadata": {"type": ["object", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        tool_hotel_pms_prepare_reservation,
+    ),
+    "hotel_pms_create_reservation": (
+        "Create a PMS reservation from a pending PMS-prepared draft after staff replies si, or from a legacy confirmation code.",
+        {
+            "type": "object",
+            "properties": {
+                "pendingId": {"type": ["string", "null"]},
+                "confirmationText": {"type": ["string", "null"]},
+                "confirmationCode": {"type": ["string", "null"]},
+                "idempotencyKey": {"type": ["string", "null"]},
+                "sourceMetadata": {"type": ["object", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        tool_hotel_pms_create_reservation,
+    ),
+    "hotel_registro_get_by_reservation": (
+        "Read the Registro record for a PMS reservation without exposing document bytes or fetch tokens.",
+        {"type": "object", "properties": {"reservationId": {"type": "string"}}, "required": ["reservationId"], "additionalProperties": False},
+        tool_hotel_registro_get_by_reservation,
+    ),
+    "hotel_registro_list_guests": (
+        "List structured Registro guests for a registration.",
+        {"type": "object", "properties": {"registrationId": {"type": "string"}}, "required": ["registrationId"], "additionalProperties": False},
+        tool_hotel_registro_list_guests,
+    ),
+    "hotel_registro_list_documents": (
+        "List Registro document metadata for a registration or guest without exposing document bytes or fetch tokens.",
+        {
+            "type": "object",
+            "properties": {
+                "registrationId": {"type": "string"},
+                "registrationGuestId": {"type": ["string", "null"]},
+            },
+            "required": ["registrationId"],
+            "additionalProperties": False,
+        },
+        tool_hotel_registro_list_documents,
+    ),
+    "hotel_registro_extract_reservation": (
+        "Fetch each guest document through scoped PMS Registro tokens, extract identity fields with vision, and record guest-level extraction results in PMS.",
+        {
+            "type": "object",
+            "properties": {
+                "reservationId": {"type": "string"},
+                "record": {"type": ["boolean", "null"]},
+            },
+            "required": ["reservationId"],
+            "additionalProperties": False,
+        },
+        tool_hotel_registro_extract_reservation,
     ),
     "hotel_telegram_send_message": (
         "Send a staff-facing Telegram message through the Hotel bot. Never sends guest messages.",

@@ -1,10 +1,11 @@
 # Hotel PMS Tools
 
-Read-only OpenClaw tools for the Hotel operations agent.
+OpenClaw tools for the Hotel operations agent.
 
-The tools call the PMS app tool runtime using a short-lived HMAC machine token.
+The tools call the PMS app tool runtime using short-lived HMAC machine tokens.
 They do not connect to the PMS database directly and they do not send messages
-to guests.
+to guests. Most tools are read-only; reservation creation is guarded by a
+two-step PMS-prepared token and simple staff `sí` confirmation.
 
 ## Tools
 
@@ -22,8 +23,25 @@ to guests.
 - `hotel_pms_list_sync_events`
 - `hotel_pms_get_mapping_status`
 - `hotel_pms_get_ari_outbox_health`
+- `hotel_pms_prepare_reservation`
+- `hotel_pms_create_reservation`
 - `hotel_telegram_send_message`
 - `hotel_memory_log`
+
+## Reservation Creation Boundary
+
+`hotel_pms_prepare_reservation` calls the PMS-owned `agent_prepare_reservation`
+tool with a prepare-only token. It stores the returned `preparedToken` in the
+workspace spool and returns only a staff-safe summary plus hidden pending id.
+
+`hotel_pms_create_reservation` loads the pending prepared token by hidden
+pending id after staff replies `sí`, then calls the PMS-owned
+`agent_create_reservation` tool with a guarded write token. It never accepts an
+arbitrary prepared payload from the model. Legacy explicit code confirmation is
+still accepted for backwards compatibility.
+
+The Hotel agent must never expose prepared tokens, payload hashes, prices,
+balances, deposits, or payment details.
 
 ## Runtime Env
 
