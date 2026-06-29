@@ -42,6 +42,7 @@ Use only:
 - `hotel_registro_list_documents`
 - `hotel_registro_extract_reservation`
 - `hotel_registro_prepare_submissions`
+- `hotel_registro_prepare_government_submission`
 - `hotel_registro_record_submission_status`
 - `hotel_pms_find_reservation`
 - `hotel_pms_get_reservation_context`
@@ -104,7 +105,7 @@ extraction per guest, and returns only safe structured results.
 
 ## Step 4 - Check submission readiness
 
-Call `hotel_registro_prepare_submissions` with:
+Call `hotel_registro_prepare_government_submission` with:
 
 ```json
 {
@@ -122,10 +123,14 @@ requested type:
 }
 ```
 
-If the plan status is `ready`, tell staff which submissions are due, but also
-say that live government submission is not enabled yet.
+This tool calls PMS's official government-payload preparation contract and
+returns only safe readiness metadata. PMS owns the field mapping; you do not
+assemble TRA/SIRE payloads yourself.
 
-If the plan status is `needs_info` or `blocked`, reply with the safest short
+If the status is `ready`, tell staff which submissions are due/prepared, but
+also say that live government submission is not enabled yet.
+
+If the status is `needs_info` or `blocked`, reply with the safest short
 reason and tell staff PMS needs review/correction first.
 
 Do not expose passport numbers, birth dates, document fetch tokens, file bytes,

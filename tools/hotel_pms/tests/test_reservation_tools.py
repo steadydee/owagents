@@ -520,6 +520,37 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "live_submission_not_enabled")
         self.assertEqual(server.validate_submission_state("pending"), "pending")
 
+    def test_safe_government_submission_summary_omits_payload_identity_fields(self):
+        summary = server.safe_government_submission_summary({
+            "registrationId": "reg-1",
+            "reservationId": "res-1",
+            "submissionType": "tra",
+            "status": "ready",
+            "idempotencyKey": "registro:reg-1:tra:government-v1",
+            "receiptGranularity": "registration",
+            "dueSubmissionTypes": ["tra", "sire_entrada"],
+            "payload": {
+                "reservation": {
+                    "arrivalDate": "2026-06-26",
+                    "departureDate": "2026-07-01",
+                },
+                "guests": [
+                    {
+                        "documentNumber": "A12345678",
+                        "birthDate": "1975-09-07",
+                        "firstName": "Sensitive",
+                    }
+                ],
+            },
+        })
+        self.assertEqual(summary["status"], "ready")
+        self.assertEqual(summary["guestCount"], 1)
+        rendered = str(summary)
+        self.assertNotIn("payload", rendered)
+        self.assertNotIn("A12345678", rendered)
+        self.assertNotIn("Sensitive", rendered)
+        self.assertNotIn("1975-09-07", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

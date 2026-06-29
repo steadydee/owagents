@@ -258,6 +258,21 @@ const toolSchemas = {
       additionalProperties: false,
     },
   },
+  hotel_registro_prepare_government_submission: {
+    description: "Ask PMS to prepare official TRA/SIRE payloads and return only safe readiness metadata. Does not expose government payloads or submit them.",
+    parameters: {
+      type: "object",
+      properties: {
+        reservationId: { type: ["string", "null"] },
+        registrationId: { type: ["string", "null"] },
+        submissionTypes: {
+          type: ["array", "null"],
+          items: { type: "string" },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
   hotel_registro_record_submission_status: {
     description: "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",
     parameters: {

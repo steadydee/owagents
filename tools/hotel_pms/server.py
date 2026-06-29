@@ -65,6 +65,7 @@ PMS_REGISTRO_READ_TOOLS = (
     "registro_list_guests",
     "registro_list_documents",
     "registro_fetch_document",
+    "registro_prepare_government_submission",
 )
 
 PMS_REGISTRO_WRITE_TOOLS = (
@@ -2325,6 +2326,101 @@ def tool_hotel_registro_prepare_submissions(args: dict[str, Any]) -> dict[str, A
     }
 
 
+def safe_government_submission_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ToolError("pms_contract_error", "PMS government submission response was malformed.")
+    safe_keys = (
+        "registrationId",
+        "reservationId",
+        "submissionType",
+        "status",
+        "idempotencyKey",
+        "receiptGranularity",
+        "dueSubmissionTypes",
+        "missingFields",
+        "warnings",
+    )
+    summary = {key: staff_safe_value(value.get(key)) for key in safe_keys if value.get(key) not in (None, "", [], {})}
+    payload = value.get("payload")
+    if isinstance(payload, dict):
+        guests = payload.get("guests")
+        if isinstance(guests, list):
+            summary["guestCount"] = len(guests)
+        reservation = payload.get("reservation")
+        if isinstance(reservation, dict):
+            for key in ("arrivalDate", "departureDate"):
+                if reservation.get(key):
+                    summary[key] = staff_safe_value(reservation.get(key))
+    return {key: child for key, child in summary.items() if child not in (None, "", [], {})}
+
+
+def tool_hotel_registro_prepare_government_submission(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    reservation_id = validate_safe_id("reservationId", args.get("reservationId"), required=False)
+    registration_id = validate_safe_id("registrationId", args.get("registrationId"), required=False)
+    requested = validate_submission_types(args.get("submissionTypes"))
+    if not reservation_id and not registration_id:
+        raise ToolError("invalid_input", "reservationId or registrationId is required.")
+
+    registration_lookup: dict[str, Any] = {}
+    if reservation_id:
+        registration_lookup = pms_tool(config, "registro_get_by_reservation", {"reservationId": reservation_id}, profile="registro_read")
+        registration_id = registration_id_from(registration_lookup)
+    elif registration_id:
+        registration_lookup = pms_tool(config, "registro_get", {"registrationId": registration_id}, profile="registro_read")
+        record = registration_record_from(registration_lookup)
+        if isinstance(record.get("reservationId"), str):
+            reservation_id = record["reservationId"]
+
+    if not registration_id:
+        return {
+            "ok": True,
+            "reservationId": reservation_id,
+            "registrationId": None,
+            "status": "blocked",
+            "blockers": [{"scope": "registration", "reason": "no_registration"}],
+            "submissions": [],
+        }
+
+    guests_result = pms_tool(config, "registro_list_guests", {"registrationId": registration_id}, profile="registro_read")
+    guests = guests_from_registro_response(guests_result, registration_id)
+    plan = build_registro_submission_plan(registration_lookup, guests, requested_submission_types=requested or None)
+    if plan.get("status") != "ready":
+        return {
+            "ok": True,
+            "reservationId": reservation_id,
+            "registrationId": registration_id,
+            "status": plan.get("status"),
+            "plan": plan,
+            "submissions": [],
+        }
+
+    submissions: list[dict[str, Any]] = []
+    for submission_type in plan.get("requestedSubmissionTypes") or []:
+        prepared = pms_tool(
+            config,
+            "registro_prepare_government_submission",
+            {"registrationId": registration_id, "submissionType": submission_type},
+            profile="registro_read",
+        )
+        submissions.append(safe_government_submission_summary(prepared))
+
+    return {
+        "ok": True,
+        "reservationId": reservation_id,
+        "registrationId": registration_id,
+        "status": "ready",
+        "guestCount": plan.get("guestCount"),
+        "readyGuestCount": plan.get("readyGuestCount"),
+        "dueSubmissionTypes": plan.get("dueSubmissionTypes"),
+        "submissions": submissions,
+        "warnings": [
+            "PMS government payloads are prepared but not exposed to the model.",
+            "Live SIRE/TRA submission is still disabled until the government adapter is configured.",
+        ],
+    }
+
+
 def tool_hotel_registro_record_submission_status(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     registration_id = validate_safe_id("registrationId", args.get("registrationId"))
@@ -2630,6 +2726,22 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
             "additionalProperties": False,
         },
         tool_hotel_registro_prepare_submissions,
+    ),
+    "hotel_registro_prepare_government_submission": (
+        "Ask PMS to prepare official TRA/SIRE payloads and return only safe readiness metadata. Does not expose government payloads or submit them.",
+        {
+            "type": "object",
+            "properties": {
+                "reservationId": {"type": ["string", "null"]},
+                "registrationId": {"type": ["string", "null"]},
+                "submissionTypes": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                },
+            },
+            "additionalProperties": False,
+        },
+        tool_hotel_registro_prepare_government_submission,
     ),
     "hotel_registro_record_submission_status": (
         "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",

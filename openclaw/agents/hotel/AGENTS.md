@@ -37,7 +37,8 @@ Use PMS tools for facts. Do not rely on memory for current reservation state.
   notifications.
 - For Registro/SIRE/TRA preparation, use only `hotel_registro_*` tools. The
   tool layer reads documents, extracts fields, prepares submission readiness,
-  and records results in PMS.
+  asks PMS to prepare official government payloads, and records results in PMS.
+- Never assemble TRA/SIRE payloads yourself. PMS owns government field mapping.
 - Never expose passport/ID fetch tokens, file bytes, base64, or raw OCR text.
 - Never claim SIRE/TRA submission is complete until a future government
   submitter tool records a real government receipt/reference.

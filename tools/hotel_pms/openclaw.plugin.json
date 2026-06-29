@@ -28,6 +28,7 @@
       "hotel_registro_list_documents",
       "hotel_registro_extract_reservation",
       "hotel_registro_prepare_submissions",
+      "hotel_registro_prepare_government_submission",
       "hotel_registro_record_submission_status",
       "hotel_telegram_send_message",
       "hotel_memory_log"

@@ -30,6 +30,7 @@ two-step PMS-prepared token and simple staff `sí` confirmation.
 - `hotel_registro_list_documents`
 - `hotel_registro_extract_reservation`
 - `hotel_registro_prepare_submissions`
+- `hotel_registro_prepare_government_submission`
 - `hotel_registro_record_submission_status`
 - `hotel_telegram_send_message`
 - `hotel_memory_log`
@@ -58,6 +59,12 @@ extraction results back to PMS.
 `hotel_registro_prepare_submissions` checks whether the PMS Registro record is
 validated and ready for due TRA/SIRE submission types. It returns only a
 staff-safe staged plan; it does not submit to government systems.
+
+`hotel_registro_prepare_government_submission` calls the PMS-owned
+`registro_prepare_government_submission` tool for each due/requested submission
+type. PMS prepares the official payload; the Hotel wrapper returns only
+staff-safe metadata and never exposes the payload, guest identity fields, file
+bytes, or fetch tokens to the model.
 
 `hotel_registro_record_submission_status` can record `pending`, `failed`, or
 `needs_info` status for a TRA/SIRE attempt in PMS. It deliberately rejects
