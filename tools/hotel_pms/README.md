@@ -31,6 +31,7 @@ two-step PMS-prepared token and simple staff `sí` confirmation.
 - `hotel_registro_extract_reservation`
 - `hotel_registro_prepare_submissions`
 - `hotel_registro_prepare_government_submission`
+- `hotel_registro_submit_government`
 - `hotel_registro_record_submission_status`
 - `hotel_telegram_send_message`
 - `hotel_memory_log`
@@ -66,10 +67,16 @@ type. PMS prepares the official payload; the Hotel wrapper returns only
 staff-safe metadata and never exposes the payload, guest identity fields, file
 bytes, or fetch tokens to the model.
 
+`hotel_registro_submit_government` is the only path that can attempt a live
+government submission. In `dry_run` mode it verifies readiness only. In `submit`
+mode it requires `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED=1`; TRA also requires
+a configured official endpoint/token, and SIRE remains blocked until its
+adapter is verified. The tool records `submitted` in PMS only after receiving a
+real receipt/reference.
+
 `hotel_registro_record_submission_status` can record `pending`, `failed`, or
 `needs_info` status for a TRA/SIRE attempt in PMS. It deliberately rejects
-`submitted` until a future government submitter tool records a real
-receipt/reference from the official system.
+`submitted`; submitted status is reserved for the receipt-gated submitter.
 
 Never expose document numbers, fetch tokens, file bytes, base64, or raw OCR in
 Telegram or agent memory.
@@ -82,5 +89,9 @@ Telegram or agent memory.
 - `HOTEL_TELEGRAM_BOT_TOKEN`
 - `HOTEL_TELEGRAM_NOTIFY_CHAT_ID`
 - `HOTEL_TELEGRAM_NOTIFY_THREAD_ID` optional
+- `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED` optional, default `0`
+- `TRA_SUBMISSION_URL` or `TRA_API_URL` optional
+- `TRA_API_TOKEN` or `TRA_API_TOKEN_FILE` optional
+- `SIRE_LOGIN_URL` optional
 
 Tokens and secrets are runtime-only. Do not commit them.

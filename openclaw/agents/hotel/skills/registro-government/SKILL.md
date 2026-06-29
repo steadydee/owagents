@@ -43,6 +43,7 @@ Use only:
 - `hotel_registro_extract_reservation`
 - `hotel_registro_prepare_submissions`
 - `hotel_registro_prepare_government_submission`
+- `hotel_registro_submit_government`
 - `hotel_registro_record_submission_status`
 - `hotel_pms_find_reservation`
 - `hotel_pms_get_reservation_context`
@@ -51,11 +52,13 @@ Use only:
 
 # Boundaries
 
-- Do not submit to SIRE or TRA yet. The current tool can only stage readiness
-  and record pending/failed/needs-info status in PMS.
+- Do not use browser, shell, or raw government portals directly. All official
+  submission attempts must go through `hotel_registro_submit_government`.
+- Live submission may be disabled or partially configured. If the submitter
+  reports `blocked`, say exactly that and do not imply success.
 - Do not say a government submission is complete.
-- Do not record `submitted` status unless a future government submitter tool
-  returns a real receipt/reference.
+- Do not record or claim `submitted` unless `hotel_registro_submit_government`
+  returns `submitStatus: submitted` with a receipt/reference.
 - Do not invent legal identity fields.
 - Do not ask staff to type document numbers, nationality, or birth dates before
   trying extraction from the uploaded photo.
@@ -128,7 +131,7 @@ returns only safe readiness metadata. PMS owns the field mapping; you do not
 assemble TRA/SIRE payloads yourself.
 
 If the status is `ready`, tell staff which submissions are due/prepared, but
-also say that live government submission is not enabled yet.
+do not claim that anything was sent.
 
 If the status is `needs_info` or `blocked`, reply with the safest short
 reason and tell staff PMS needs review/correction first.
@@ -136,7 +139,41 @@ reason and tell staff PMS needs review/correction first.
 Do not expose passport numbers, birth dates, document fetch tokens, file bytes,
 base64, or raw OCR text in Telegram.
 
-## Step 5 - Optional status record
+## Step 5 - Submission dry-run or live attempt
+
+If staff asks whether the record is ready, or asks to check before sending,
+call `hotel_registro_submit_government` with:
+
+```json
+{
+  "reservationId": "<reservationId>",
+  "mode": "dry_run"
+}
+```
+
+If staff explicitly asks to send/submit to TRA or SIRE, call the same tool with:
+
+```json
+{
+  "reservationId": "<reservationId>",
+  "mode": "submit"
+}
+```
+
+Include `submissionTypes` only when staff asked for specific types.
+
+The submitter is receipt-gated:
+
+- TRA is only attempted if the TRA adapter is configured.
+- SIRE is blocked until its adapter is configured and verified.
+- PMS is marked submitted only if the tool gets a real receipt/reference.
+
+If the tool returns `blocked`, explain what is blocked.
+If it returns `submitted`, mention the submission type and receipt/reference.
+If it returns `partial_failure`, say which type failed and that PMS was not
+marked submitted for that failed type.
+
+## Step 6 - Optional status record
 
 Only use `hotel_registro_record_submission_status` when staff explicitly asks
 to record that a submission is pending, failed, or needs info.
@@ -149,7 +186,7 @@ Allowed states:
 
 Do not attempt to pass `submitted`; the tool will reject it.
 
-## Step 6 - Reply to staff
+## Step 7 - Reply to staff
 
 Reply in Spanish unless the staff member used English.
 
@@ -187,14 +224,43 @@ Registro listo para envío.
 Huéspedes listos: 2/2
 Pendiente: TRA y SIRE entrada.
 
-Todavía no envié nada a SIRE/TRA porque el enviador oficial no está habilitado.
+Todavía no envié nada a SIRE/TRA.
+```
+
+If a dry-run says the data is ready:
+
+```text
+Registro listo para envío.
+
+Huéspedes listos: 2/2
+Preparado: TRA y SIRE entrada.
+
+No envié nada; fue solo una verificación.
+```
+
+If submit is blocked:
+
+```text
+No pude enviar todavía.
+
+TRA/SIRE está listo en PMS, pero el enviador oficial no está configurado/verificado para este tipo.
+No marqué nada como enviado.
+```
+
+If a live adapter returns a receipt:
+
+```text
+Envío registrado.
+
+TRA: enviado con recibo <referencia>.
+PMS quedó actualizado con el recibo.
 ```
 
 Keep the reply operational. Do not paste raw extracted document numbers into
 Telegram unless staff specifically asks for a brief verification. Prefer PMS as
 the review surface for sensitive identity details.
 
-## Step 7 - Memory
+## Step 8 - Memory
 
 Call `hotel_memory_log` with one concise line:
 
@@ -204,6 +270,6 @@ Registro run for <reservationId>: <guestCount> guests, <documentCount> documents
 
 # Government submission boundary
 
-Actual SIRE/TRA submission will be a later step after credentials, selectors,
-and government-system behavior are verified. For now, this skill prepares
-extraction and submission readiness only.
+Actual SIRE/TRA submission is only allowed through the configured submitter
+tool. Never drive the government websites directly from the model, and never
+manually mark a submission as complete without a government receipt/reference.

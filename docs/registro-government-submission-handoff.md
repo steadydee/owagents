@@ -1,9 +1,9 @@
 # Registro Government Submission Handoff
 
 This note describes the current OpenClaw Hotel agent boundary after PMS added
-government-submission payload preparation. Live SIRE/TRA automation is still
-blocked on the government adapter credentials/selectors/receipt behavior, not
-on PMS payload preparation.
+government-submission payload preparation. The agent now includes a guarded
+submitter wrapper, but live submission remains disabled until the government
+adapter credentials/endpoints/selectors are configured and verified.
 
 ## Agent Side Now Built
 
@@ -30,11 +30,24 @@ The Hotel OpenClaw agent has these Registro tools:
     bytes, fetch tokens, raw OCR, and government form data from model context.
   - Does not submit to government systems.
 
+- `hotel_registro_submit_government`
+  - Calls PMS `registro_prepare_government_submission` internally.
+  - `mode: dry_run` verifies readiness and returns safe metadata only.
+  - `mode: submit` is receipt-gated and requires the runtime flag
+    `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED=1`.
+  - TRA can submit only when `TRA_SUBMISSION_URL`/`TRA_API_URL` and
+    `TRA_API_TOKEN` are configured.
+  - SIRE is still blocked until its browser/API adapter is configured and
+    verified.
+  - PMS is marked submitted only after a real receipt/reference is returned.
+  - It never returns guest identity payloads to the model.
+
 - `hotel_registro_record_submission_status`
   - Records `pending`, `failed`, or `needs_info` attempts in PMS.
   - Deliberately rejects `submitted`.
-  - A future live submitter must be the only path that records `submitted`,
-    and only after receiving a real government receipt/reference.
+  - `hotel_registro_submit_government` is the only agent-side path that can
+    record `submitted`, and only after receiving a real government
+    receipt/reference.
 
 ## PMS Contract Implemented
 
@@ -99,24 +112,26 @@ guests: 2 ready / 2 total
 PMS now requires a real receipt/reference for `submitted` attempts and handles
 idempotent retries safely.
 
-The Hotel wrapper currently records only:
+The manual status tool records only:
 
 - `pending`
 - `failed`
 - `needs_info`
 
-It rejects `submitted` because no live government submitter is enabled yet.
+It rejects `submitted` because submitted status must come from the receipt-gated
+submitter.
 
 ## Government Submitter Boundary
 
-The live submitter should remain agent-side or in a narrow worker controlled by
-the agent runtime. PMS should not store government portal credentials.
+The live submitter remains agent-side in the narrow Hotel PMS tool runtime. PMS
+does not store government portal credentials.
 
 Flow:
 
 ```text
 Hotel agent
   -> PMS registro_prepare_government_submission
+  -> hotel_registro_submit_government
   -> SIRE/TRA adapter with credentials/selectors/API
   -> PMS registro_record_submission(state=submitted, receiptReference=...)
 ```
@@ -124,21 +139,32 @@ Hotel agent
 The Hotel agent must not claim completion until the final PMS recording step
 contains a real official receipt/reference.
 
+## Runtime Configuration
+
+Live submission is off by default.
+
+```text
+REGISTRO_GOVERNMENT_SUBMITTER_ENABLED=0
+TRA_SUBMISSION_URL=<official TRA endpoint when provided>
+TRA_API_TOKEN_FILE=~/.openclaw-hotel/secrets/tra-api-token
+SIRE_LOGIN_URL=https://apps.migracioncolombia.gov.co/sire/public/login.jsf
+```
+
+Do not enable `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED` until at least one adapter
+has been verified in a non-destructive run.
+
 ## Remaining Non-PMS Work
 
-Build the government adapter after we have verified credentials and behavior for
-TRA and SIRE:
+Finish the government adapters after we have verified credentials and behavior:
 
-- where credentials live in the Mac mini runtime
-- whether TRA has an API or only browser submission
-- SIRE post-login selectors and required fields
+- official TRA API endpoint, auth scheme, payload contract, and receipt shape
+- SIRE credentials plus browser/API selectors and receipt shape
 - entrada versus salida flow
-- receipt/reference shape
 - duplicate behavior
 - failure messages and retry safety
 
 Until then, the production-safe flow is:
 
 ```text
-Hotel agent -> extract/validate Registro -> PMS payload prep -> staff sees ready/not ready
+Hotel agent -> extract/validate Registro -> dry-run government submitter -> staff sees ready/not ready
 ```

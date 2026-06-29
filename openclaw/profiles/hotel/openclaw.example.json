@@ -64,6 +64,7 @@
             "hotel_registro_extract_reservation",
             "hotel_registro_prepare_submissions",
             "hotel_registro_prepare_government_submission",
+            "hotel_registro_submit_government",
             "hotel_registro_record_submission_status",
             "hotel_telegram_send_message",
             "hotel_memory_log"
@@ -107,6 +108,10 @@
           "OW_AGENT_TOKEN_SECRET": "<set locally only>",
           "OPENAI_API_KEY_FILE": "~/.openclaw-hotel/secrets/openai-api-key",
           "REGISTRO_VISION_MODEL": "gpt-4o",
+          "REGISTRO_GOVERNMENT_SUBMITTER_ENABLED": "0",
+          "TRA_SUBMISSION_URL": "<official_tra_endpoint_when_verified>",
+          "TRA_API_TOKEN_FILE": "~/.openclaw-hotel/secrets/tra-api-token",
+          "SIRE_LOGIN_URL": "https://apps.migracioncolombia.gov.co/sire/public/login.jsf",
           "HOTEL_TIMEZONE": "America/Bogota",
           "HOTEL_TELEGRAM_BOT_TOKEN": "<set locally only>",
           "HOTEL_TELEGRAM_NOTIFY_CHAT_ID": "<hotel_group_chat_id>",

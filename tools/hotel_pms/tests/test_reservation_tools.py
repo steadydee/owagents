@@ -551,6 +551,221 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertNotIn("Sensitive", rendered)
         self.assertNotIn("1975-09-07", rendered)
 
+    def test_submit_mode_validation(self):
+        self.assertEqual(server.validate_submit_mode(None), "dry_run")
+        self.assertEqual(server.validate_submit_mode("submit"), "submit")
+        with self.assertRaises(server.ToolError):
+            server.validate_submit_mode("send")
+
+    def test_receipt_reference_from_response_supports_common_shapes(self):
+        self.assertEqual(server.receipt_reference_from_response({"radicado": "RAD-123"}), "RAD-123")
+        self.assertEqual(server.receipt_reference_from_response({"data": {"numeroRadicado": "NR-456"}}), "NR-456")
+        self.assertIsNone(server.receipt_reference_from_response({"ok": True}))
+
+    def test_government_submitter_dry_run_omits_payload_identity_fields(self):
+        calls: list[tuple[str, dict, str]] = []
+
+        def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
+            calls.append((tool_name, input_payload or {}, profile))
+            if tool_name == "registro_get_by_reservation":
+                return {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["tra"]}
+            if tool_name == "registro_list_guests":
+                return {"guests": [{"registrationGuestId": "guest-1", "submissionStatus": "ready", "extractionStatus": "extracted", "missingFields": []}]}
+            if tool_name == "registro_prepare_government_submission":
+                return {
+                    "registrationId": "reg-1",
+                    "reservationId": "res-1",
+                    "submissionType": input_payload["submissionType"],
+                    "status": "ready",
+                    "idempotencyKey": "registro:reg-1:tra",
+                    "payload": {
+                        "guests": [{"documentNumber": "A12345678", "birthDate": "1975-09-07", "firstName": "Sensitive"}],
+                        "reservation": {"arrivalDate": "2026-06-26"},
+                    },
+                }
+            raise AssertionError(f"unexpected PMS tool {tool_name}")
+
+        old_load = server.load_config
+        old_pms = server.pms_tool
+        try:
+            server.load_config = lambda: {}
+            server.pms_tool = fake_pms_tool
+            result = server.tool_hotel_registro_submit_government({"reservationId": "res-1", "mode": "dry_run"})
+        finally:
+            server.load_config = old_load
+            server.pms_tool = old_pms
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["mode"], "dry_run")
+        self.assertEqual(result["results"][0]["guestCount"], 1)
+        rendered = str(result)
+        self.assertNotIn("A12345678", rendered)
+        self.assertNotIn("1975-09-07", rendered)
+        self.assertNotIn("Sensitive", rendered)
+        self.assertFalse(any(call[0] == "registro_record_submission" for call in calls))
+
+    def test_government_submitter_submit_disabled_does_not_record(self):
+        calls: list[tuple[str, dict, str]] = []
+
+        def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
+            calls.append((tool_name, input_payload or {}, profile))
+            if tool_name == "registro_get_by_reservation":
+                return {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["tra"]}
+            if tool_name == "registro_list_guests":
+                return {"guests": [{"registrationGuestId": "guest-1", "submissionStatus": "ready", "extractionStatus": "extracted", "missingFields": []}]}
+            if tool_name == "registro_prepare_government_submission":
+                return {
+                    "registrationId": "reg-1",
+                    "submissionType": "tra",
+                    "status": "ready",
+                    "payload": {"guests": [{"documentNumber": "A12345678"}]},
+                }
+            raise AssertionError(f"unexpected PMS tool {tool_name}")
+
+        old_load = server.load_config
+        old_pms = server.pms_tool
+        old_enabled = server.government_submitter_enabled
+        try:
+            server.load_config = lambda: {}
+            server.pms_tool = fake_pms_tool
+            server.government_submitter_enabled = lambda config: False
+            result = server.tool_hotel_registro_submit_government({"reservationId": "res-1", "mode": "submit"})
+        finally:
+            server.load_config = old_load
+            server.pms_tool = old_pms
+            server.government_submitter_enabled = old_enabled
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["results"][0]["reason"], "government_submitter_disabled")
+        self.assertFalse(any(call[0] == "registro_record_submission" for call in calls))
+
+    def test_government_submitter_tra_success_records_submitted_only_with_receipt(self):
+        recorded: list[dict] = []
+
+        def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
+            if tool_name == "registro_get_by_reservation":
+                return {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["tra"]}
+            if tool_name == "registro_list_guests":
+                return {"guests": [{"registrationGuestId": "guest-1", "submissionStatus": "ready", "extractionStatus": "extracted", "missingFields": []}]}
+            if tool_name == "registro_prepare_government_submission":
+                return {
+                    "registrationId": "reg-1",
+                    "reservationId": "res-1",
+                    "submissionType": "tra",
+                    "status": "ready",
+                    "idempotencyKey": "registro:reg-1:tra",
+                    "payload": {"guests": [{"documentNumber": "A12345678"}]},
+                }
+            if tool_name == "registro_record_submission":
+                recorded.append(input_payload or {})
+                return {"state": input_payload["state"], "receiptReference": input_payload["receiptReference"]}
+            raise AssertionError(f"unexpected PMS tool {tool_name}")
+
+        old_load = server.load_config
+        old_pms = server.pms_tool
+        old_enabled = server.government_submitter_enabled
+        old_tra = server.call_tra_submitter
+        try:
+            server.load_config = lambda: {}
+            server.pms_tool = fake_pms_tool
+            server.government_submitter_enabled = lambda config: True
+            server.call_tra_submitter = lambda config, prepared: {
+                "ok": True,
+                "status": "submitted",
+                "receiptReference": "TRA-RECEIPT-1",
+                "responseSummary": {"radicado": "TRA-RECEIPT-1"},
+            }
+            result = server.tool_hotel_registro_submit_government({"reservationId": "res-1", "mode": "submit"})
+        finally:
+            server.load_config = old_load
+            server.pms_tool = old_pms
+            server.government_submitter_enabled = old_enabled
+            server.call_tra_submitter = old_tra
+
+        self.assertEqual(result["status"], "submitted")
+        self.assertEqual(result["results"][0]["receiptReference"], "TRA-RECEIPT-1")
+        self.assertEqual(recorded[0]["state"], "submitted")
+        self.assertEqual(recorded[0]["receiptReference"], "TRA-RECEIPT-1")
+        self.assertEqual(recorded[0]["idempotencyKey"], "registro:reg-1:tra")
+
+    def test_government_submitter_tra_missing_receipt_records_failed_not_submitted(self):
+        recorded: list[dict] = []
+
+        def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
+            if tool_name == "registro_get_by_reservation":
+                return {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["tra"]}
+            if tool_name == "registro_list_guests":
+                return {"guests": [{"registrationGuestId": "guest-1", "submissionStatus": "ready", "extractionStatus": "extracted", "missingFields": []}]}
+            if tool_name == "registro_prepare_government_submission":
+                return {
+                    "registrationId": "reg-1",
+                    "submissionType": "tra",
+                    "status": "ready",
+                    "idempotencyKey": "registro:reg-1:tra",
+                    "payload": {"guests": [{"documentNumber": "A12345678"}]},
+                }
+            if tool_name == "registro_record_submission":
+                recorded.append(input_payload or {})
+                return {"state": input_payload["state"]}
+            raise AssertionError(f"unexpected PMS tool {tool_name}")
+
+        old_load = server.load_config
+        old_pms = server.pms_tool
+        old_enabled = server.government_submitter_enabled
+        old_tra = server.call_tra_submitter
+        try:
+            server.load_config = lambda: {}
+            server.pms_tool = fake_pms_tool
+            server.government_submitter_enabled = lambda config: True
+            server.call_tra_submitter = lambda config, prepared: {
+                "ok": False,
+                "status": "failed",
+                "reason": "tra_response_missing_receipt",
+                "responseSummary": {"ok": True},
+            }
+            result = server.tool_hotel_registro_submit_government({"reservationId": "res-1", "mode": "submit"})
+        finally:
+            server.load_config = old_load
+            server.pms_tool = old_pms
+            server.government_submitter_enabled = old_enabled
+            server.call_tra_submitter = old_tra
+
+        self.assertEqual(result["status"], "partial_failure")
+        self.assertEqual(result["results"][0]["submitStatus"], "failed")
+        self.assertEqual(recorded[0]["state"], "failed")
+        self.assertNotIn("receiptReference", recorded[0])
+
+    def test_government_submitter_sire_is_blocked_without_adapter(self):
+        def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
+            if tool_name == "registro_get_by_reservation":
+                return {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["sire_entrada"]}
+            if tool_name == "registro_list_guests":
+                return {"guests": [{"registrationGuestId": "guest-1", "submissionStatus": "ready", "extractionStatus": "extracted", "missingFields": []}]}
+            if tool_name == "registro_prepare_government_submission":
+                return {
+                    "registrationId": "reg-1",
+                    "submissionType": "sire_entrada",
+                    "status": "ready",
+                    "payload": {"guests": [{"documentNumber": "A12345678"}]},
+                }
+            raise AssertionError(f"unexpected PMS tool {tool_name}")
+
+        old_load = server.load_config
+        old_pms = server.pms_tool
+        old_enabled = server.government_submitter_enabled
+        try:
+            server.load_config = lambda: {}
+            server.pms_tool = fake_pms_tool
+            server.government_submitter_enabled = lambda config: True
+            result = server.tool_hotel_registro_submit_government({"reservationId": "res-1", "mode": "submit"})
+        finally:
+            server.load_config = old_load
+            server.pms_tool = old_pms
+            server.government_submitter_enabled = old_enabled
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["results"][0]["reason"], "sire_submitter_not_configured")
+
 
 if __name__ == "__main__":
     unittest.main()

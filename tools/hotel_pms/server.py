@@ -85,6 +85,8 @@ REGISTRO_DOCUMENT_CONTENT_TYPES = {
 
 REGISTRO_SUBMISSION_TYPES = ("tra", "sire_entrada", "sire_salida")
 REGISTRO_STAFF_RECORDABLE_STATES = ("pending", "failed", "needs_info")
+REGISTRO_SUBMIT_MODES = ("dry_run", "submit")
+DEFAULT_SIRE_LOGIN_URL = "https://apps.migracioncolombia.gov.co/sire/public/login.jsf"
 
 OCR_MONTHS = {
     "JAN": 1,
@@ -166,6 +168,18 @@ def cfg_file(config: dict[str, Any], key: str) -> str | None:
         return None
     value = Path(path).expanduser().read_text().strip()
     return value or None
+
+
+def cfg_bool(config: dict[str, Any], key: str, default: bool = False) -> bool:
+    value = cfg_env(config, key)
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ToolError("config_invalid", f"{key} must be a boolean.")
 
 
 def validate_text(name: str, value: Any, required: bool = False, max_len: int = 50000) -> str | None:
@@ -2354,6 +2368,191 @@ def safe_government_submission_summary(value: Any) -> dict[str, Any]:
     return {key: child for key, child in summary.items() if child not in (None, "", [], {})}
 
 
+def validate_submit_mode(value: Any) -> str:
+    text = str(value or "dry_run").strip().lower().replace("-", "_")
+    if text not in REGISTRO_SUBMIT_MODES:
+        raise ToolError("invalid_input", "mode must be dry_run or submit.")
+    return text
+
+
+def government_submitter_enabled(config: dict[str, Any]) -> bool:
+    return cfg_bool(config, "REGISTRO_GOVERNMENT_SUBMITTER_ENABLED", default=False)
+
+
+def tra_submission_url(config: dict[str, Any]) -> str | None:
+    raw = cfg_env(config, "TRA_SUBMISSION_URL") or cfg_env(config, "TRA_API_URL")
+    if not raw:
+        return None
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ToolError("config_invalid", "TRA submission URL must be an https URL.")
+    return raw
+
+
+def tra_api_token(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "TRA_API_TOKEN") or cfg_env(config, "TRA_API_TOKEN")
+
+
+def sire_login_url(config: dict[str, Any]) -> str:
+    raw = cfg_env(config, "SIRE_LOGIN_URL") or DEFAULT_SIRE_LOGIN_URL
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ToolError("config_invalid", "SIRE login URL must be an https URL.")
+    return raw
+
+
+def prepared_government_payload(value: dict[str, Any]) -> dict[str, Any]:
+    payload = value.get("payload")
+    if not isinstance(payload, dict) or not payload:
+        raise ToolError("pms_contract_error", "PMS prepared submission did not include an internal payload.")
+    return payload
+
+
+def receipt_reference_from_response(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    candidates: list[Any] = [
+        value.get("receiptReference"),
+        value.get("receipt"),
+        value.get("reference"),
+        value.get("referenceCode"),
+        value.get("radicado"),
+        value.get("numeroRadicado"),
+        value.get("confirmationNumber"),
+        value.get("submissionId"),
+        value.get("id"),
+    ]
+    data = value.get("data")
+    if isinstance(data, dict):
+        candidates.extend([
+            data.get("receiptReference"),
+            data.get("receipt"),
+            data.get("reference"),
+            data.get("referenceCode"),
+            data.get("radicado"),
+            data.get("numeroRadicado"),
+            data.get("confirmationNumber"),
+            data.get("submissionId"),
+            data.get("id"),
+        ])
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if text:
+            return validate_text("receiptReference", text, max_len=200)
+    return None
+
+
+def safe_submission_response_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    allowed = (
+        "ok",
+        "success",
+        "status",
+        "code",
+        "message",
+        "receiptReference",
+        "receipt",
+        "reference",
+        "referenceCode",
+        "radicado",
+        "numeroRadicado",
+        "confirmationNumber",
+        "submissionId",
+        "id",
+    )
+    summary = {key: staff_safe_value(value.get(key)) for key in allowed if value.get(key) not in (None, "", [], {})}
+    data = value.get("data")
+    if isinstance(data, dict):
+        nested = {key: staff_safe_value(data.get(key)) for key in allowed if data.get(key) not in (None, "", [], {})}
+        if nested:
+            summary["data"] = nested
+    return {key: child for key, child in summary.items() if child not in (None, "", [], {})}
+
+
+def record_government_submission(
+    config: dict[str, Any],
+    *,
+    registration_id: str,
+    submission_type: str,
+    state: str,
+    receipt_reference: str | None = None,
+    idempotency_key: str | None = None,
+    payload_summary: dict[str, Any] | None = None,
+    response_summary: dict[str, Any] | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> Any:
+    payload = clean_payload({
+        "registrationId": registration_id,
+        "submissionType": submission_type,
+        "state": state,
+        "attemptedAt": now_iso(),
+        "receiptReference": receipt_reference,
+        "idempotencyKey": idempotency_key,
+        "errorCode": error_code,
+        "errorMessage": error_message,
+        "payloadSummary": clean_payload({
+            "source": "hotel_registro_submit_government",
+            **(payload_summary or {}),
+        }),
+        "responseSummary": clean_payload({
+            "recordedBy": "hotel_agent",
+            "governmentSubmitted": state == "submitted",
+            **(response_summary or {}),
+        }),
+    })
+    return pms_tool(config, "registro_record_submission", payload, profile="registro_write")
+
+
+def call_tra_submitter(config: dict[str, Any], prepared: dict[str, Any]) -> dict[str, Any]:
+    url = tra_submission_url(config)
+    token = tra_api_token(config)
+    if not url or not token:
+        return {
+            "ok": False,
+            "status": "blocked",
+            "reason": "tra_adapter_not_configured",
+        }
+    response = http_json(
+        url,
+        prepared_government_payload(prepared),
+        {
+            "Authorization": f"Bearer {token}",
+            "x-ow-request-source": "hotel_registro_submitter",
+            "x-ow-correlation-id": f"hotel-tra-{int(time.time())}-{os.getpid()}",
+        },
+        timeout=45,
+    )
+    receipt = receipt_reference_from_response(response)
+    if not receipt:
+        return {
+            "ok": False,
+            "status": "failed",
+            "reason": "tra_response_missing_receipt",
+            "responseSummary": safe_submission_response_summary(response),
+        }
+    return {
+        "ok": True,
+        "status": "submitted",
+        "receiptReference": receipt,
+        "responseSummary": safe_submission_response_summary(response),
+    }
+
+
+def blocked_sire_submitter(config: dict[str, Any], submission_type: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "blocked",
+        "reason": "sire_submitter_not_configured",
+        "submissionType": submission_type,
+        "loginUrl": sire_login_url(config),
+        "note": "SIRE requires configured credentials and verified browser/API automation before live submission.",
+    }
+
+
 def tool_hotel_registro_prepare_government_submission(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     reservation_id = validate_safe_id("reservationId", args.get("reservationId"), required=False)
@@ -2417,6 +2616,174 @@ def tool_hotel_registro_prepare_government_submission(args: dict[str, Any]) -> d
         "warnings": [
             "PMS government payloads are prepared but not exposed to the model.",
             "Live SIRE/TRA submission is still disabled until the government adapter is configured.",
+        ],
+    }
+
+
+def tool_hotel_registro_submit_government(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    reservation_id = validate_safe_id("reservationId", args.get("reservationId"), required=False)
+    registration_id = validate_safe_id("registrationId", args.get("registrationId"), required=False)
+    requested = validate_submission_types(args.get("submissionTypes"))
+    mode = validate_submit_mode(args.get("mode"))
+    if not reservation_id and not registration_id:
+        raise ToolError("invalid_input", "reservationId or registrationId is required.")
+
+    registration_lookup: dict[str, Any] = {}
+    if reservation_id:
+        registration_lookup = pms_tool(config, "registro_get_by_reservation", {"reservationId": reservation_id}, profile="registro_read")
+        registration_id = registration_id_from(registration_lookup)
+    elif registration_id:
+        registration_lookup = pms_tool(config, "registro_get", {"registrationId": registration_id}, profile="registro_read")
+        record = registration_record_from(registration_lookup)
+        if isinstance(record.get("reservationId"), str):
+            reservation_id = record["reservationId"]
+
+    if not registration_id:
+        return {
+            "ok": True,
+            "reservationId": reservation_id,
+            "registrationId": None,
+            "mode": mode,
+            "status": "blocked",
+            "blockers": [{"scope": "registration", "reason": "no_registration"}],
+            "results": [],
+        }
+
+    guests_result = pms_tool(config, "registro_list_guests", {"registrationId": registration_id}, profile="registro_read")
+    guests = guests_from_registro_response(guests_result, registration_id)
+    plan = build_registro_submission_plan(registration_lookup, guests, requested_submission_types=requested or None)
+    if plan.get("status") != "ready":
+        return {
+            "ok": True,
+            "reservationId": reservation_id,
+            "registrationId": registration_id,
+            "mode": mode,
+            "status": plan.get("status"),
+            "plan": plan,
+            "results": [],
+        }
+
+    prepared_items: list[dict[str, Any]] = []
+    for submission_type in plan.get("requestedSubmissionTypes") or []:
+        prepared = pms_tool(
+            config,
+            "registro_prepare_government_submission",
+            {"registrationId": registration_id, "submissionType": submission_type},
+            profile="registro_read",
+        )
+        prepared_items.append(prepared)
+
+    if mode == "dry_run":
+        return {
+            "ok": True,
+            "reservationId": reservation_id,
+            "registrationId": registration_id,
+            "mode": mode,
+            "status": "ready",
+            "guestCount": plan.get("guestCount"),
+            "readyGuestCount": plan.get("readyGuestCount"),
+            "dueSubmissionTypes": plan.get("dueSubmissionTypes"),
+            "results": [safe_government_submission_summary(prepared) for prepared in prepared_items],
+            "warnings": [
+                "Dry run only. No government submission was attempted.",
+                "Government payloads are held inside the tool and not exposed to the model.",
+            ],
+        }
+
+    if not government_submitter_enabled(config):
+        return {
+            "ok": True,
+            "reservationId": reservation_id,
+            "registrationId": registration_id,
+            "mode": mode,
+            "status": "blocked",
+            "results": [
+                {
+                    **safe_government_submission_summary(prepared),
+                    "submitStatus": "blocked",
+                    "reason": "government_submitter_disabled",
+                }
+                for prepared in prepared_items
+            ],
+            "warnings": [
+                "Live government submission is disabled in the Hotel tool environment.",
+                "Set REGISTRO_GOVERNMENT_SUBMITTER_ENABLED=1 only after TRA/SIRE credentials and adapters are verified.",
+            ],
+        }
+
+    results: list[dict[str, Any]] = []
+    overall_status = "submitted"
+    for prepared in prepared_items:
+        submission_type = normalize_submission_type(prepared.get("submissionType"))
+        base = safe_government_submission_summary(prepared)
+        idempotency_key = validate_text("idempotencyKey", prepared.get("idempotencyKey"), max_len=300)
+        if submission_type == "tra":
+            outcome = call_tra_submitter(config, prepared)
+            if outcome.get("status") == "submitted" and outcome.get("receiptReference"):
+                record_result = record_government_submission(
+                    config,
+                    registration_id=registration_id,
+                    submission_type=submission_type,
+                    state="submitted",
+                    receipt_reference=str(outcome["receiptReference"]),
+                    idempotency_key=idempotency_key,
+                    payload_summary={
+                        "submissionType": submission_type,
+                        "guestCount": base.get("guestCount"),
+                        "reservationId": reservation_id,
+                    },
+                    response_summary=outcome.get("responseSummary") if isinstance(outcome.get("responseSummary"), dict) else {},
+                )
+                results.append({
+                    **base,
+                    "submitStatus": "submitted",
+                    "receiptReference": outcome["receiptReference"],
+                    "recorded": staff_safe_value(record_result),
+                })
+                continue
+            overall_status = "blocked" if outcome.get("status") == "blocked" else "partial_failure"
+            if outcome.get("status") == "failed":
+                record_government_submission(
+                    config,
+                    registration_id=registration_id,
+                    submission_type=submission_type,
+                    state="failed",
+                    idempotency_key=idempotency_key,
+                    payload_summary={
+                        "submissionType": submission_type,
+                        "guestCount": base.get("guestCount"),
+                        "reservationId": reservation_id,
+                    },
+                    response_summary=outcome.get("responseSummary") if isinstance(outcome.get("responseSummary"), dict) else {},
+                    error_code=str(outcome.get("reason") or "submit_failed"),
+                    error_message="TRA submission did not return a verified receipt/reference.",
+                )
+            results.append({
+                **base,
+                "submitStatus": outcome.get("status") or "failed",
+                "reason": outcome.get("reason") or "submit_failed",
+            })
+            continue
+
+        outcome = blocked_sire_submitter(config, submission_type)
+        overall_status = "blocked" if overall_status == "submitted" else overall_status
+        results.append({
+            **base,
+            "submitStatus": outcome["status"],
+            "reason": outcome["reason"],
+        })
+
+    return {
+        "ok": True,
+        "reservationId": reservation_id,
+        "registrationId": registration_id,
+        "mode": mode,
+        "status": overall_status,
+        "results": results,
+        "warnings": [
+            "Only results with a receiptReference were recorded as submitted in PMS.",
+            "SIRE live submission remains blocked until its adapter is configured and verified.",
         ],
     }
 
@@ -2742,6 +3109,23 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
             "additionalProperties": False,
         },
         tool_hotel_registro_prepare_government_submission,
+    ),
+    "hotel_registro_submit_government": (
+        "Dry-run or receipt-gated submit PMS-prepared Registro payloads to configured government adapters. Returns no identity payloads.",
+        {
+            "type": "object",
+            "properties": {
+                "reservationId": {"type": ["string", "null"]},
+                "registrationId": {"type": ["string", "null"]},
+                "submissionTypes": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                },
+                "mode": {"type": ["string", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        tool_hotel_registro_submit_government,
     ),
     "hotel_registro_record_submission_status": (
         "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",

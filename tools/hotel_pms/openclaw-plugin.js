@@ -273,6 +273,22 @@ const toolSchemas = {
       additionalProperties: false,
     },
   },
+  hotel_registro_submit_government: {
+    description: "Dry-run or receipt-gated submit PMS-prepared Registro payloads to configured government adapters. Returns no identity payloads.",
+    parameters: {
+      type: "object",
+      properties: {
+        reservationId: { type: ["string", "null"] },
+        registrationId: { type: ["string", "null"] },
+        submissionTypes: {
+          type: ["array", "null"],
+          items: { type: "string" },
+        },
+        mode: { type: ["string", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
   hotel_registro_record_submission_status: {
     description: "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",
     parameters: {
