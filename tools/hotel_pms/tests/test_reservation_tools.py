@@ -449,6 +449,77 @@ class ReservationToolValidationTest(unittest.TestCase):
         })
         self.assertIn("mrz_checksum_failed", extracted["validationErrors"])
 
+    def test_registro_submission_plan_ready_uses_due_types_without_pii(self):
+        plan = server.build_registro_submission_plan(
+            {
+                "registrationId": "reg-1",
+                "status": "validated",
+                "documentCount": 2,
+                "dueSubmissionTypes": ["tra", "sire_entrada"],
+            },
+            [
+                {
+                    "role": "primary",
+                    "displayName": "Sensitive Name",
+                    "documentNumber": "A12345678",
+                    "submissionStatus": "ready",
+                    "extractionStatus": "extracted",
+                    "missingFields": [],
+                },
+                {
+                    "role": "companion",
+                    "displayName": "Sensitive Companion",
+                    "documentNumber": "B12345678",
+                    "submissionStatus": "ready",
+                    "extractionStatus": "extracted",
+                    "missingFields": [],
+                },
+            ],
+        )
+        self.assertEqual(plan["status"], "ready")
+        self.assertEqual(plan["guestCount"], 2)
+        self.assertEqual(plan["readyGuestCount"], 2)
+        self.assertEqual([item["submissionType"] for item in plan["stagedSubmissions"]], ["tra", "sire_entrada"])
+        rendered = str(plan)
+        self.assertNotIn("A12345678", rendered)
+        self.assertNotIn("Sensitive Name", rendered)
+
+    def test_registro_submission_plan_blocks_incomplete_guest(self):
+        plan = server.build_registro_submission_plan(
+            {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["tra"]},
+            [
+                {
+                    "role": "primary",
+                    "submissionStatus": "needs_info",
+                    "extractionStatus": "needs_review",
+                    "missingFields": ["birthDate"],
+                }
+            ],
+        )
+        self.assertEqual(plan["status"], "needs_info")
+        self.assertEqual(plan["readyGuestCount"], 0)
+        self.assertEqual(plan["blockers"][0]["scope"], "guest_primary")
+        self.assertIn("missing_fields", plan["blockers"][0]["reasons"])
+
+    def test_registro_submission_plan_no_due_is_no_due_when_complete(self):
+        plan = server.build_registro_submission_plan(
+            {"registrationId": "reg-1", "status": "complete", "dueSubmissionTypes": []},
+            [{"role": "primary", "submissionStatus": "ready", "missingFields": []}],
+        )
+        self.assertEqual(plan["status"], "no_due")
+
+    def test_submission_type_normalization_and_validation(self):
+        self.assertEqual(server.normalize_submission_type("SIRE"), "sire_entrada")
+        self.assertEqual(server.normalize_submission_type("sire-salida"), "sire_salida")
+        with self.assertRaises(server.ToolError):
+            server.normalize_submission_type("dian")
+
+    def test_submission_status_tool_rejects_submitted_state(self):
+        with self.assertRaises(server.ToolError) as ctx:
+            server.validate_submission_state("submitted")
+        self.assertEqual(ctx.exception.code, "live_submission_not_enabled")
+        self.assertEqual(server.validate_submission_state("pending"), "pending")
+
 
 if __name__ == "__main__":
     unittest.main()

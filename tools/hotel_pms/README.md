@@ -25,6 +25,12 @@ two-step PMS-prepared token and simple staff `sí` confirmation.
 - `hotel_pms_get_ari_outbox_health`
 - `hotel_pms_prepare_reservation`
 - `hotel_pms_create_reservation`
+- `hotel_registro_get_by_reservation`
+- `hotel_registro_list_guests`
+- `hotel_registro_list_documents`
+- `hotel_registro_extract_reservation`
+- `hotel_registro_prepare_submissions`
+- `hotel_registro_record_submission_status`
 - `hotel_telegram_send_message`
 - `hotel_memory_log`
 
@@ -42,6 +48,24 @@ still accepted for backwards compatibility.
 
 The Hotel agent must never expose prepared tokens, payload hashes, prices,
 balances, deposits, or payment details.
+
+## Registro / Government Submission Boundary
+
+`hotel_registro_extract_reservation` fetches guest document files through
+scoped PMS Registro tools, extracts identity fields, and records guest-level
+extraction results back to PMS.
+
+`hotel_registro_prepare_submissions` checks whether the PMS Registro record is
+validated and ready for due TRA/SIRE submission types. It returns only a
+staff-safe staged plan; it does not submit to government systems.
+
+`hotel_registro_record_submission_status` can record `pending`, `failed`, or
+`needs_info` status for a TRA/SIRE attempt in PMS. It deliberately rejects
+`submitted` until a future government submitter tool records a real
+receipt/reference from the official system.
+
+Never expose document numbers, fetch tokens, file bytes, base64, or raw OCR in
+Telegram or agent memory.
 
 ## Runtime Env
 

@@ -72,6 +72,7 @@ PMS_REGISTRO_WRITE_TOOLS = (
     "registro_record_guest_submission",
     "registro_record_guest_submission_error",
     "registro_mark_guest_needs_review",
+    "registro_record_submission",
 )
 
 REGISTRO_DOCUMENT_CONTENT_TYPES = {
@@ -80,6 +81,9 @@ REGISTRO_DOCUMENT_CONTENT_TYPES = {
     "image/png",
     "image/webp",
 }
+
+REGISTRO_SUBMISSION_TYPES = ("tra", "sire_entrada", "sire_salida")
+REGISTRO_STAFF_RECORDABLE_STATES = ("pending", "failed", "needs_info")
 
 OCR_MONTHS = {
     "JAN": 1,
@@ -736,6 +740,186 @@ def registration_id_from(value: Any) -> str | None:
         if candidate:
             return str(candidate)
     return None
+
+
+def registration_record_from(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    registration = value.get("registration")
+    if isinstance(registration, dict) and registration:
+        return registration
+    return value
+
+
+def normalize_submission_type(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    aliases = {
+        "sire": "sire_entrada",
+        "sire_entry": "sire_entrada",
+        "entrada_sire": "sire_entrada",
+        "sireentry": "sire_entrada",
+        "sire_exit": "sire_salida",
+        "salida_sire": "sire_salida",
+        "sireexit": "sire_salida",
+    }
+    text = aliases.get(text, text)
+    if text not in REGISTRO_SUBMISSION_TYPES:
+        raise ToolError("invalid_input", "submissionType must be tra, sire_entrada, or sire_salida.")
+    return text
+
+
+def validate_submission_types(value: Any, default: list[str] | None = None) -> list[str]:
+    if value in (None, "", []):
+        return list(default or [])
+    if not isinstance(value, list) or len(value) > len(REGISTRO_SUBMISSION_TYPES):
+        raise ToolError("invalid_input", "submissionTypes must be a short array.")
+    output: list[str] = []
+    for item in value:
+        normalized = normalize_submission_type(item)
+        if normalized not in output:
+            output.append(normalized)
+    return output
+
+
+def validate_submission_state(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text == "submitted":
+        raise ToolError(
+            "live_submission_not_enabled",
+            "This tool cannot mark a government submission as submitted without the verified government submitter.",
+        )
+    if text not in REGISTRO_STAFF_RECORDABLE_STATES:
+        raise ToolError("invalid_input", "state must be pending, failed, or needs_info.")
+    return text
+
+
+def due_submission_types_from_registration(value: Any) -> list[str]:
+    record = registration_record_from(value)
+    raw = record.get("dueSubmissionTypes")
+    if not isinstance(raw, list):
+        raw = record.get("dueSubmissions")
+    if not isinstance(raw, list):
+        return []
+    output: list[str] = []
+    for item in raw:
+        try:
+            normalized = normalize_submission_type(item)
+        except ToolError:
+            continue
+        if normalized not in output:
+            output.append(normalized)
+    return output
+
+
+def safe_guest_submission_label(index: int, guest: dict[str, Any]) -> str:
+    role = str(guest.get("role") or "").strip().lower()
+    if role == "primary":
+        return "guest_primary"
+    if role == "companion":
+        return f"guest_companion_{index}"
+    return f"guest_{index}"
+
+
+def registro_guest_blockers(guests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    if not guests:
+        return [{"scope": "registration", "reason": "no_structured_guests"}]
+    for index, guest in enumerate(guests, start=1):
+        guest_blockers: list[str] = []
+        missing = guest.get("missingFields")
+        if isinstance(missing, list) and missing:
+            guest_blockers.append("missing_fields")
+        extraction_status = str(guest.get("extractionStatus") or "").lower()
+        if extraction_status and extraction_status not in {"extracted", "validated", "complete"}:
+            guest_blockers.append(f"extraction_status:{extraction_status}")
+        submission_status = str(guest.get("submissionStatus") or "").lower()
+        if submission_status and submission_status != "ready":
+            guest_blockers.append(f"submission_status:{submission_status}")
+        if not submission_status:
+            guest_blockers.append("submission_status_missing")
+        if guest_blockers:
+            blockers.append({
+                "scope": safe_guest_submission_label(index, guest),
+                "reasons": guest_blockers,
+                "missingFieldCount": len(missing) if isinstance(missing, list) else 0,
+            })
+    return blockers
+
+
+def build_registro_submission_plan(
+    registration_lookup: dict[str, Any],
+    guests: list[dict[str, Any]],
+    requested_submission_types: list[str] | None = None,
+) -> dict[str, Any]:
+    registration = registration_record_from(registration_lookup)
+    registration_id = registration_id_from(registration_lookup)
+    due_types = due_submission_types_from_registration(registration)
+    requested = requested_submission_types or list(due_types)
+    blockers: list[dict[str, Any]] = []
+
+    if not registration_id:
+        return {
+            "status": "blocked",
+            "reason": "no_registration",
+            "blockers": [{"scope": "registration", "reason": "no_registration"}],
+            "dueSubmissionTypes": [],
+            "requestedSubmissionTypes": requested,
+            "guestCount": 0,
+            "readyGuestCount": 0,
+            "stagedSubmissions": [],
+        }
+
+    registration_status = str(registration.get("status") or "").lower()
+    if registration_status == "complete" and not due_types:
+        return {
+            "status": "no_due",
+            "registrationId": registration_id,
+            "registrationStatus": registration_status,
+            "dueSubmissionTypes": [],
+            "requestedSubmissionTypes": requested,
+            "guestCount": len(guests),
+            "readyGuestCount": len(guests),
+            "blockers": [],
+            "stagedSubmissions": [],
+        }
+    if registration_status != "validated":
+        blockers.append({"scope": "registration", "reason": f"registration_status:{registration_status or 'unknown'}"})
+
+    if not due_types:
+        blockers.append({"scope": "registration", "reason": "no_due_submission_types"})
+    for submission_type in requested:
+        if submission_type not in due_types:
+            blockers.append({"scope": submission_type, "reason": "submission_type_not_due"})
+
+    guest_blockers = registro_guest_blockers(guests)
+    blockers.extend(guest_blockers)
+    ready_guest_count = max(0, len(guests) - len(guest_blockers))
+    status = "ready" if not blockers and requested else "needs_info"
+    return {
+        "status": status,
+        "registrationId": registration_id,
+        "registrationStatus": registration_status or None,
+        "dueSubmissionTypes": due_types,
+        "requestedSubmissionTypes": requested,
+        "guestCount": len(guests),
+        "readyGuestCount": ready_guest_count,
+        "documentCount": registration.get("documentCount"),
+        "blockers": blockers,
+        "stagedSubmissions": [
+            {
+                "submissionType": submission_type,
+                "state": "ready_to_submit",
+                "scope": "registration",
+                "guestCount": len(guests),
+            }
+            for submission_type in requested
+            if submission_type in due_types
+        ] if status == "ready" else [],
+        "warnings": [
+            "Live SIRE/TRA submission is not enabled in this Hotel tool yet.",
+            "Do not mark submitted until the government system returns a receipt/reference.",
+        ],
+    }
 
 
 def guests_from_registro_response(value: Any, registration_id: str | None = None) -> list[dict[str, Any]]:
@@ -2122,6 +2306,51 @@ def tool_hotel_registro_extract_reservation(args: dict[str, Any]) -> dict[str, A
     }
 
 
+def tool_hotel_registro_prepare_submissions(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    reservation_id = validate_safe_id("reservationId", args.get("reservationId"))
+    requested = validate_submission_types(args.get("submissionTypes"))
+    registration_lookup = pms_tool(config, "registro_get_by_reservation", {"reservationId": reservation_id}, profile="registro_read")
+    registration_id = registration_id_from(registration_lookup)
+    guests: list[dict[str, Any]] = []
+    if registration_id:
+        guests_result = pms_tool(config, "registro_list_guests", {"registrationId": registration_id}, profile="registro_read")
+        guests = guests_from_registro_response(guests_result, registration_id)
+    plan = build_registro_submission_plan(registration_lookup, guests, requested_submission_types=requested or None)
+    return {
+        "ok": True,
+        "reservationId": reservation_id,
+        "registrationId": registration_id,
+        "plan": plan,
+    }
+
+
+def tool_hotel_registro_record_submission_status(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    registration_id = validate_safe_id("registrationId", args.get("registrationId"))
+    submission_type = normalize_submission_type(args.get("submissionType"))
+    state = validate_submission_state(args.get("state"))
+    note = staff_safe_note(args.get("note"), max_len=1000)
+    payload = clean_payload({
+        "registrationId": registration_id,
+        "submissionType": submission_type,
+        "state": state,
+        "attemptedAt": now_iso(),
+        "errorCode": validate_text("errorCode", args.get("errorCode"), max_len=120),
+        "errorMessage": validate_text("errorMessage", args.get("errorMessage"), max_len=1000),
+        "payloadSummary": clean_payload({
+            "source": "hotel_registro_record_submission_status",
+            "note": note,
+        }),
+        "responseSummary": clean_payload({
+            "recordedBy": "hotel_agent",
+            "governmentSubmitted": False,
+        }),
+    })
+    result = pms_tool(config, "registro_record_submission", payload, profile="registro_write")
+    return {"ok": True, "submission": staff_safe_value(result)}
+
+
 def telegram_token(config: dict[str, Any]) -> str:
     token = cfg_env(config, "HOTEL_TELEGRAM_BOT_TOKEN")
     if token:
@@ -2385,6 +2614,39 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
             "additionalProperties": False,
         },
         tool_hotel_registro_extract_reservation,
+    ),
+    "hotel_registro_prepare_submissions": (
+        "Check whether a PMS Registro record is ready for TRA/SIRE submission and return a staff-safe staged plan. Does not submit to government systems.",
+        {
+            "type": "object",
+            "properties": {
+                "reservationId": {"type": "string"},
+                "submissionTypes": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["reservationId"],
+            "additionalProperties": False,
+        },
+        tool_hotel_registro_prepare_submissions,
+    ),
+    "hotel_registro_record_submission_status": (
+        "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",
+        {
+            "type": "object",
+            "properties": {
+                "registrationId": {"type": "string"},
+                "submissionType": {"type": "string"},
+                "state": {"type": "string"},
+                "note": {"type": ["string", "null"]},
+                "errorCode": {"type": ["string", "null"]},
+                "errorMessage": {"type": ["string", "null"]},
+            },
+            "required": ["registrationId", "submissionType", "state"],
+            "additionalProperties": False,
+        },
+        tool_hotel_registro_record_submission_status,
     ),
     "hotel_telegram_send_message": (
         "Send a staff-facing Telegram message through the Hotel bot. Never sends guest messages.",

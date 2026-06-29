@@ -243,6 +243,37 @@ const toolSchemas = {
       additionalProperties: false,
     },
   },
+  hotel_registro_prepare_submissions: {
+    description: "Check whether a PMS Registro record is ready for TRA/SIRE submission and return a staff-safe staged plan. Does not submit to government systems.",
+    parameters: {
+      type: "object",
+      properties: {
+        reservationId: { type: "string" },
+        submissionTypes: {
+          type: ["array", "null"],
+          items: { type: "string" },
+        },
+      },
+      required: ["reservationId"],
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_record_submission_status: {
+    description: "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",
+    parameters: {
+      type: "object",
+      properties: {
+        registrationId: { type: "string" },
+        submissionType: { type: "string" },
+        state: { type: "string" },
+        note: { type: ["string", "null"] },
+        errorCode: { type: ["string", "null"] },
+        errorMessage: { type: ["string", "null"] },
+      },
+      required: ["registrationId", "submissionType", "state"],
+      additionalProperties: false,
+    },
+  },
   hotel_telegram_send_message: {
     description: "Send a staff-facing Telegram message through the Hotel bot. Never sends guest messages.",
     parameters: {
