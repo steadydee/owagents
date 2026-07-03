@@ -3451,6 +3451,7 @@ def tool_hotel_registro_submit_government(args: dict[str, Any]) -> dict[str, Any
                 **base,
                 "submitStatus": outcome.get("status") or "failed",
                 "reason": outcome.get("reason") or "submit_failed",
+                "missingFields": staff_safe_value(outcome.get("missingFields")),
             })
             continue
 
