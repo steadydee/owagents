@@ -766,6 +766,92 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["results"][0]["reason"], "sire_submitter_not_configured")
 
+    def test_build_tra_form_fields_maps_required_form_values(self):
+        html = """
+        <form id="miFormulario">
+          <input name="csrfmiddlewaretoken" value="csrf-123">
+          <select id="pais"><option value="34">Estados Unidos</option><option value="114">Colombia</option></select>
+          <select id="ciudad"><option id="34" value="Boston">Boston</option><option id="114" value=" Manizales - Caldas ">Manizales - Caldas</option></select>
+          <select id="pais2"><option value="34">Estados Unidos</option><option value="114">Colombia</option></select>
+          <select id="ciudad2"><option id="34" value="Boston">Boston</option><option id="114" value=" Manizales - Caldas ">Manizales - Caldas</option></select>
+        </form>
+        """
+        prepared = {
+            "payload": {
+                "reservation": {
+                    "arrivalDate": "2026-06-26",
+                    "departureDate": "2026-07-01",
+                    "unitNumber": "1",
+                    "totalCostCop": 1000,
+                    "travelReason": "tourism",
+                },
+                "guests": [
+                    {
+                        "documentType": "passport",
+                        "documentNumber": "A12345678",
+                        "givenNames": "Miranda",
+                        "surname": "Davies",
+                        "residenceCountry": "Estados Unidos",
+                        "residenceCity": "Boston",
+                        "originCountry": "Colombia",
+                        "originCity": "Manizales",
+                    },
+                    {"documentNumber": "B123"},
+                ],
+            }
+        }
+        fields, result = server.build_tra_form_fields({}, prepared, html)
+        self.assertTrue(result["ok"])
+        pairs = fields
+        self.assertIn(("tipo_identificacion", "Pasaporte"), pairs)
+        self.assertIn(("numero_identificacion", "A12345678"), pairs)
+        self.assertIn(("nombres", "Miranda"), pairs)
+        self.assertIn(("apellidos", "Davies"), pairs)
+        self.assertIn(("ciudad_residencia", "Boston"), pairs)
+        self.assertIn(("ciudad_procedencia", " Manizales - Caldas "), pairs)
+        self.assertIn(("numero_acompanantes", "1"), pairs)
+        self.assertIn(("tipo_acomodacion", "Doble"), pairs)
+
+    def test_build_tra_form_fields_blocks_missing_cost(self):
+        html = """
+        <input name="csrfmiddlewaretoken" value="csrf-123">
+        <select id="pais"><option value="34">Estados Unidos</option></select>
+        <select id="ciudad"><option id="34" value="Boston">Boston</option></select>
+        <select id="pais2"><option value="34">Estados Unidos</option></select>
+        <select id="ciudad2"><option id="34" value="Boston">Boston</option></select>
+        """
+        prepared = {
+            "payload": {
+                "reservation": {"arrivalDate": "2026-06-26", "departureDate": "2026-07-01", "unitNumber": "1"},
+                "guests": [
+                    {
+                        "documentType": "passport",
+                        "documentNumber": "A12345678",
+                        "givenNames": "Miranda",
+                        "surname": "Davies",
+                        "residenceCountry": "Estados Unidos",
+                        "residenceCity": "Boston",
+                        "originCountry": "Estados Unidos",
+                        "originCity": "Boston",
+                    }
+                ],
+            }
+        }
+        fields, result = server.build_tra_form_fields({}, prepared, html)
+        self.assertEqual(fields, [])
+        self.assertFalse(result["ok"])
+        self.assertIn("costo", result["missingFields"])
+
+    def test_tra_form_submitter_blocks_missing_credentials(self):
+        old_login = server.tra_login_session
+        try:
+            server.tra_login_session = lambda config: (None, {"ok": False, "status": "blocked", "reason": "tra_credentials_missing"})
+            result = server.call_tra_form_submitter({}, {"payload": {}})
+        finally:
+            server.tra_login_session = old_login
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "tra_credentials_missing")
+
 
 if __name__ == "__main__":
     unittest.main()

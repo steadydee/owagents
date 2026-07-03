@@ -12,6 +12,8 @@ import base64
 import datetime as dt
 import hashlib
 import hmac
+import html
+import html.parser
 import json
 import os
 import re
@@ -23,6 +25,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import http.cookiejar
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -36,6 +39,9 @@ DEFAULT_PMS_BASE_URL = "https://pms.owlswatch.com"
 DEFAULT_PROPERTY_ID = "owlswatch"
 DEFAULT_TIMEZONE = "America/Bogota"
 LOCAL_OCR_SCRIPT = Path(__file__).with_name("apple_vision_ocr.swift")
+DEFAULT_TRA_LOGIN_URL = "https://tra.mincit.gov.co/login/"
+DEFAULT_TRA_NEW_GUEST_URL = "https://tra.mincit.gov.co/padd/"
+DEFAULT_TRA_REGISTERED_GUESTS_URL = "https://tra.mincit.gov.co/blo"
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\-]{1,300}$")
 TEXT_RE = re.compile(r"^[\s\S]{0,50000}$")
@@ -2389,8 +2395,40 @@ def tra_submission_url(config: dict[str, Any]) -> str | None:
     return raw
 
 
+def tra_login_url(config: dict[str, Any]) -> str:
+    raw = cfg_env(config, "TRA_LOGIN_URL") or DEFAULT_TRA_LOGIN_URL
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ToolError("config_invalid", "TRA login URL must be an https URL.")
+    return raw
+
+
+def tra_new_guest_url(config: dict[str, Any]) -> str:
+    raw = cfg_env(config, "TRA_NEW_GUEST_URL") or DEFAULT_TRA_NEW_GUEST_URL
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ToolError("config_invalid", "TRA new guest URL must be an https URL.")
+    return raw
+
+
+def tra_registered_guests_url(config: dict[str, Any]) -> str:
+    raw = cfg_env(config, "TRA_REGISTERED_GUESTS_URL") or DEFAULT_TRA_REGISTERED_GUESTS_URL
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ToolError("config_invalid", "TRA registered-guests URL must be an https URL.")
+    return raw
+
+
 def tra_api_token(config: dict[str, Any]) -> str | None:
     return cfg_file(config, "TRA_API_TOKEN") or cfg_env(config, "TRA_API_TOKEN")
+
+
+def tra_username(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "TRA_USERNAME") or cfg_file(config, "TRA_RNT") or cfg_env(config, "TRA_USERNAME") or cfg_env(config, "TRA_RNT")
+
+
+def tra_password(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "TRA_PASSWORD") or cfg_env(config, "TRA_PASSWORD")
 
 
 def sire_login_url(config: dict[str, Any]) -> str:
@@ -2472,6 +2510,299 @@ def safe_submission_response_summary(value: Any) -> dict[str, Any]:
     return {key: child for key, child in summary.items() if child not in (None, "", [], {})}
 
 
+class SelectOptionParser(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_select: str | None = None
+        self.current_option: dict[str, str] | None = None
+        self.options: dict[str, list[dict[str, str]]] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr = {key: value or "" for key, value in attrs}
+        if tag.lower() == "select":
+            select_id = attr.get("id") or attr.get("name")
+            self.current_select = select_id
+            if select_id:
+                self.options.setdefault(select_id, [])
+        elif tag.lower() == "option" and self.current_select:
+            self.current_option = {
+                "value": attr.get("value", ""),
+                "id": attr.get("id", ""),
+                "text": "",
+            }
+
+    def handle_data(self, data: str) -> None:
+        if self.current_option is not None:
+            self.current_option["text"] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "option" and self.current_select and self.current_option is not None:
+            self.current_option["text"] = html.unescape(self.current_option["text"]).strip()
+            self.options.setdefault(self.current_select, []).append(self.current_option)
+            self.current_option = None
+        elif tag.lower() == "select":
+            self.current_select = None
+
+
+def csrf_token_from_html(page_html: str) -> str | None:
+    match = re.search(
+        r'name=["\']csrfmiddlewaretoken["\'][^>]*value=["\']([^"\']+)["\']',
+        page_html,
+        flags=re.I,
+    )
+    if not match:
+        match = re.search(
+            r'value=["\']([^"\']+)["\'][^>]*name=["\']csrfmiddlewaretoken["\']',
+            page_html,
+            flags=re.I,
+        )
+    return html.unescape(match.group(1)) if match else None
+
+
+def normalized_choice(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def first_present(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def nested_value(value: dict[str, Any], *paths: str) -> Any:
+    for path in paths:
+        current: Any = value
+        found = True
+        for part in path.split("."):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                found = False
+                break
+        if found and current not in (None, "", [], {}):
+            return current
+    return None
+
+
+def tra_document_type(value: Any) -> str | None:
+    text = normalized_choice(value)
+    if not text:
+        return None
+    if "pasaporte" in text or "passport" in text:
+        return "Pasaporte"
+    if text in {"cc", "c c", "cedula", "cedula ciudadania", "cedula de ciudadania", "id card"}:
+        return "C.C"
+    if text in {"ce", "c e", "cedula extranjeria", "cedula de extranjeria"}:
+        return "C.E"
+    if "pep" in text:
+        return "P.E.P"
+    if "dni" in text or "documento nacional" in text:
+        return "D.N.I"
+    return None
+
+
+def tra_country_option(options: dict[str, list[dict[str, str]]], country: Any) -> dict[str, str] | None:
+    target = normalized_choice(country)
+    if not target:
+        return None
+    aliases = {
+        "usa": "estados unidos",
+        "us": "estados unidos",
+        "united states": "estados unidos",
+        "united states of america": "estados unidos",
+        "uk": "reino unido",
+        "united kingdom": "reino unido",
+        "south korea": "corea del sur",
+    }
+    target = aliases.get(target, target)
+    for option in options.get("pais", []):
+        if normalized_choice(option.get("text")) == target:
+            return option
+    for option in options.get("pais", []):
+        choice = normalized_choice(option.get("text"))
+        if choice and (choice.startswith(target) or target.startswith(choice)):
+            return option
+    return None
+
+
+def tra_city_option(options: dict[str, list[dict[str, str]]], select_id: str, country_value: str, city: Any) -> str | None:
+    target = normalized_choice(city)
+    if not target:
+        return None
+    candidates = [option for option in options.get(select_id, []) if option.get("id") == country_value]
+    for option in candidates:
+        if normalized_choice(option.get("text")) == target:
+            return option.get("value")
+    for option in candidates:
+        choice = normalized_choice(option.get("text"))
+        city_prefix = normalized_choice(str(option.get("text") or "").split("-")[0])
+        if choice.startswith(target) or target.startswith(choice) or city_prefix == target:
+            return option.get("value")
+    return None
+
+
+def tra_payload_cost(payload: dict[str, Any]) -> Any:
+    return first_present(
+        nested_value(payload, "tra.totalCostCop", "tra.costo", "reservation.totalCostCop", "reservation.costo", "reservation.total"),
+        payload.get("totalCostCop"),
+        payload.get("costo"),
+    )
+
+
+def tra_payload_room_number(payload: dict[str, Any], config: dict[str, Any]) -> Any:
+    return first_present(
+        nested_value(payload, "tra.roomNumber", "tra.unitNumber", "reservation.roomNumber", "reservation.unitNumber", "reservation.unitCode"),
+        payload.get("roomNumber"),
+        cfg_env(config, "TRA_DEFAULT_ROOM_NUMBER"),
+    )
+
+
+def tra_payload_accommodation(payload: dict[str, Any], guest_count: int, config: dict[str, Any]) -> str:
+    configured = first_present(
+        nested_value(payload, "tra.accommodationType", "reservation.accommodationType"),
+        cfg_env(config, "TRA_DEFAULT_ACCOMMODATION_TYPE"),
+    )
+    if configured:
+        text = str(configured).strip()
+        aliases = {
+            "cabin": "Doble",
+            "cabana": "Doble",
+            "cabaña": "Doble",
+            "guide-cabin": "Sencilla",
+        }
+        return aliases.get(normalized_choice(text), text)
+    return "Sencilla" if guest_count <= 1 else "Doble"
+
+
+def tra_payload_motivo(payload: dict[str, Any], config: dict[str, Any]) -> str:
+    value = first_present(nested_value(payload, "tra.motivo", "reservation.travelReason", "travelReason"), cfg_env(config, "TRA_DEFAULT_TRAVEL_REASON"))
+    if value:
+        text = normalized_choice(value)
+        if "negocio" in text:
+            return "Negocios y motivos profesionales"
+        if "famil" in text or "amigo" in text:
+            return "Visitas a familiares y a amigos"
+        if "salud" in text:
+            return "Salud y atención médica"
+        if "transito" in text:
+            return "Tránsito"
+        if "otro" in text:
+            return "Otros motivos"
+    return "Vacaciones, recreo y ocio"
+
+
+def build_tra_form_fields(config: dict[str, Any], prepared: dict[str, Any], page_html: str) -> tuple[list[tuple[str, str]], dict[str, Any]]:
+    payload = prepared_government_payload(prepared)
+    guests = payload.get("guests") if isinstance(payload.get("guests"), list) else []
+    primary = guests[0] if guests and isinstance(guests[0], dict) else {}
+    parser = SelectOptionParser()
+    parser.feed(page_html)
+    options = parser.options
+
+    doc_type = tra_document_type(first_present(
+        primary.get("documentType"),
+        primary.get("docType"),
+        primary.get("tipoIdentificacion"),
+        primary.get("tipo_identificacion"),
+    ))
+    residence_country = first_present(
+        primary.get("residenceCountry"),
+        primary.get("residenceCountryName"),
+        primary.get("countryOfResidence"),
+        nested_value(payload, "tra.residenceCountry", "reservation.residenceCountry"),
+    )
+    residence_city = first_present(
+        primary.get("residenceCity"),
+        primary.get("residenceCityName"),
+        primary.get("cityOfResidence"),
+        nested_value(payload, "tra.residenceCity", "reservation.residenceCity"),
+    )
+    origin_country = first_present(
+        primary.get("originCountry"),
+        primary.get("originCountryName"),
+        nested_value(payload, "tra.originCountry", "reservation.originCountry"),
+    )
+    origin_city = first_present(
+        primary.get("originCity"),
+        primary.get("originCityName"),
+        nested_value(payload, "tra.originCity", "reservation.originCity"),
+    )
+    residence_country_option = tra_country_option(options, residence_country)
+    origin_country_option = tra_country_option(options, origin_country)
+    residence_city_value = tra_city_option(options, "ciudad", residence_country_option.get("value", "") if residence_country_option else "", residence_city)
+    origin_city_value = tra_city_option(options, "ciudad2", origin_country_option.get("value", "") if origin_country_option else "", origin_city)
+
+    cost = tra_payload_cost(payload)
+    room_number = tra_payload_room_number(payload, config)
+    guest_count = max(len(guests), 1)
+    fields = {
+        "csrfmiddlewaretoken": csrf_token_from_html(page_html),
+        "tipo_identificacion": doc_type,
+        "numero_identificacion": first_present(primary.get("documentNumber"), primary.get("docNumber"), primary.get("numeroIdentificacion")),
+        "nombres": first_present(primary.get("firstName"), primary.get("firstNames"), primary.get("givenNames"), primary.get("nombres")),
+        "apellidos": first_present(primary.get("lastName"), primary.get("lastNames"), primary.get("surname"), primary.get("surnames"), primary.get("apellidos")),
+        "pais_residencia": residence_country_option.get("value") if residence_country_option else None,
+        "ciudad_residencia": residence_city_value,
+        "pais_procedencia": origin_country_option.get("value") if origin_country_option else None,
+        "ciudad_procedencia": origin_city_value,
+        "numero_habitacion": room_number,
+        "motivo": tra_payload_motivo(payload, config),
+        "numero_acompanantes": str(max(guest_count - 1, 0)),
+        "check_in": first_present(nested_value(payload, "reservation.arrivalDate", "reservation.checkInDate", "tra.checkInDate"), payload.get("arrivalDate")),
+        "check_out": first_present(nested_value(payload, "reservation.departureDate", "reservation.checkOutDate", "tra.checkOutDate"), payload.get("departureDate")),
+        "tipo_acomodacion": tra_payload_accommodation(payload, guest_count, config),
+        "costo": cost,
+        "datos": "1",
+        "acepto": "2",
+    }
+    missing = [key for key, value in fields.items() if value in (None, "")]
+    if missing:
+        return [], {
+            "ok": False,
+            "status": "blocked",
+            "reason": "tra_payload_missing_required_fields",
+            "missingFields": missing,
+        }
+    form_fields = [
+        ("csrfmiddlewaretoken", str(fields["csrfmiddlewaretoken"])),
+        ("tipo_identificacion", str(fields["tipo_identificacion"])),
+        ("numero_identificacion", str(fields["numero_identificacion"])),
+        ("nombres", str(fields["nombres"])),
+        ("apellidos", str(fields["apellidos"])),
+        ("dept", str(fields["pais_residencia"])),
+        ("ciudad_residencia", str(fields["ciudad_residencia"])),
+        ("dept", str(fields["pais_procedencia"])),
+        ("ciudad_procedencia", str(fields["ciudad_procedencia"])),
+        ("numero_habitacion", str(fields["numero_habitacion"])),
+        ("motivo", str(fields["motivo"])),
+        ("numero_acompanantes", str(fields["numero_acompanantes"])),
+        ("check_in", str(fields["check_in"])),
+        ("check_out", str(fields["check_out"])),
+        ("tipo_acomodacion", str(fields["tipo_acomodacion"])),
+        ("costo", str(fields["costo"])),
+        ("datos", "1"),
+        ("acepto", "2"),
+    ]
+    safe_summary = {
+        "documentType": fields["tipo_identificacion"],
+        "guestCount": guest_count,
+        "checkIn": fields["check_in"],
+        "checkOut": fields["check_out"],
+        "roomNumber": fields["numero_habitacion"],
+        "accommodationType": fields["tipo_acomodacion"],
+        "residenceCountry": residence_country,
+        "residenceCity": residence_city,
+        "originCountry": origin_country,
+        "originCity": origin_city,
+    }
+    return form_fields, {"ok": True, "status": "ready", "summary": safe_summary}
+
+
 def record_government_submission(
     config: dict[str, Any],
     *,
@@ -2510,7 +2841,9 @@ def record_government_submission(
 def call_tra_submitter(config: dict[str, Any], prepared: dict[str, Any]) -> dict[str, Any]:
     url = tra_submission_url(config)
     token = tra_api_token(config)
-    if not url or not token:
+    if not url:
+        return call_tra_form_submitter(config, prepared)
+    if not token:
         return {
             "ok": False,
             "status": "blocked",
@@ -2539,6 +2872,143 @@ def call_tra_submitter(config: dict[str, Any], prepared: dict[str, Any]) -> dict
         "status": "submitted",
         "receiptReference": receipt,
         "responseSummary": safe_submission_response_summary(response),
+    }
+
+
+def http_text_with_opener(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    payload: list[tuple[str, str]] | dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+) -> tuple[str, str]:
+    data = None
+    if payload is not None:
+        data = urllib.parse.urlencode(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "User-Agent": "Mozilla/5.0 HotelRegistroAgent/1.0",
+            "Content-Type": "application/x-www-form-urlencoded",
+            **(headers or {}),
+        },
+        method="POST" if data is not None else "GET",
+    )
+    try:
+        with opener.open(req, timeout=timeout) as response:
+            return response.geturl(), response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise ToolError("http_error", f"TRA request failed with HTTP {exc.code}.", retryable=500 <= exc.code < 600) from exc
+    except urllib.error.URLError as exc:
+        raise ToolError("network_error", "TRA network request failed.", retryable=True) from exc
+
+
+def tra_login_session(config: dict[str, Any]) -> tuple[urllib.request.OpenerDirector | None, dict[str, Any]]:
+    username = tra_username(config)
+    password = tra_password(config)
+    if not username or not password:
+        return None, {"ok": False, "status": "blocked", "reason": "tra_credentials_missing"}
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    login_url = tra_login_url(config)
+    _, login_page = http_text_with_opener(opener, login_url)
+    csrf = csrf_token_from_html(login_page)
+    if not csrf:
+        return None, {"ok": False, "status": "blocked", "reason": "tra_login_csrf_missing"}
+    final_url, body = http_text_with_opener(
+        opener,
+        login_url,
+        [
+            ("csrfmiddlewaretoken", csrf),
+            ("username", str(username)),
+            ("password", str(password)),
+        ],
+        headers={"Referer": login_url},
+    )
+    if "/home" not in final_url and "Nuevo Huésped" not in body and "/padd" not in body:
+        reason = "tra_login_failed_or_challenge_required"
+        if "captcha" in body.lower() or "turnstile" in body.lower() or "cf-" in body.lower():
+            reason = "tra_login_challenge_required"
+        return None, {"ok": False, "status": "blocked", "reason": reason}
+    return opener, {"ok": True, "status": "authenticated"}
+
+
+def tra_guest_visible_in_registered_page(page_html: str, prepared: dict[str, Any]) -> bool:
+    payload = prepared_government_payload(prepared)
+    guests = payload.get("guests") if isinstance(payload.get("guests"), list) else []
+    primary = guests[0] if guests and isinstance(guests[0], dict) else {}
+    doc_number = str(first_present(primary.get("documentNumber"), primary.get("docNumber"), primary.get("numeroIdentificacion")) or "").strip()
+    check_in = str(first_present(nested_value(payload, "reservation.arrivalDate", "reservation.checkInDate", "tra.checkInDate"), payload.get("arrivalDate")) or "").strip()
+    if not doc_number:
+        return False
+    normalized_page = normalized_choice(page_html)
+    if normalized_choice(doc_number) not in normalized_page:
+        return False
+    if check_in and normalized_choice(check_in) not in normalized_page:
+        compact_date = check_in.replace("-", "")
+        return compact_date in re.sub(r"[^0-9]", "", page_html)
+    return True
+
+
+def tra_receipt_reference(prepared: dict[str, Any]) -> str:
+    payload = prepared_government_payload(prepared)
+    guests = payload.get("guests") if isinstance(payload.get("guests"), list) else []
+    primary = guests[0] if guests and isinstance(guests[0], dict) else {}
+    doc_number = str(first_present(primary.get("documentNumber"), primary.get("docNumber"), primary.get("numeroIdentificacion")) or "guest").strip()
+    check_in = str(first_present(nested_value(payload, "reservation.arrivalDate", "reservation.checkInDate", "tra.checkInDate"), payload.get("arrivalDate")) or now_iso()[:10]).strip()
+    digest = hashlib.sha256(f"{doc_number}:{check_in}".encode("utf-8")).hexdigest()[:10].upper()
+    return f"TRA-VISIBLE-{digest}"
+
+
+def call_tra_form_submitter(config: dict[str, Any], prepared: dict[str, Any]) -> dict[str, Any]:
+    opener, login = tra_login_session(config)
+    if not opener:
+        return login
+    new_guest_url = tra_new_guest_url(config)
+    registered_url = tra_registered_guests_url(config)
+    _, form_page = http_text_with_opener(opener, new_guest_url)
+    form_fields, form_result = build_tra_form_fields(config, prepared, form_page)
+    if not form_result.get("ok"):
+        return form_result
+
+    _, registered_before = http_text_with_opener(opener, registered_url)
+    if tra_guest_visible_in_registered_page(registered_before, prepared):
+        return {
+            "ok": True,
+            "status": "submitted",
+            "receiptReference": tra_receipt_reference(prepared),
+            "responseSummary": {
+                "status": "already_visible_in_tra",
+                "referenceType": "tra_registered_guest_table",
+            },
+        }
+
+    final_url, response_page = http_text_with_opener(
+        opener,
+        new_guest_url,
+        form_fields,
+        headers={"Referer": new_guest_url},
+    )
+    _, registered_after = http_text_with_opener(opener, registered_url)
+    if tra_guest_visible_in_registered_page(registered_after, prepared) or tra_guest_visible_in_registered_page(response_page, prepared):
+        return {
+            "ok": True,
+            "status": "submitted",
+            "receiptReference": tra_receipt_reference(prepared),
+            "responseSummary": {
+                "status": "visible_in_tra_after_submit",
+                "referenceType": "tra_registered_guest_table",
+                "finalUrl": final_url,
+            },
+        }
+    if "captcha" in response_page.lower() or "turnstile" in response_page.lower():
+        return {"ok": False, "status": "blocked", "reason": "tra_submit_challenge_required"}
+    return {
+        "ok": False,
+        "status": "failed",
+        "reason": "tra_form_submission_unverified",
+        "responseSummary": {"finalUrl": final_url},
     }
 
 
