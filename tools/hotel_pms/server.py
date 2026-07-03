@@ -3325,7 +3325,7 @@ def tool_hotel_registro_prepare_government_submission(args: dict[str, Any]) -> d
         "submissions": submissions,
         "warnings": [
             "PMS government payloads are prepared but not exposed to the model.",
-            "Live SIRE/TRA submission is still disabled until the government adapter is configured.",
+            "Live submission is gated by hotel_registro_submit_government and the runtime enable flag. TRA is configured; SIRE remains blocked until its adapter is verified.",
         ],
     }
 
