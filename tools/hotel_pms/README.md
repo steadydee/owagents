@@ -100,6 +100,8 @@ Telegram or agent memory.
 - `TRA_API_TWO_URL` optional, defaults to `${TRA_API_BASE_URL}/two/`
 - `TRA_SUBMISSION_URL` or `TRA_API_URL` optional custom compatibility endpoint
 - `TRA_API_TOKEN` or `TRA_API_TOKEN_FILE` optional official PMS API token
+- `TRA_ESTABLISHMENT_NAME` optional, defaults to `Owl's Watch`
+- `TRA_RNT_ESTABLISHMENT` optional RNT sent to the official PMS API
 - `TRA_LOGIN_URL` optional, defaults to `https://tra.mincit.gov.co/login/`
 - `TRA_NEW_GUEST_URL` optional, defaults to `https://tra.mincit.gov.co/padd/`
 - `TRA_REGISTERED_GUESTS_URL` optional, defaults to `https://tra.mincit.gov.co/blo`

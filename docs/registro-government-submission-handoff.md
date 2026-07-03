@@ -151,6 +151,8 @@ Live submission is off by default.
 REGISTRO_GOVERNMENT_SUBMITTER_ENABLED=0
 TRA_API_BASE_URL=https://pms.mincit.gov.co
 TRA_API_TOKEN_FILE=~/.openclaw-hotel/secrets/tra-api-token
+TRA_ESTABLISHMENT_NAME=Owl's Watch
+TRA_RNT_ESTABLISHMENT=<rnt_number>
 TRA_SUBMISSION_URL=<optional custom compatibility endpoint>
 TRA_USERNAME_FILE=~/.openclaw-hotel/secrets/tra-username
 TRA_PASSWORD_FILE=~/.openclaw-hotel/secrets/tra-password

@@ -111,6 +111,8 @@
           "REGISTRO_GOVERNMENT_SUBMITTER_ENABLED": "0",
           "TRA_API_BASE_URL": "https://pms.mincit.gov.co",
           "TRA_API_TOKEN_FILE": "~/.openclaw-hotel/secrets/tra-api-token",
+          "TRA_ESTABLISHMENT_NAME": "Owl's Watch",
+          "TRA_RNT_ESTABLISHMENT": "<rnt_number>",
           "TRA_LOGIN_URL": "https://tra.mincit.gov.co/login/",
           "TRA_NEW_GUEST_URL": "https://tra.mincit.gov.co/padd/",
           "TRA_REGISTERED_GUESTS_URL": "https://tra.mincit.gov.co/blo",

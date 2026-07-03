@@ -882,17 +882,27 @@ class ReservationToolValidationTest(unittest.TestCase):
                 ],
             }
         }
-        primary, companions, result = server.build_tra_api_payloads({}, prepared)
+        config = {"mcp": {"servers": {"hotel_pms": {"env": {"TRA_RNT_ESTABLISHMENT": "104360"}}}}}
+        primary, companions, result = server.build_tra_api_payloads(config, prepared)
         self.assertTrue(result["ok"])
         self.assertEqual(primary["tipo_identificacion"], "Pasaporte")
         self.assertEqual(primary["numero_identificacion"], "A12345678")
+        self.assertEqual(primary["cuidad_residencia"], "Boston")
+        self.assertEqual(primary["cuidad_procedencia"], "Manizales")
         self.assertEqual(primary["numero_acompanantes"], "1")
         self.assertEqual(primary["check_in"], "2026-06-26")
         self.assertEqual(primary["check_out"], "2026-07-01")
         self.assertEqual(primary["costo"], "2000")
+        self.assertEqual(primary["nombre_establecimiento"], "Owl's Watch")
+        self.assertEqual(primary["rnt_establecimiento"], "104360")
         self.assertEqual(len(companions), 1)
         self.assertEqual(companions[0]["padre"], "__PARENT_CODE__")
         self.assertEqual(companions[0]["numero_identificacion"], "B12345678")
+        self.assertEqual(companions[0]["cuidad_residencia"], "Boston")
+        self.assertEqual(companions[0]["cuidad_procedencia"], "Manizales")
+        self.assertEqual(companions[0]["numero_habitacion"], "1")
+        self.assertEqual(companions[0]["check_in"], "2026-06-26")
+        self.assertEqual(companions[0]["check_out"], "2026-07-01")
 
     def test_call_tra_api_submitter_posts_one_then_two(self):
         calls = []
@@ -936,7 +946,8 @@ class ReservationToolValidationTest(unittest.TestCase):
         old_http = server.http_json
         try:
             server.http_json = fake_http_json
-            result = server.call_tra_api_submitter({}, prepared, "secret-token")
+            config = {"mcp": {"servers": {"hotel_pms": {"env": {"TRA_RNT_ESTABLISHMENT": "104360"}}}}}
+            result = server.call_tra_api_submitter(config, prepared, "secret-token")
         finally:
             server.http_json = old_http
         self.assertEqual(result["status"], "submitted")

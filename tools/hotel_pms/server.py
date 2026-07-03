@@ -2452,6 +2452,18 @@ def tra_api_token(config: dict[str, Any]) -> str | None:
     return cfg_file(config, "TRA_API_TOKEN") or cfg_env(config, "TRA_API_TOKEN")
 
 
+def tra_establishment_name(config: dict[str, Any]) -> str:
+    return cfg_env(config, "TRA_ESTABLISHMENT_NAME") or "Owl's Watch"
+
+
+def tra_establishment_rnt(config: dict[str, Any]) -> str | None:
+    return (
+        cfg_file(config, "TRA_RNT_ESTABLISHMENT")
+        or cfg_env(config, "TRA_RNT_ESTABLISHMENT")
+        or tra_username(config)
+    )
+
+
 def tra_username(config: dict[str, Any]) -> str | None:
     return cfg_file(config, "TRA_USERNAME") or cfg_file(config, "TRA_RNT") or cfg_env(config, "TRA_USERNAME") or cfg_env(config, "TRA_RNT")
 
@@ -2846,6 +2858,19 @@ def build_tra_api_guest_payload(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = prepared_government_payload(prepared)
     reservation = payload.get("reservation") if isinstance(payload.get("reservation"), dict) else {}
+    check_in = first_present(
+        reservation.get("arrivalDate"),
+        reservation.get("checkInDate"),
+        nested_value(payload, "tra.checkInDate"),
+        payload.get("arrivalDate"),
+    )
+    check_out = first_present(
+        reservation.get("departureDate"),
+        reservation.get("checkOutDate"),
+        nested_value(payload, "tra.checkOutDate"),
+        payload.get("departureDate"),
+    )
+    room_number = tra_payload_room_number(payload, config)
     doc_type = tra_document_type(first_present(
         guest.get("documentType"),
         guest.get("docType"),
@@ -2857,34 +2882,31 @@ def build_tra_api_guest_payload(
         "numero_identificacion": first_present(guest.get("documentNumber"), guest.get("docNumber"), guest.get("numeroIdentificacion")),
         "nombres": first_present(guest.get("firstName"), guest.get("firstNames"), guest.get("givenNames"), guest.get("nombres")),
         "apellidos": first_present(guest.get("lastName"), guest.get("lastNames"), guest.get("surname"), guest.get("surnames"), guest.get("apellidos")),
-        "ciudad_residencia": tra_guest_city_value(guest, "residenceCity", "residenceCityName", "cityOfResidence"),
-        "ciudad_procedencia": tra_guest_city_value(guest, "originCity", "originCityName"),
+        # The official TRA PMS manual intentionally spells these API keys as
+        # "cuidad_*". The portal form uses "ciudad_*", but the API examples do not.
+        "cuidad_residencia": tra_guest_city_value(guest, "residenceCity", "residenceCityName", "cityOfResidence"),
+        "cuidad_procedencia": tra_guest_city_value(guest, "originCity", "originCityName"),
     }
     if companion_parent_code:
         fields = {
             "padre": companion_parent_code,
             **base_fields,
+            "numero_habitacion": room_number,
+            "check_in": check_in,
+            "check_out": check_out,
         }
     else:
         fields = {
             **base_fields,
-            "numero_habitacion": tra_payload_room_number(payload, config),
+            "numero_habitacion": room_number,
             "motivo": tra_payload_motivo(payload, config),
             "numero_acompanantes": str(max(guest_count - 1, 0)),
-            "check_in": first_present(
-                reservation.get("arrivalDate"),
-                reservation.get("checkInDate"),
-                nested_value(payload, "tra.checkInDate"),
-                payload.get("arrivalDate"),
-            ),
-            "check_out": first_present(
-                reservation.get("departureDate"),
-                reservation.get("checkOutDate"),
-                nested_value(payload, "tra.checkOutDate"),
-                payload.get("departureDate"),
-            ),
+            "check_in": check_in,
+            "check_out": check_out,
             "tipo_acomodacion": tra_payload_accommodation(payload, guest_count, config),
             "costo": tra_payload_cost(payload),
+            "nombre_establecimiento": tra_establishment_name(config),
+            "rnt_establecimiento": tra_establishment_rnt(config),
         }
     missing = [key for key, value in fields.items() if value in (None, "")]
     if missing:
