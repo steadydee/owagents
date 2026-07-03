@@ -32,6 +32,7 @@ two-step PMS-prepared token and simple staff `sí` confirmation.
 - `hotel_registro_prepare_submissions`
 - `hotel_registro_prepare_government_submission`
 - `hotel_registro_submit_government`
+- `hotel_registro_daily_pickup`
 - `hotel_registro_record_submission_status`
 - `hotel_telegram_send_message`
 - `hotel_memory_log`
@@ -82,6 +83,12 @@ match.
 `hotel_registro_record_submission_status` can record `pending`, `failed`, or
 `needs_info` status for a TRA/SIRE attempt in PMS. It deliberately rejects
 `submitted`; submitted status is reserved for the receipt-gated submitter.
+
+`hotel_registro_daily_pickup` is the scheduled operations wrapper. It reads
+PMS `registro_list_pending`, limits the normal sweep to yesterday through two
+days ahead, extracts uploaded documents, submits TRA only when PMS says the
+record is ready, never submits SIRE, and can send one staff-safe Telegram
+summary.
 
 Never expose document numbers, fetch tokens, file bytes, base64, or raw OCR in
 Telegram or agent memory.

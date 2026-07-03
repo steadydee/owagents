@@ -289,6 +289,20 @@ const toolSchemas = {
       additionalProperties: false,
     },
   },
+  hotel_registro_daily_pickup: {
+    description: "Process pending PMS Registro records: extract uploaded documents, submit TRA when ready, and optionally send a staff-safe Telegram summary.",
+    parameters: {
+      type: "object",
+      properties: {
+        submitTra: { type: ["boolean", "null"] },
+        notify: { type: ["boolean", "null"] },
+        maxRecords: { type: ["integer", "null"] },
+        daysBack: { type: ["integer", "null"] },
+        daysAhead: { type: ["integer", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
   hotel_registro_record_submission_status: {
     description: "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",
     parameters: {

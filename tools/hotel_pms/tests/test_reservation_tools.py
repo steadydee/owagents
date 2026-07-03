@@ -1,4 +1,5 @@
 import importlib.util
+import datetime as dt
 import pathlib
 import tempfile
 import unittest
@@ -765,6 +766,106 @@ class ReservationToolValidationTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["results"][0]["reason"], "sire_submitter_not_configured")
+
+    def test_registro_daily_pickup_uses_pending_window_and_notifies(self):
+        calls: list[tuple[str, dict, str]] = []
+        recorded: list[dict] = []
+        telegram: list[str] = []
+
+        def fake_local_date(config, offset=0):
+            base = dt.date(2026, 6, 26)
+            return (base + dt.timedelta(days=offset)).isoformat()
+
+        def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
+            calls.append((tool_name, input_payload or {}, profile))
+            if tool_name == "registro_list_pending":
+                return [
+                    {
+                        "registrationId": "reg-1",
+                        "reservationId": "res-1",
+                        "guestName": "Rishab Whatsapp",
+                        "status": "data_submitted",
+                        "documentCount": 2,
+                        "arrivalDate": "2026-06-26",
+                        "departureDate": "2026-07-01",
+                        "dueSubmissionTypes": [],
+                    },
+                    {
+                        "registrationId": "old-reg",
+                        "reservationId": "old-res",
+                        "guestName": "Old Guest",
+                        "status": "validated",
+                        "documentCount": 1,
+                        "arrivalDate": "2026-01-01",
+                        "departureDate": "2026-01-02",
+                        "dueSubmissionTypes": ["tra"],
+                    },
+                ]
+            if tool_name == "registro_get_by_reservation":
+                return {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["tra"]}
+            if tool_name == "registro_list_guests":
+                return {"guests": [{"registrationGuestId": "guest-1", "submissionStatus": "ready", "extractionStatus": "extracted", "missingFields": []}]}
+            if tool_name == "registro_prepare_government_submission":
+                return {
+                    "registrationId": "reg-1",
+                    "reservationId": "res-1",
+                    "submissionType": "tra",
+                    "status": "ready",
+                    "idempotencyKey": "registro:reg-1:tra",
+                    "payload": {"guests": [{"documentNumber": "A12345678"}]},
+                }
+            if tool_name == "registro_record_submission":
+                recorded.append(input_payload or {})
+                return {"state": input_payload["state"], "receiptReference": input_payload["receiptReference"]}
+            raise AssertionError(f"unexpected PMS tool {tool_name}")
+
+        old_load = server.load_config
+        old_pms = server.pms_tool
+        old_local_date = server.local_date
+        old_enabled = server.government_submitter_enabled
+        old_tra = server.call_tra_submitter
+        old_extract = server.tool_hotel_registro_extract_reservation
+        old_telegram = server.tool_hotel_telegram_send_message
+        try:
+            server.load_config = lambda: {}
+            server.pms_tool = fake_pms_tool
+            server.local_date = fake_local_date
+            server.government_submitter_enabled = lambda config: True
+            server.call_tra_submitter = lambda config, prepared: {
+                "ok": True,
+                "status": "submitted",
+                "receiptReference": "TRA-RECEIPT-1",
+                "responseSummary": {"radicado": "TRA-RECEIPT-1"},
+            }
+            server.tool_hotel_registro_extract_reservation = lambda args: {
+                "ok": True,
+                "reservationId": args["reservationId"],
+                "registrationId": "reg-1",
+                "guestCount": 2,
+                "documentCount": 2,
+                "results": [{"status": "recorded"}, {"status": "recorded"}],
+            }
+            server.tool_hotel_telegram_send_message = lambda args: telegram.append(args["text"]) or {"ok": True, "message_id": 1}
+            result = server.tool_hotel_registro_daily_pickup({"notify": True, "submitTra": True, "maxRecords": 10})
+        finally:
+            server.load_config = old_load
+            server.pms_tool = old_pms
+            server.local_date = old_local_date
+            server.government_submitter_enabled = old_enabled
+            server.call_tra_submitter = old_tra
+            server.tool_hotel_registro_extract_reservation = old_extract
+            server.tool_hotel_telegram_send_message = old_telegram
+
+        self.assertEqual(result["pendingCount"], 2)
+        self.assertEqual(result["eligibleCount"], 1)
+        self.assertEqual(result["processed"][0]["label"], "Rishab Whatsapp")
+        self.assertEqual(result["processed"][0]["receiptReference"], "TRA-RECEIPT-1")
+        self.assertEqual(recorded[0]["state"], "submitted")
+        self.assertTrue(telegram)
+        self.assertIn("Rishab Whatsapp: TRA enviado", telegram[0])
+        rendered = str(result)
+        self.assertNotIn("Old Guest: TRA enviado", rendered)
+        self.assertTrue(any(call[0] == "registro_list_pending" for call in calls))
 
     def test_build_tra_form_fields_maps_required_form_values(self):
         html = """

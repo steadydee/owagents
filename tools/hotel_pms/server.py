@@ -67,6 +67,7 @@ PMS_READ_TOOLS = (
 )
 
 PMS_REGISTRO_READ_TOOLS = (
+    "registro_list_pending",
     "registro_get",
     "registro_get_by_reservation",
     "registro_list_guests",
@@ -3499,6 +3500,207 @@ def tool_hotel_registro_submit_government(args: dict[str, Any]) -> dict[str, Any
     }
 
 
+def pending_registro_items(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        for key in ("registrations", "items", "pending", "records", "data"):
+            child = value.get(key)
+            if isinstance(child, list):
+                return [item for item in child if isinstance(item, dict)]
+            if isinstance(child, dict):
+                nested = pending_registro_items(child)
+                if nested:
+                    return nested
+    return []
+
+
+def registro_pickup_label(item: dict[str, Any]) -> str:
+    return validate_text(
+        "registroPickupLabel",
+        first_present(item.get("guestName"), item.get("bookingCode"), item.get("reservationId"), item.get("registrationId"), "Registro"),
+        max_len=120,
+    ) or "Registro"
+
+
+def summarize_registro_pickup_result(result: dict[str, Any]) -> str:
+    label = result.get("label") or "Registro"
+    status = result.get("status")
+    if status == "submitted":
+        reference = result.get("receiptReference")
+        return f"- {label}: TRA enviado" + (f" (ref. {reference})" if reference else "")
+    if status == "no_tra_due":
+        due = result.get("dueSubmissionTypes") or []
+        if due:
+            return f"- {label}: TRA no pendiente; pendiente {', '.join(str(item) for item in due)}"
+        return f"- {label}: nada pendiente"
+    if status == "needs_review":
+        reason = result.get("reason") or "requiere revision en PMS"
+        return f"- {label}: necesita revision ({reason})"
+    if status == "blocked":
+        reason = result.get("reason") or "bloqueado"
+        return f"- {label}: bloqueado ({reason})"
+    if status == "error":
+        reason = result.get("reason") or "error"
+        return f"- {label}: error ({reason})"
+    return f"- {label}: {status or 'revisado'}"
+
+
+def build_registro_pickup_message(summary: dict[str, Any]) -> str:
+    lines = ["Registro pickup diario"]
+    processed = summary.get("processed") if isinstance(summary.get("processed"), list) else []
+    review = summary.get("needsReview") if isinstance(summary.get("needsReview"), list) else []
+    skipped = summary.get("skipped") if isinstance(summary.get("skipped"), list) else []
+    errors = summary.get("errors") if isinstance(summary.get("errors"), list) else []
+
+    if processed:
+        lines.append("")
+        lines.append("Procesados")
+        lines.extend(summarize_registro_pickup_result(item) for item in processed)
+    if review:
+        lines.append("")
+        lines.append("Necesitan revision")
+        lines.extend(summarize_registro_pickup_result(item) for item in review)
+    if errors:
+        lines.append("")
+        lines.append("Errores")
+        lines.extend(summarize_registro_pickup_result(item) for item in errors)
+    if not processed and not review and not errors:
+        lines.append("")
+        lines.append("No hay registros pendientes para TRA.")
+    if skipped:
+        sire_count = sum(1 for item in skipped if "sire" in ",".join(str(child) for child in item.get("dueSubmissionTypes") or []))
+        if sire_count:
+            lines.append("")
+            lines.append(f"SIRE pendiente en {sire_count} registro(s). Todavia no esta automatizado.")
+    return "\n".join(lines)
+
+
+def registro_pickup_in_window(item: dict[str, Any], start_date: str, end_date: str) -> bool:
+    arrival = date_part(item.get("arrivalDate"))
+    departure = date_part(item.get("departureDate"))
+    if not arrival and not departure:
+        return False
+    if arrival and start_date <= arrival <= end_date:
+        return True
+    if departure and start_date <= departure <= end_date:
+        return True
+    if arrival and departure and arrival < start_date and departure > start_date:
+        return True
+    return False
+
+
+def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    submit_tra = validate_bool("submitTra", args.get("submitTra"))
+    if submit_tra is None:
+        submit_tra = True
+    notify = validate_bool("notify", args.get("notify"))
+    if notify is None:
+        notify = False
+    max_records = validate_int("maxRecords", args.get("maxRecords"), min_value=1, max_value=100) or 25
+    days_back = validate_int("daysBack", args.get("daysBack"), min_value=0, max_value=30)
+    if days_back is None:
+        days_back = 1
+    days_ahead = validate_int("daysAhead", args.get("daysAhead"), min_value=0, max_value=30)
+    if days_ahead is None:
+        days_ahead = 2
+    start_date = local_date(config, -days_back)
+    end_date = local_date(config, days_ahead)
+
+    pending_raw = pms_tool(config, "registro_list_pending", {}, profile="registro_read")
+    all_items = pending_registro_items(pending_raw)
+    items = [item for item in all_items if registro_pickup_in_window(item, start_date, end_date)]
+    summary: dict[str, Any] = {
+        "ok": True,
+        "mode": "submit_tra" if submit_tra else "dry_run",
+        "window": {"startDate": start_date, "endDate": end_date},
+        "pendingCount": len(all_items),
+        "eligibleCount": len(items),
+        "processed": [],
+        "needsReview": [],
+        "skipped": [],
+        "errors": [],
+    }
+
+    for item in items[:max_records]:
+        label = registro_pickup_label(item)
+        registration_id = validate_safe_id("registrationId", item.get("registrationId"), required=False)
+        reservation_id = validate_safe_id("reservationId", item.get("reservationId"), required=False)
+        due_types = item.get("dueSubmissionTypes") if isinstance(item.get("dueSubmissionTypes"), list) else []
+        document_count = validate_int("documentCount", item.get("documentCount"), min_value=0, max_value=100) or 0
+        status = str(item.get("status") or "").lower()
+        base = {
+            "label": label,
+            "registrationId": registration_id,
+            "reservationId": reservation_id,
+            "statusBefore": status,
+            "documentCount": document_count,
+            "dueSubmissionTypes": staff_safe_value(due_types),
+        }
+        try:
+            if not registration_id:
+                summary["needsReview"].append({**base, "status": "needs_review", "reason": "sin registro"})
+                continue
+            if "tra" not in due_types and status == "validated":
+                summary["skipped"].append({**base, "status": "no_tra_due"})
+                continue
+            if status != "validated":
+                if document_count <= 0:
+                    summary["needsReview"].append({**base, "status": "needs_review", "reason": "sin documentos"})
+                    continue
+                if not reservation_id:
+                    summary["needsReview"].append({**base, "status": "needs_review", "reason": "sin reserva vinculada"})
+                    continue
+                extraction = tool_hotel_registro_extract_reservation({"reservationId": reservation_id, "record": True})
+                base["extractionStatus"] = extraction.get("status") or "processed"
+                base["guestCount"] = extraction.get("guestCount")
+                review_count = sum(1 for row in extraction.get("results") or [] if isinstance(row, dict) and row.get("status") == "needs_review")
+                if review_count:
+                    summary["needsReview"].append({**base, "status": "needs_review", "reason": f"{review_count} huesped(es) necesitan revision"})
+                    continue
+            submit_args = {
+                "registrationId": registration_id,
+                "submissionTypes": ["tra"],
+                "mode": "submit" if submit_tra else "dry_run",
+            }
+            if reservation_id:
+                submit_args["reservationId"] = reservation_id
+            submit_result = tool_hotel_registro_submit_government(submit_args)
+            submit_status = submit_result.get("status")
+            first_result = None
+            for row in submit_result.get("results") or []:
+                if isinstance(row, dict):
+                    first_result = row
+                    break
+            if submit_status == "submitted":
+                summary["processed"].append({
+                    **base,
+                    "status": "submitted",
+                    "receiptReference": (first_result or {}).get("receiptReference"),
+                })
+            elif submit_status in {"ready"}:
+                summary["processed"].append({**base, "status": "ready"})
+            elif submit_status in {"no_due"}:
+                summary["skipped"].append({**base, "status": "no_tra_due"})
+            else:
+                reason = (first_result or {}).get("reason") or submit_status or "no listo"
+                target = summary["needsReview"] if submit_status in {"needs_info", "blocked"} else summary["errors"]
+                target.append({**base, "status": "needs_review" if target is summary["needsReview"] else "error", "reason": reason})
+        except ToolError as exc:
+            summary["errors"].append({**base, "status": "error", "reason": exc.code})
+
+    if len(items) > max_records:
+        summary["truncated"] = True
+        summary["remainingCount"] = len(items) - max_records
+
+    message = build_registro_pickup_message(summary)
+    summary["message"] = message
+    if notify:
+        summary["telegram"] = tool_hotel_telegram_send_message({"text": message})
+    return summary
+
+
 def tool_hotel_registro_record_submission_status(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     registration_id = validate_safe_id("registrationId", args.get("registrationId"))
@@ -3837,6 +4039,21 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
             "additionalProperties": False,
         },
         tool_hotel_registro_submit_government,
+    ),
+    "hotel_registro_daily_pickup": (
+        "Process pending PMS Registro records: extract uploaded documents, submit TRA when ready, and optionally send a staff-safe Telegram summary.",
+        {
+            "type": "object",
+            "properties": {
+                "submitTra": {"type": ["boolean", "null"]},
+                "notify": {"type": ["boolean", "null"]},
+                "maxRecords": {"type": ["integer", "null"]},
+                "daysBack": {"type": ["integer", "null"]},
+                "daysAhead": {"type": ["integer", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        tool_hotel_registro_daily_pickup,
     ),
     "hotel_registro_record_submission_status": (
         "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",

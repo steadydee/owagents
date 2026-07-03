@@ -27,6 +27,9 @@ Run this skill when staff asks to:
 - preparar TRA
 - verificar si esta listo para SIRE/TRA
 - enviar a SIRE/TRA, submit SIRE, submit TRA
+- scheduled Registro pickup
+- pickup diario de Registro
+- revisar registros pendientes
 - revisar documentos de huespedes
 - process guest registration documents
 
@@ -44,6 +47,7 @@ Use only:
 - `hotel_registro_prepare_submissions`
 - `hotel_registro_prepare_government_submission`
 - `hotel_registro_submit_government`
+- `hotel_registro_daily_pickup`
 - `hotel_registro_record_submission_status`
 - `hotel_pms_find_reservation`
 - `hotel_pms_get_reservation_context`
@@ -67,6 +71,37 @@ Use only:
 - Do not access PMS outside the configured Hotel tools.
 
 # Procedure
+
+## Scheduled daily pickup
+
+If the instruction is a scheduled run such as `registro_daily_pickup`,
+`scheduled Registro pickup`, or `pickup diario de Registro`, call:
+
+```json
+{
+  "tool": "hotel_registro_daily_pickup",
+  "arguments": {
+    "submitTra": true,
+    "notify": true,
+    "maxRecords": 25,
+    "daysBack": 1,
+    "daysAhead": 2
+  }
+}
+```
+
+This tool owns the loop:
+
+- reads pending PMS Registro records
+- extracts uploaded documents when needed
+- submits TRA only when PMS says the record is ready
+- never submits SIRE
+- limits the normal sweep to yesterday through two days ahead
+- sends one staff-safe Telegram summary
+
+After the tool returns, reply with one short confirmation in the OpenClaw chat.
+Do not send an additional Telegram message unless the tool reports that its
+Telegram notification failed.
 
 ## Step 1 - Identify the reservation
 
