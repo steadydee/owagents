@@ -852,6 +852,101 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["reason"], "tra_credentials_missing")
 
+    def test_build_tra_api_payloads_maps_primary_and_companions(self):
+        prepared = {
+            "payload": {
+                "reservation": {
+                    "arrivalDate": "2026-06-26",
+                    "departureDate": "2026-07-01",
+                    "unitNumber": "1",
+                    "totalCostCop": 2000,
+                    "travelReason": "tourism",
+                },
+                "guests": [
+                    {
+                        "documentType": "passport",
+                        "documentNumber": "A12345678",
+                        "givenNames": "Miranda",
+                        "surname": "Davies",
+                        "residenceCity": "Boston",
+                        "originCity": "Manizales",
+                    },
+                    {
+                        "documentType": "passport",
+                        "documentNumber": "B12345678",
+                        "givenNames": "Alex",
+                        "surname": "Davies",
+                        "residenceCity": "Boston",
+                        "originCity": "Manizales",
+                    },
+                ],
+            }
+        }
+        primary, companions, result = server.build_tra_api_payloads({}, prepared)
+        self.assertTrue(result["ok"])
+        self.assertEqual(primary["tipo_identificacion"], "Pasaporte")
+        self.assertEqual(primary["numero_identificacion"], "A12345678")
+        self.assertEqual(primary["numero_acompanantes"], "1")
+        self.assertEqual(primary["check_in"], "2026-06-26")
+        self.assertEqual(primary["check_out"], "2026-07-01")
+        self.assertEqual(primary["costo"], "2000")
+        self.assertEqual(len(companions), 1)
+        self.assertEqual(companions[0]["padre"], "__PARENT_CODE__")
+        self.assertEqual(companions[0]["numero_identificacion"], "B12345678")
+
+    def test_call_tra_api_submitter_posts_one_then_two(self):
+        calls = []
+
+        def fake_http_json(url, payload, headers=None, timeout=30):
+            calls.append((url, payload, headers))
+            if url.endswith("/one/"):
+                return {"code": "TRA-PRIMARY-1", "status": "ok"}
+            if url.endswith("/two/"):
+                return {"status": "ok"}
+            raise AssertionError(f"unexpected url {url}")
+
+        prepared = {
+            "payload": {
+                "reservation": {
+                    "arrivalDate": "2026-06-26",
+                    "departureDate": "2026-07-01",
+                    "unitNumber": "1",
+                    "totalCostCop": 2000,
+                },
+                "guests": [
+                    {
+                        "documentType": "passport",
+                        "documentNumber": "A12345678",
+                        "givenNames": "Miranda",
+                        "surname": "Davies",
+                        "residenceCity": "Boston",
+                        "originCity": "Manizales",
+                    },
+                    {
+                        "documentType": "passport",
+                        "documentNumber": "B12345678",
+                        "givenNames": "Alex",
+                        "surname": "Davies",
+                        "residenceCity": "Boston",
+                        "originCity": "Manizales",
+                    },
+                ],
+            }
+        }
+        old_http = server.http_json
+        try:
+            server.http_json = fake_http_json
+            result = server.call_tra_api_submitter({}, prepared, "secret-token")
+        finally:
+            server.http_json = old_http
+        self.assertEqual(result["status"], "submitted")
+        self.assertEqual(result["receiptReference"], "TRA-PRIMARY-1")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], "https://pms.mincit.gov.co/one/")
+        self.assertEqual(calls[1][0], "https://pms.mincit.gov.co/two/")
+        self.assertEqual(calls[0][2]["Authorization"], "token secret-token")
+        self.assertEqual(calls[1][1]["padre"], "TRA-PRIMARY-1")
+
 
 if __name__ == "__main__":
     unittest.main()

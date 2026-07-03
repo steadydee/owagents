@@ -39,6 +39,7 @@ DEFAULT_PMS_BASE_URL = "https://pms.owlswatch.com"
 DEFAULT_PROPERTY_ID = "owlswatch"
 DEFAULT_TIMEZONE = "America/Bogota"
 LOCAL_OCR_SCRIPT = Path(__file__).with_name("apple_vision_ocr.swift")
+DEFAULT_TRA_API_BASE_URL = "https://pms.mincit.gov.co"
 DEFAULT_TRA_LOGIN_URL = "https://tra.mincit.gov.co/login/"
 DEFAULT_TRA_NEW_GUEST_URL = "https://tra.mincit.gov.co/padd/"
 DEFAULT_TRA_REGISTERED_GUESTS_URL = "https://tra.mincit.gov.co/blo"
@@ -2395,6 +2396,34 @@ def tra_submission_url(config: dict[str, Any]) -> str | None:
     return raw
 
 
+def tra_api_base_url(config: dict[str, Any]) -> str:
+    raw = cfg_env(config, "TRA_API_BASE_URL") or DEFAULT_TRA_API_BASE_URL
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ToolError("config_invalid", "TRA API base URL must be an https URL.")
+    return raw.rstrip("/")
+
+
+def tra_api_one_url(config: dict[str, Any]) -> str:
+    raw = cfg_env(config, "TRA_API_ONE_URL")
+    if raw:
+        parsed = urllib.parse.urlparse(raw)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ToolError("config_invalid", "TRA API one URL must be an https URL.")
+        return raw
+    return f"{tra_api_base_url(config)}/one/"
+
+
+def tra_api_two_url(config: dict[str, Any]) -> str:
+    raw = cfg_env(config, "TRA_API_TWO_URL")
+    if raw:
+        parsed = urllib.parse.urlparse(raw)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ToolError("config_invalid", "TRA API two URL must be an https URL.")
+        return raw
+    return f"{tra_api_base_url(config)}/two/"
+
+
 def tra_login_url(config: dict[str, Any]) -> str:
     raw = cfg_env(config, "TRA_LOGIN_URL") or DEFAULT_TRA_LOGIN_URL
     parsed = urllib.parse.urlparse(raw)
@@ -2803,6 +2832,199 @@ def build_tra_form_fields(config: dict[str, Any], prepared: dict[str, Any], page
     return form_fields, {"ok": True, "status": "ready", "summary": safe_summary}
 
 
+def tra_guest_city_value(guest: dict[str, Any], *keys: str) -> Any:
+    return first_present(*(guest.get(key) for key in keys))
+
+
+def build_tra_api_guest_payload(
+    config: dict[str, Any],
+    prepared: dict[str, Any],
+    guest: dict[str, Any],
+    *,
+    guest_count: int,
+    companion_parent_code: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = prepared_government_payload(prepared)
+    reservation = payload.get("reservation") if isinstance(payload.get("reservation"), dict) else {}
+    doc_type = tra_document_type(first_present(
+        guest.get("documentType"),
+        guest.get("docType"),
+        guest.get("tipoIdentificacion"),
+        guest.get("tipo_identificacion"),
+    ))
+    base_fields = {
+        "tipo_identificacion": doc_type,
+        "numero_identificacion": first_present(guest.get("documentNumber"), guest.get("docNumber"), guest.get("numeroIdentificacion")),
+        "nombres": first_present(guest.get("firstName"), guest.get("firstNames"), guest.get("givenNames"), guest.get("nombres")),
+        "apellidos": first_present(guest.get("lastName"), guest.get("lastNames"), guest.get("surname"), guest.get("surnames"), guest.get("apellidos")),
+        "ciudad_residencia": tra_guest_city_value(guest, "residenceCity", "residenceCityName", "cityOfResidence"),
+        "ciudad_procedencia": tra_guest_city_value(guest, "originCity", "originCityName"),
+    }
+    if companion_parent_code:
+        fields = {
+            "padre": companion_parent_code,
+            **base_fields,
+        }
+    else:
+        fields = {
+            **base_fields,
+            "numero_habitacion": tra_payload_room_number(payload, config),
+            "motivo": tra_payload_motivo(payload, config),
+            "numero_acompanantes": str(max(guest_count - 1, 0)),
+            "check_in": first_present(
+                reservation.get("arrivalDate"),
+                reservation.get("checkInDate"),
+                nested_value(payload, "tra.checkInDate"),
+                payload.get("arrivalDate"),
+            ),
+            "check_out": first_present(
+                reservation.get("departureDate"),
+                reservation.get("checkOutDate"),
+                nested_value(payload, "tra.checkOutDate"),
+                payload.get("departureDate"),
+            ),
+            "tipo_acomodacion": tra_payload_accommodation(payload, guest_count, config),
+            "costo": tra_payload_cost(payload),
+        }
+    missing = [key for key, value in fields.items() if value in (None, "")]
+    if missing:
+        return {}, {
+            "ok": False,
+            "status": "blocked",
+            "reason": "tra_api_payload_missing_required_fields",
+            "missingFields": missing,
+        }
+    cleaned = {key: str(value) for key, value in fields.items()}
+    safe_summary = {
+        "documentType": cleaned["tipo_identificacion"],
+        "hasParent": bool(companion_parent_code),
+    }
+    if not companion_parent_code:
+        safe_summary.update({
+            "guestCount": guest_count,
+            "checkIn": cleaned["check_in"],
+            "checkOut": cleaned["check_out"],
+            "roomNumber": cleaned["numero_habitacion"],
+            "accommodationType": cleaned["tipo_acomodacion"],
+        })
+    return cleaned, {"ok": True, "status": "ready", "summary": safe_summary}
+
+
+def build_tra_api_payloads(config: dict[str, Any], prepared: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    payload = prepared_government_payload(prepared)
+    guests = payload.get("guests") if isinstance(payload.get("guests"), list) else []
+    normalized_guests = [guest for guest in guests if isinstance(guest, dict)]
+    if not normalized_guests:
+        return {}, [], {
+            "ok": False,
+            "status": "blocked",
+            "reason": "tra_api_payload_missing_guests",
+            "missingFields": ["guests"],
+        }
+    primary_payload, primary_result = build_tra_api_guest_payload(
+        config,
+        prepared,
+        normalized_guests[0],
+        guest_count=len(normalized_guests),
+    )
+    if not primary_result.get("ok"):
+        return {}, [], primary_result
+    companions: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for index, guest in enumerate(normalized_guests[1:], start=1):
+        companion_payload, companion_result = build_tra_api_guest_payload(
+            config,
+            prepared,
+            guest,
+            guest_count=len(normalized_guests),
+            companion_parent_code="__PARENT_CODE__",
+        )
+        if not companion_result.get("ok"):
+            for field in companion_result.get("missingFields", []):
+                missing.append(f"guests[{index}].{field}")
+            continue
+        companions.append(companion_payload)
+    if missing:
+        return {}, [], {
+            "ok": False,
+            "status": "blocked",
+            "reason": "tra_api_payload_missing_required_fields",
+            "missingFields": missing,
+        }
+    return primary_payload, companions, {
+        "ok": True,
+        "status": "ready",
+        "summary": {
+            **primary_result.get("summary", {}),
+            "companionCount": len(companions),
+        },
+    }
+
+
+def tra_api_primary_code(response: Any) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    candidates: list[Any] = [
+        response.get("code"),
+        response.get("codigo"),
+        response.get("id"),
+        response.get("registro"),
+        response.get("receiptReference"),
+    ]
+    data = response.get("data")
+    if isinstance(data, dict):
+        candidates.extend([
+            data.get("code"),
+            data.get("codigo"),
+            data.get("id"),
+            data.get("registro"),
+            data.get("receiptReference"),
+        ])
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if text:
+            return validate_text("traPrimaryCode", text, max_len=200)
+    return None
+
+
+def call_tra_api_submitter(config: dict[str, Any], prepared: dict[str, Any], token: str) -> dict[str, Any]:
+    primary_payload, companions, payload_result = build_tra_api_payloads(config, prepared)
+    if not payload_result.get("ok"):
+        return payload_result
+    headers = {
+        "Authorization": f"token {token}",
+        "x-ow-request-source": "hotel_registro_submitter",
+        "x-ow-correlation-id": f"hotel-tra-{int(time.time())}-{os.getpid()}",
+    }
+    primary_response = http_json(tra_api_one_url(config), primary_payload, headers, timeout=45)
+    primary_code = tra_api_primary_code(primary_response)
+    if not primary_code:
+        return {
+            "ok": False,
+            "status": "failed",
+            "reason": "tra_response_missing_primary_code",
+            "responseSummary": safe_submission_response_summary(primary_response),
+        }
+    companion_summaries: list[dict[str, Any]] = []
+    for companion in companions:
+        companion_payload = {**companion, "padre": primary_code}
+        companion_response = http_json(tra_api_two_url(config), companion_payload, headers, timeout=45)
+        companion_summaries.append(safe_submission_response_summary(companion_response))
+    return {
+        "ok": True,
+        "status": "submitted",
+        "receiptReference": primary_code,
+        "responseSummary": {
+            "status": "submitted_to_tra_api",
+            "referenceType": "tra_api_code",
+            "primary": safe_submission_response_summary(primary_response),
+            "companions": companion_summaries,
+        },
+    }
+
+
 def record_government_submission(
     config: dict[str, Any],
     *,
@@ -2841,38 +3063,34 @@ def record_government_submission(
 def call_tra_submitter(config: dict[str, Any], prepared: dict[str, Any]) -> dict[str, Any]:
     url = tra_submission_url(config)
     token = tra_api_token(config)
-    if not url:
-        return call_tra_form_submitter(config, prepared)
-    if not token:
-        return {
-            "ok": False,
-            "status": "blocked",
-            "reason": "tra_adapter_not_configured",
-        }
-    response = http_json(
-        url,
-        prepared_government_payload(prepared),
-        {
-            "Authorization": f"Bearer {token}",
-            "x-ow-request-source": "hotel_registro_submitter",
-            "x-ow-correlation-id": f"hotel-tra-{int(time.time())}-{os.getpid()}",
-        },
-        timeout=45,
-    )
-    receipt = receipt_reference_from_response(response)
-    if not receipt:
-        return {
-            "ok": False,
-            "status": "failed",
-            "reason": "tra_response_missing_receipt",
-            "responseSummary": safe_submission_response_summary(response),
-        }
-    return {
-        "ok": True,
-        "status": "submitted",
-        "receiptReference": receipt,
-        "responseSummary": safe_submission_response_summary(response),
-    }
+    if token:
+        if url:
+            response = http_json(
+                url,
+                prepared_government_payload(prepared),
+                {
+                    "Authorization": f"Bearer {token}",
+                    "x-ow-request-source": "hotel_registro_submitter",
+                    "x-ow-correlation-id": f"hotel-tra-{int(time.time())}-{os.getpid()}",
+                },
+                timeout=45,
+            )
+            receipt = receipt_reference_from_response(response)
+            if not receipt:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "reason": "tra_response_missing_receipt",
+                    "responseSummary": safe_submission_response_summary(response),
+                }
+            return {
+                "ok": True,
+                "status": "submitted",
+                "receiptReference": receipt,
+                "responseSummary": safe_submission_response_summary(response),
+            }
+        return call_tra_api_submitter(config, prepared, token)
+    return call_tra_form_submitter(config, prepared)
 
 
 def http_text_with_opener(

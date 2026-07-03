@@ -35,8 +35,9 @@ The Hotel OpenClaw agent has these Registro tools:
   - `mode: dry_run` verifies readiness and returns safe metadata only.
   - `mode: submit` is receipt-gated and requires the runtime flag
     `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED=1`.
-  - TRA prefers the official MinCIT PMS API when `TRA_SUBMISSION_URL`/`TRA_API_URL`
-    and `TRA_API_TOKEN` are configured.
+  - TRA prefers the official MinCIT PMS API when `TRA_API_TOKEN` is configured.
+    The official adapter posts the primary guest to `https://pms.mincit.gov.co/one/`
+    and accompanying guests to `https://pms.mincit.gov.co/two/`.
   - Until the official API token is available, a conservative TRA manual-form
     adapter can use runtime-only TRA credentials and records submitted only
     after the guest is visible in TRA's registered-guests table.
@@ -148,8 +149,9 @@ Live submission is off by default.
 
 ```text
 REGISTRO_GOVERNMENT_SUBMITTER_ENABLED=0
-TRA_SUBMISSION_URL=<official TRA PMS API endpoint when provided>
+TRA_API_BASE_URL=https://pms.mincit.gov.co
 TRA_API_TOKEN_FILE=~/.openclaw-hotel/secrets/tra-api-token
+TRA_SUBMISSION_URL=<optional custom compatibility endpoint>
 TRA_USERNAME_FILE=~/.openclaw-hotel/secrets/tra-username
 TRA_PASSWORD_FILE=~/.openclaw-hotel/secrets/tra-password
 TRA_LOGIN_URL=https://tra.mincit.gov.co/login/
@@ -161,14 +163,14 @@ SIRE_LOGIN_URL=https://apps.migracioncolombia.gov.co/sire/public/login.jsf
 Do not enable `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED` until at least one adapter
 has been verified in a non-destructive run.
 
-TRA's token manager is available at:
+TRA's token self-service page is available at:
 
 ```text
-https://pms.mincit.gov.co
+https://pms.mincit.gov.co/token/
 ```
 
-It uses the RNT plus a separate PMS/API password and reCAPTCHA. Store the
-resulting API token in a local secret file only.
+It uses the RNT and reCAPTCHA, then sends the token to the registered RNT email.
+Store the resulting API token in a local secret file only.
 
 The PMS payload must include the internal TRA `costo`/total value required by
 TRA. This value is for government submission only and must not be exposed in
@@ -178,8 +180,7 @@ Telegram, agent memory, or staff hotel summaries.
 
 Finish the government adapters after we have verified credentials and behavior:
 
-- official TRA API endpoint, auth scheme, payload contract, and receipt shape
-- PMS/API password and API token from MinCIT's PMS token manager
+- TRA API token from MinCIT's PMS token manager
 - SIRE credentials plus browser/API selectors and receipt shape
 - entrada versus salida flow
 - duplicate behavior

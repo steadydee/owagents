@@ -70,11 +70,14 @@ bytes, or fetch tokens to the model.
 `hotel_registro_submit_government` is the only path that can attempt a live
 government submission. In `dry_run` mode it verifies readiness only. In `submit`
 mode it requires `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED=1`; TRA also requires
-a configured official PMS API endpoint/token. Until that token is available,
-the runtime includes a conservative TRA manual-form adapter that can only mark
-submitted after the registered guest is visible in TRA. SIRE remains blocked
-until its adapter is verified. The tool records `submitted` in PMS only after
-receiving a real receipt/reference or a verified TRA registration-table match.
+a configured official PMS API token from `https://pms.mincit.gov.co/token/`.
+The official adapter posts the primary guest to `/one/` and accompanying guests
+to `/two/` using the primary guest `code` as `padre`. Until the token is
+available, the runtime includes a conservative TRA manual-form adapter that can
+only mark submitted after the registered guest is visible in TRA. SIRE remains
+blocked until its adapter is verified. The tool records `submitted` in PMS only
+after receiving a real receipt/reference or a verified TRA registration-table
+match.
 
 `hotel_registro_record_submission_status` can record `pending`, `failed`, or
 `needs_info` status for a TRA/SIRE attempt in PMS. It deliberately rejects
@@ -92,7 +95,10 @@ Telegram or agent memory.
 - `HOTEL_TELEGRAM_NOTIFY_CHAT_ID`
 - `HOTEL_TELEGRAM_NOTIFY_THREAD_ID` optional
 - `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED` optional, default `0`
-- `TRA_SUBMISSION_URL` or `TRA_API_URL` optional official PMS API endpoint
+- `TRA_API_BASE_URL` optional, defaults to `https://pms.mincit.gov.co`
+- `TRA_API_ONE_URL` optional, defaults to `${TRA_API_BASE_URL}/one/`
+- `TRA_API_TWO_URL` optional, defaults to `${TRA_API_BASE_URL}/two/`
+- `TRA_SUBMISSION_URL` or `TRA_API_URL` optional custom compatibility endpoint
 - `TRA_API_TOKEN` or `TRA_API_TOKEN_FILE` optional official PMS API token
 - `TRA_LOGIN_URL` optional, defaults to `https://tra.mincit.gov.co/login/`
 - `TRA_NEW_GUEST_URL` optional, defaults to `https://tra.mincit.gov.co/padd/`
