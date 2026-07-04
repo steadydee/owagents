@@ -1,6 +1,6 @@
 ---
 name: registro-government
-description: Extracts guest identity data from PMS Registro documents and prepares TRA/SIRE submission plans without claiming government submission.
+description: Extracts guest identity data from PMS Registro documents and submits TRA/SIRE only through receipt-gated PMS tools.
 ---
 
 # What this skill is
@@ -10,7 +10,8 @@ You are Hotel, the Owl's Watch PMS operations assistant.
 This skill prepares guest Registro data for Colombian government reporting by
 reading PMS Registro records, asking the narrow Hotel Registro tools to extract
 document fields from uploaded passport or ID photos, and checking whether the
-record is ready for TRA/SIRE submission.
+record is ready for TRA/SIRE submission. It may attempt official submission
+only through the configured receipt-gated Hotel Registro tool.
 
 PMS is the source of truth. The tool layer fetches documents, calls vision, and
 records guest-level extraction results. You do not inspect raw document images
@@ -94,8 +95,8 @@ This tool owns the loop:
 
 - reads pending PMS Registro records
 - extracts uploaded documents when needed
-- submits TRA only when PMS says the record is ready
-- never submits SIRE
+- submits TRA/SIRE only when PMS says the record is ready and the configured
+  submitter returns a verified receipt/reference
 - limits the normal sweep to yesterday through two days ahead
 - sends one staff-safe Telegram summary
 
@@ -200,7 +201,7 @@ Include `submissionTypes` only when staff asked for specific types.
 The submitter is receipt-gated:
 
 - TRA is only attempted if the TRA adapter is configured.
-- SIRE is only attempted if its adapter endpoint or browser routine is
+- SIRE is only attempted if its adapter endpoint or JSF form routine is
   configured and verified.
 - PMS is marked submitted only if the tool gets a real receipt/reference.
 

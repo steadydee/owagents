@@ -829,6 +829,111 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(salida["movementType"], "salida")
         self.assertEqual(salida["movementDate"], "2026-06-27")
 
+    def test_build_sire_lodging_form_fields_maps_jsf_values(self):
+        page_html = """
+        <form id="cargueFormHospedaje">
+          <input name="javax.faces.ViewState" value="vs-123">
+          <input id="cargueFormHospedaje:fechaMovimientoInputCurrentDate" name="cargueFormHospedaje:fechaMovimientoInputCurrentDate" value="07/2026">
+          <input id="cargueFormHospedaje:fechaNacimientoInputCurrentDate" name="cargueFormHospedaje:fechaNacimientoInputCurrentDate" value="09/1975">
+          <select id="cargueFormHospedaje:tipoDocumento">
+            <option value="">Seleccionar</option>
+            <option value="3">PASAPORTE</option>
+            <option value="5">CÉDULA DE EXTRANJERÍA</option>
+          </select>
+          <select id="cargueFormHospedaje:nacionalidad">
+            <option value="">Seleccionar</option>
+            <option value="249">ESTADOS UNIDOS DE AMERICA</option>
+            <option value="169">COLOMBIA</option>
+          </select>
+          <select id="cargueFormHospedaje:procedencia">
+            <option value="">Seleccionar</option>
+            <option value="249">ESTADOS UNIDOS DE AMERICA</option>
+            <option value="169">COLOMBIA</option>
+          </select>
+          <select id="cargueFormHospedaje:destino">
+            <option value="">Seleccionar</option>
+            <option value="249">ESTADOS UNIDOS DE AMERICA</option>
+            <option value="169">COLOMBIA</option>
+          </select>
+        </form>
+        """
+        record = {
+            "tipoMovimiento": "entrada",
+            "fechaMovimiento": "2026-06-26",
+            "tipoDocumento": "Pasaporte",
+            "numeroDocumento": "A12345678",
+            "fechaNacimiento": "1975-09-07",
+            "primerApellido": "Davies",
+            "segundoApellido": "Smith",
+            "nombres": "Miranda",
+            "nacionalidad": "United States",
+            "paisProcedencia": "United States",
+            "paisProximoDestino": "Colombia",
+        }
+        fields, result = server.build_sire_lodging_form_fields({}, {"records": [record]}, record, page_html)
+        self.assertTrue(result["ok"])
+        self.assertIn(("cargueFormHospedaje:tipoMovimiento", "3"), fields)
+        self.assertIn(("cargueFormHospedaje:fechaMovimientoInputDate", "26/06/2026"), fields)
+        self.assertIn(("cargueFormHospedaje:tipoDocumento", "3"), fields)
+        self.assertIn(("cargueFormHospedaje:nacionalidad", "249"), fields)
+        self.assertIn(("cargueFormHospedaje:procedencia", "249"), fields)
+        self.assertIn(("cargueFormHospedaje:destino", "169"), fields)
+        self.assertIn(("cargueFormHospedaje:j_id877", "cargueFormHospedaje:j_id877"), fields)
+
+    def test_sire_verified_success_uses_valid_record_counts(self):
+        page_html = """
+        <span>Total Registros procesados: 2</span>
+        <span>Num. Registros válidos: 2</span>
+        <span>Num. Registros inválidos: 0</span>
+        """
+        ok, counts = server.sire_verified_success(page_html, 2)
+        self.assertTrue(ok)
+        self.assertEqual(counts["valid"], 2)
+        self.assertEqual(counts["invalid"], 0)
+
+    def test_call_sire_submitter_uses_jsf_when_credentials_are_configured(self):
+        prepared = {
+            "registrationId": "reg-1",
+            "reservationId": "res-1",
+            "payload": {
+                "reservation": {"arrivalDate": "2026-06-26", "departureDate": "2026-06-27"},
+                "guests": [{
+                    "documentType": "passport",
+                    "documentNumber": "A12345678",
+                    "birthDate": "1975-09-07",
+                    "firstName": "Sensitive",
+                    "lastName": "Guest",
+                    "nationalityCountry": "United States",
+                    "originCountry": "United States",
+                    "destinationCountry": "Colombia",
+                    "sireRequired": True,
+                }],
+            },
+        }
+        calls = []
+        old_jsf = server.call_sire_jsf_form_submitter
+        try:
+            server.call_sire_jsf_form_submitter = lambda config, prepared_arg, submission_type: calls.append(submission_type) or {
+                "ok": True,
+                "status": "submitted",
+                "receiptReference": "SIRE-OK",
+                "payloadSummary": {"recordCount": 1},
+                "responseSummary": {"status": "submitted_to_sire_form"},
+            }
+            config = {"mcp": {"servers": {"hotel_pms": {"env": {
+                "SIRE_SUBMITTER_MODE": "jsf_form",
+                "SIRE_DOCUMENT_TYPE_VALUE": "1",
+                "SIRE_DOCUMENT_NUMBER": "12345678",
+                "SIRE_PASSWORD": "secret",
+                "SIRE_COMPANY_VALUE": "COMPANY1",
+            }}}}}
+            result = server.call_sire_submitter(config, prepared, "sire_entrada")
+        finally:
+            server.call_sire_jsf_form_submitter = old_jsf
+        self.assertEqual(result["status"], "submitted")
+        self.assertEqual(result["receiptReference"], "SIRE-OK")
+        self.assertEqual(calls, ["sire_entrada"])
+
     def test_call_sire_submitter_requires_receipt_before_success(self):
         calls = []
 
@@ -962,9 +1067,9 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(result["processed"][0]["receiptReference"], "TRA-RECEIPT-1")
         self.assertEqual(recorded[0]["state"], "submitted")
         self.assertTrue(telegram)
-        self.assertIn("Rishab Whatsapp: TRA enviado", telegram[0])
+        self.assertIn("Rishab Whatsapp: enviado tra", telegram[0])
         rendered = str(result)
-        self.assertNotIn("Old Guest: TRA enviado", rendered)
+        self.assertNotIn("Old Guest: enviado tra", rendered)
         self.assertTrue(any(call[0] == "registro_list_pending" for call in calls))
 
     def test_build_tra_form_fields_maps_required_form_values(self):

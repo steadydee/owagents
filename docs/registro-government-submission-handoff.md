@@ -161,6 +161,12 @@ TRA_LOGIN_URL=https://tra.mincit.gov.co/login/
 TRA_NEW_GUEST_URL=https://tra.mincit.gov.co/padd/
 TRA_REGISTERED_GUESTS_URL=https://tra.mincit.gov.co/blo
 SIRE_LOGIN_URL=https://apps.migracioncolombia.gov.co/sire/public/login.jsf
+SIRE_SUBMITTER_MODE=jsf_form
+SIRE_DOCUMENT_TYPE_VALUE_FILE=~/.openclaw-hotel/secrets/sire-document-type-value
+SIRE_DOCUMENT_NUMBER_FILE=~/.openclaw-hotel/secrets/sire-document-number
+SIRE_PASSWORD_FILE=~/.openclaw-hotel/secrets/sire-password
+SIRE_COMPANY_VALUE_FILE=~/.openclaw-hotel/secrets/sire-company-value
+SIRE_COMPANY_LABEL_FILE=~/.openclaw-hotel/secrets/sire-company-label
 ```
 
 Do not enable `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED` until at least one adapter
@@ -184,7 +190,7 @@ Telegram, agent memory, or staff hotel summaries.
 Finish the government adapters after we have verified credentials and behavior:
 
 - TRA API token from MinCIT's PMS token manager
-- SIRE credentials plus browser/API selectors and receipt shape
+- SIRE credentials plus JSF form selectors and receipt shape
 - entrada versus salida flow
 - duplicate behavior
 - failure messages and retry safety

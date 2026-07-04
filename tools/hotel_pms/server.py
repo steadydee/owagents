@@ -2495,6 +2495,30 @@ def sire_api_token(config: dict[str, Any]) -> str | None:
     return cfg_file(config, "SIRE_API_TOKEN") or cfg_env(config, "SIRE_API_TOKEN")
 
 
+def sire_document_type_value(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "SIRE_DOCUMENT_TYPE_VALUE") or cfg_env(config, "SIRE_DOCUMENT_TYPE_VALUE")
+
+
+def sire_document_number(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "SIRE_DOCUMENT_NUMBER") or cfg_env(config, "SIRE_DOCUMENT_NUMBER")
+
+
+def sire_password(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "SIRE_PASSWORD") or cfg_env(config, "SIRE_PASSWORD")
+
+
+def sire_company_value(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "SIRE_COMPANY_VALUE") or cfg_env(config, "SIRE_COMPANY_VALUE")
+
+
+def sire_company_label(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "SIRE_COMPANY_LABEL") or cfg_env(config, "SIRE_COMPANY_LABEL")
+
+
+def sire_submitter_mode(config: dict[str, Any]) -> str:
+    return (cfg_env(config, "SIRE_SUBMITTER_MODE") or "").strip().lower()
+
+
 def sire_auth_header(config: dict[str, Any], token: str) -> str:
     scheme = (cfg_env(config, "SIRE_AUTH_SCHEME") or "Bearer").strip()
     if not scheme or not re.match(r"^[A-Za-z][A-Za-z0-9_-]{0,30}$", scheme):
@@ -2620,6 +2644,60 @@ def csrf_token_from_html(page_html: str) -> str | None:
             flags=re.I,
         )
     return html.unescape(match.group(1)) if match else None
+
+
+def jsf_view_state_from_html(page_html: str) -> str | None:
+    patterns = (
+        r'name=["\']javax\.faces\.ViewState["\'][^>]*value=["\']([^"\']+)["\']',
+        r'value=["\']([^"\']+)["\'][^>]*name=["\']javax\.faces\.ViewState["\']',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page_html, flags=re.I)
+        if match:
+            return html.unescape(match.group(1))
+    return None
+
+
+def html_input_value(page_html: str, input_name: str) -> str | None:
+    escaped = re.escape(input_name)
+    patterns = (
+        rf'name=["\']{escaped}["\'][^>]*value=["\']([^"\']*)["\']',
+        rf'value=["\']([^"\']*)["\'][^>]*name=["\']{escaped}["\']',
+        rf'id=["\']{escaped}["\'][^>]*value=["\']([^"\']*)["\']',
+        rf'value=["\']([^"\']*)["\'][^>]*id=["\']{escaped}["\']',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page_html, flags=re.I)
+        if match:
+            return html.unescape(match.group(1))
+    return None
+
+
+def jsf_form_action(page_html: str, form_id: str, base_url: str) -> str | None:
+    escaped = re.escape(form_id)
+    match = re.search(
+        rf'<form\b[^>]*(?:id|name)=["\']{escaped}["\'][^>]*>',
+        page_html,
+        flags=re.I,
+    )
+    if not match:
+        return None
+    tag = match.group(0)
+    action = re.search(r'action=["\']([^"\']+)["\']', tag, flags=re.I)
+    if not action:
+        return base_url
+    return urllib.parse.urljoin(base_url, html.unescape(action.group(1)))
+
+
+def jsf_form_id_containing(page_html: str, token: str) -> str | None:
+    token_index = page_html.find(token)
+    if token_index < 0:
+        return None
+    prefix = page_html[:token_index]
+    matches = list(re.finditer(r'<form\b[^>]*(?:id|name)=["\']([^"\']+)["\'][^>]*>', prefix, flags=re.I))
+    if not matches:
+        return None
+    return html.unescape(matches[-1].group(1))
 
 
 def normalized_choice(value: Any) -> str:
@@ -3274,6 +3352,154 @@ def call_tra_form_submitter(config: dict[str, Any], prepared: dict[str, Any]) ->
     }
 
 
+def sire_http_text(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    payload: list[tuple[str, str]] | dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+) -> tuple[str, str]:
+    data = None
+    if payload is not None:
+        data = urllib.parse.urlencode(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "User-Agent": "Mozilla/5.0 HotelRegistroAgent/1.0",
+            "Content-Type": "application/x-www-form-urlencoded",
+            **(headers or {}),
+        },
+        method="POST" if data is not None else "GET",
+    )
+    try:
+        with opener.open(req, timeout=timeout) as response:
+            return response.geturl(), response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise ToolError("http_error", f"SIRE request failed with HTTP {exc.code}.", retryable=500 <= exc.code < 600) from exc
+    except urllib.error.URLError as exc:
+        raise ToolError("network_error", "SIRE network request failed.", retryable=True) from exc
+
+
+def sire_login_session(config: dict[str, Any]) -> tuple[urllib.request.OpenerDirector | None, str | None, dict[str, Any]]:
+    document_type = sire_document_type_value(config)
+    document_number = sire_document_number(config)
+    password = sire_password(config)
+    company_value = sire_company_value(config)
+    if not document_type or not document_number or not password or not company_value:
+        return None, None, {"ok": False, "status": "blocked", "reason": "sire_credentials_missing"}
+
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    login_url = sire_login_url(config)
+    _, login_page = sire_http_text(opener, login_url)
+    view_state = jsf_view_state_from_html(login_page)
+    if not view_state:
+        return None, None, {"ok": False, "status": "blocked", "reason": "sire_login_view_state_missing"}
+
+    _, company_page = sire_http_text(
+        opener,
+        login_url,
+        [
+            ("AJAXREQUEST", "_viewRoot"),
+            ("formLogin", "formLogin"),
+            ("formLogin:tipoDocumento", str(document_type)),
+            ("formLogin:numeroDocumento", str(document_number)),
+            ("formLogin:password", ""),
+            ("formLogin:listaEmpresa", "-1"),
+            ("formLogin:infoSolicitudOpenedState", ""),
+            ("javax.faces.ViewState", view_state),
+            ("formLogin:j_id19", "formLogin:j_id19"),
+            ("ajaxSingle", "formLogin:numeroDocumento"),
+            ("AJAX:EVENTS_COUNT", "1"),
+        ],
+        headers={"Referer": login_url},
+    )
+    view_state = jsf_view_state_from_html(company_page) or view_state
+    if str(company_value) not in company_page:
+        return None, None, {"ok": False, "status": "blocked", "reason": "sire_company_not_available"}
+
+    final_url, home_page = sire_http_text(
+        opener,
+        login_url,
+        [
+            ("formLogin", "formLogin"),
+            ("formLogin:tipoDocumento", str(document_type)),
+            ("formLogin:numeroDocumento", str(document_number)),
+            ("formLogin:password", str(password)),
+            ("formLogin:listaEmpresa", str(company_value)),
+            ("formLogin:button1", "Ingresar"),
+            ("formLogin:infoSolicitudOpenedState", ""),
+            ("javax.faces.ViewState", view_state),
+        ],
+        headers={"Referer": login_url},
+    )
+    normalized_home = normalized_choice(sire_text_from_html(home_page))
+    if "cargar informacion" not in normalized_home or "owl s watch" not in normalized_home:
+        reason = "sire_login_failed_or_challenge_required"
+        if "captcha" in normalized_home:
+            reason = "sire_login_challenge_required"
+        if "cambiar contrasena" in normalized_home or "cambio de contrasena" in normalized_home:
+            reason = "sire_password_change_required"
+        return None, final_url, {"ok": False, "status": "blocked", "reason": reason}
+    return opener, final_url, {"ok": True, "status": "authenticated", "homePage": home_page}
+
+
+def sire_open_lodging_form(config: dict[str, Any]) -> tuple[urllib.request.OpenerDirector | None, str | None, str | None, dict[str, Any]]:
+    opener, current_url, login = sire_login_session(config)
+    if not opener:
+        return None, current_url, None, login
+    home_page = login.get("homePage")
+    if not isinstance(home_page, str):
+        return None, current_url, None, {"ok": False, "status": "blocked", "reason": "sire_home_missing"}
+    view_state = jsf_view_state_from_html(home_page)
+    if not view_state:
+        return None, current_url, None, {"ok": False, "status": "blocked", "reason": "sire_home_view_state_missing"}
+
+    menu_url = jsf_form_action(home_page, "panelMenu:_form", sire_login_url(config))
+    if not menu_url:
+        menu_url = urllib.parse.urljoin(sire_login_url(config), "/sire/pages/home.jsf")
+    _, cargar_page = sire_http_text(
+        opener,
+        menu_url,
+        [
+            ("panelMenu:_form", "panelMenu:_form"),
+            ("panelMenuStategroupEmpresas", "opened"),
+            ("panelMenuActiongroupEmpresas", ""),
+            ("panelMenuActionitemCargarInformacion", "itemCargarInformacion"),
+            ("panelMenuActionitemConsultarCargaInformacion", ""),
+            ("panelMenuActionitemConsultarExtranjeros", ""),
+            ("panelMenuActionitemActualizarDatosEmpresa", ""),
+            ("panelMenuActionitemDescargaFormatoEmpresa", ""),
+            ("panelMenuActionitemVinculaCuenta", ""),
+            ("panelMenuselectedItemName", "itemCargarInformacion"),
+            ("javax.faces.ViewState", view_state),
+        ],
+        headers={"Referer": menu_url},
+    )
+    if "HOTEL_server_submit" not in cargar_page:
+        return None, menu_url, None, {"ok": False, "status": "blocked", "reason": "sire_lodging_tab_missing"}
+
+    view_state = jsf_view_state_from_html(cargar_page)
+    if not view_state:
+        return None, menu_url, None, {"ok": False, "status": "blocked", "reason": "sire_cargar_view_state_missing"}
+    tab_form_id = jsf_form_id_containing(cargar_page, "HOTEL_server_submit") or "j_id44:_form"
+    cargar_url = jsf_form_action(cargar_page, tab_form_id, menu_url) or urllib.parse.urljoin(menu_url, "/sire/pages/empresas/cargueInformacion.jsf")
+    final_url, hotel_page = sire_http_text(
+        opener,
+        cargar_url,
+        [
+            (tab_form_id, tab_form_id),
+            ("HOTEL_server_submit", "HOTEL_server_submit"),
+            ("javax.faces.ViewState", view_state),
+        ],
+        headers={"Referer": cargar_url},
+    )
+    if "cargueFormHospedaje" not in hotel_page:
+        return None, final_url, None, {"ok": False, "status": "blocked", "reason": "sire_lodging_form_missing"}
+    return opener, final_url, hotel_page, {"ok": True, "status": "ready"}
+
+
 def sire_movement_type(submission_type: str) -> str:
     normalized = normalize_submission_type(submission_type)
     if normalized == "sire_entrada":
@@ -3414,12 +3640,368 @@ def build_sire_lodging_payload(
     return submission_payload, {"ok": True, "status": "ready", "summary": summary}
 
 
+def sire_form_movement_value(movement_type: str) -> str:
+    normalized = normalized_choice(movement_type)
+    if normalized == "entrada":
+        return "3"
+    if normalized == "salida":
+        return "4"
+    raise ToolError("invalid_input", "SIRE movement type must be entrada or salida.")
+
+
+def sire_date_for_form(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    try:
+        if DATE_RE.match(text):
+            parsed = dt.date.fromisoformat(text)
+        else:
+            parsed = dt.datetime.strptime(text, "%d/%m/%Y").date()
+        return parsed.strftime("%d/%m/%Y")
+    except ValueError:
+        return None
+
+
+def sire_current_month_for_form(value: Any, fallback: str | None = None) -> str | None:
+    if value in (None, ""):
+        return fallback
+    text = str(value).strip()
+    try:
+        parsed = dt.date.fromisoformat(text) if DATE_RE.match(text) else dt.datetime.strptime(text, "%d/%m/%Y").date()
+        return parsed.strftime("%m/%Y")
+    except ValueError:
+        return fallback
+
+
+def sire_document_type_value_from_options(options: dict[str, list[dict[str, str]]], value: Any) -> str | None:
+    target = normalized_choice(value)
+    aliases = {
+        "pasaporte": "pasaporte",
+        "passport": "pasaporte",
+        "cedula extranjeria": "cedula de extranjeria",
+        "cedula de extranjeria": "cedula de extranjeria",
+        "ce": "cedula de extranjeria",
+        "c e": "cedula de extranjeria",
+        "documento extranjero": "documento extranjero",
+        "dni": "documento extranjero",
+        "pep": "permiso especial de permanencia",
+        "permiso especial de permanencia": "permiso especial de permanencia",
+        "ppt": "permiso por proteccion temporal",
+        "permiso por proteccion temporal": "permiso por proteccion temporal",
+        "carne diplomatico": "carne diplomatico",
+    }
+    target = aliases.get(target, target)
+    for option in options.get("cargueFormHospedaje:tipoDocumento", []):
+        text = normalized_choice(option.get("text"))
+        if text == target:
+            return option.get("value")
+    for option in options.get("cargueFormHospedaje:tipoDocumento", []):
+        text = normalized_choice(option.get("text"))
+        if text and (text.startswith(target) or target.startswith(text)):
+            return option.get("value")
+    return None
+
+
+def sire_country_value_from_options(options: dict[str, list[dict[str, str]]], select_id: str, country: Any) -> str | None:
+    target = normalized_choice(country)
+    aliases = {
+        "usa": "estados unidos",
+        "us": "estados unidos",
+        "u s a": "estados unidos",
+        "united states": "estados unidos",
+        "united states of america": "estados unidos",
+        "estados unidos de america": "estados unidos",
+        "uk": "reino unido",
+        "united kingdom": "reino unido",
+        "great britain": "reino unido",
+        "south korea": "corea del sur",
+        "north korea": "corea del norte",
+        "czech republic": "republica checa",
+        "czechia": "republica checa",
+    }
+    target = aliases.get(target, target)
+    if not target:
+        return None
+    choices = options.get(select_id, [])
+    for option in choices:
+        if normalized_choice(option.get("text")) == target:
+            return option.get("value")
+    for option in choices:
+        text = normalized_choice(option.get("text"))
+        if text and (text.startswith(target) or target.startswith(text) or target in text):
+            return option.get("value")
+    return None
+
+
+def build_sire_lodging_form_fields(
+    config: dict[str, Any],
+    payload: dict[str, Any],
+    record: dict[str, Any],
+    page_html: str,
+) -> tuple[list[tuple[str, str]], dict[str, Any]]:
+    parser = SelectOptionParser()
+    parser.feed(page_html)
+    options = parser.options
+    view_state = jsf_view_state_from_html(page_html)
+    movement_date = sire_date_for_form(record.get("fechaMovimiento"))
+    birth_date = sire_date_for_form(record.get("fechaNacimiento"))
+    move_current = sire_current_month_for_form(record.get("fechaMovimiento"), html_input_value(page_html, "cargueFormHospedaje:fechaMovimientoInputCurrentDate"))
+    birth_current = sire_current_month_for_form(record.get("fechaNacimiento"), html_input_value(page_html, "cargueFormHospedaje:fechaNacimientoInputCurrentDate"))
+    fields = {
+        "viewState": view_state,
+        "movementValue": sire_form_movement_value(record.get("tipoMovimiento")),
+        "movementDate": movement_date,
+        "movementCurrent": move_current,
+        "documentTypeValue": sire_document_type_value_from_options(options, record.get("tipoDocumento")),
+        "documentNumber": record.get("numeroDocumento"),
+        "birthDate": birth_date,
+        "birthCurrent": birth_current,
+        "firstSurname": record.get("primerApellido"),
+        "secondSurname": record.get("segundoApellido", ""),
+        "names": record.get("nombres"),
+        "nationalityValue": sire_country_value_from_options(options, "cargueFormHospedaje:nacionalidad", record.get("nacionalidad")),
+        "originValue": sire_country_value_from_options(options, "cargueFormHospedaje:procedencia", record.get("paisProcedencia")),
+        "destinationValue": sire_country_value_from_options(options, "cargueFormHospedaje:destino", record.get("paisProximoDestino")),
+    }
+    required = (
+        "viewState",
+        "movementValue",
+        "movementDate",
+        "movementCurrent",
+        "documentTypeValue",
+        "documentNumber",
+        "birthDate",
+        "birthCurrent",
+        "firstSurname",
+        "names",
+        "nationalityValue",
+        "originValue",
+        "destinationValue",
+    )
+    missing = [key for key in required if fields.get(key) in (None, "")]
+    if missing:
+        return [], {
+            "ok": False,
+            "status": "blocked",
+            "reason": "sire_form_mapping_missing_required_fields",
+            "missingFields": missing,
+            "payloadSummary": payload.get("summary") if isinstance(payload.get("summary"), dict) else None,
+        }
+    form_fields = [
+        ("AJAXREQUEST", "_viewRoot"),
+        ("cargueFormHospedaje", "cargueFormHospedaje"),
+        ("cargueFormHospedaje:tipoCargue", "F"),
+        ("cargueFormHospedaje:tipoMovimiento", str(fields["movementValue"])),
+        ("cargueFormHospedaje:fechaMovimientoInputDate", str(fields["movementDate"])),
+        ("cargueFormHospedaje:fechaMovimientoInputCurrentDate", str(fields["movementCurrent"])),
+        ("cargueFormHospedaje:tipoDocumento", str(fields["documentTypeValue"])),
+        ("cargueFormHospedaje:numeroDocumento", str(fields["documentNumber"])),
+        ("cargueFormHospedaje:fechaNacimientoInputDate", str(fields["birthDate"])),
+        ("cargueFormHospedaje:fechaNacimientoInputCurrentDate", str(fields["birthCurrent"])),
+        ("cargueFormHospedaje:primerApellido", str(fields["firstSurname"])),
+        ("cargueFormHospedaje:segundoApellido", str(fields["secondSurname"] or "")),
+        ("cargueFormHospedaje:nombres", str(fields["names"])),
+        ("cargueFormHospedaje:nacionalidad", str(fields["nationalityValue"])),
+        ("cargueFormHospedaje:procedencia", str(fields["originValue"])),
+        ("cargueFormHospedaje:destino", str(fields["destinationValue"])),
+        ("cargueFormHospedaje:j_id877", "cargueFormHospedaje:j_id877"),
+        ("javax.faces.ViewState", str(fields["viewState"])),
+        ("AJAX:EVENTS_COUNT", "1"),
+    ]
+    return form_fields, {
+        "ok": True,
+        "status": "ready",
+        "summary": {
+            "documentType": record.get("tipoDocumento"),
+            "movementType": record.get("tipoMovimiento"),
+            "movementDate": record.get("fechaMovimiento"),
+            "nationality": record.get("nacionalidad"),
+            "origin": record.get("paisProcedencia"),
+            "destination": record.get("paisProximoDestino"),
+        },
+    }
+
+
+def sire_find_save_control(page_html: str) -> str | None:
+    candidates: list[tuple[int, str]] = []
+    for match in re.finditer(r'<input\b[^>]*(?:value=["\']([^"\']+)["\'])[^>]*>', page_html, flags=re.I):
+        tag = match.group(0)
+        value = html.unescape(match.group(1))
+        normalized = normalized_choice(value)
+        if not any(word in normalized for word in ("guardar", "enviar", "finalizar")):
+            continue
+        name_match = re.search(r'name=["\']([^"\']+)["\']', tag, flags=re.I)
+        id_match = re.search(r'id=["\']([^"\']+)["\']', tag, flags=re.I)
+        control = html.unescape((name_match or id_match).group(1)) if (name_match or id_match) else None
+        if control and control.startswith("cargueFormHospedaje:"):
+            candidates.append((match.start(), control))
+    if candidates:
+        return candidates[-1][1]
+    return None
+
+
+def sire_text_from_html(page_html: str) -> str:
+    text = re.sub(r"<script\b[\s\S]*?</script>", " ", page_html, flags=re.I)
+    text = re.sub(r"<style\b[\s\S]*?</style>", " ", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return html.unescape(re.sub(r"\s+", " ", text)).strip()
+
+
+def sire_extract_submission_counts(page_html: str) -> dict[str, int | None]:
+    normalized = normalized_choice(sire_text_from_html(page_html))
+    def find_count(*labels: str) -> int | None:
+        for label in labels:
+            target = normalized_choice(label)
+            match = re.search(rf"{re.escape(target)}\s*:?\s*(\d+)", normalized)
+            if match:
+                return int(match.group(1))
+        return None
+    return {
+        "processed": find_count("Total Registros procesados", "Registros procesados"),
+        "valid": find_count("Num. Registros válidos", "Registros validos", "Registros válidos"),
+        "invalid": find_count("Num. Registros inválidos", "Registros invalidos", "Registros inválidos"),
+    }
+
+
+def sire_verified_success(page_html: str, expected_records: int) -> tuple[bool, dict[str, int | None]]:
+    counts = sire_extract_submission_counts(page_html)
+    processed = counts.get("processed")
+    valid = counts.get("valid")
+    invalid = counts.get("invalid")
+    if valid is not None and valid >= expected_records and (invalid in (None, 0)):
+        return True, counts
+    normalized = normalized_choice(sire_text_from_html(page_html))
+    if "registros validos" in normalized and "registros invalidos 0" in normalized:
+        return True, counts
+    if "carga de la informacion" in normalized and "exitosa" in normalized and invalid in (None, 0):
+        return True, counts
+    if processed is not None and valid is None and processed >= expected_records and invalid in (None, 0):
+        return True, counts
+    return False, counts
+
+
+def sire_receipt_reference(payload: dict[str, Any], submission_type: str) -> str:
+    digest_source = json.dumps(
+        {
+            "submissionType": normalize_submission_type(submission_type),
+            "registrationId": payload.get("registrationId"),
+            "reservationId": payload.get("reservationId"),
+            "movementDate": payload.get("movementDate"),
+            "recordCount": len(payload.get("records") or []),
+        },
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:10].upper()
+    movement_date = str(payload.get("movementDate") or now_iso()[:10]).replace("-", "")
+    return f"SIRE-ALOJAMIENTO-{movement_date}-{digest}"
+
+
+def call_sire_jsf_form_submitter(config: dict[str, Any], prepared: dict[str, Any], submission_type: str) -> dict[str, Any]:
+    payload, payload_result = build_sire_lodging_payload(config, prepared, submission_type)
+    if not payload_result.get("ok"):
+        return payload_result
+    opener, form_url, form_page, form_ready = sire_open_lodging_form(config)
+    if not opener or not form_url or not form_page:
+        return {
+            **form_ready,
+            "submissionType": normalize_submission_type(submission_type),
+            "payloadSummary": payload_result.get("summary"),
+        }
+
+    current_page = form_page
+    for record in payload.get("records") or []:
+        fields, field_result = build_sire_lodging_form_fields(config, payload, record, current_page)
+        if not field_result.get("ok"):
+            return {
+                **field_result,
+                "submissionType": normalize_submission_type(submission_type),
+                "payloadSummary": payload_result.get("summary"),
+            }
+        _, response_page = sire_http_text(opener, form_url, fields, headers={"Referer": form_url}, timeout=45)
+        normalized_response = normalized_choice(sire_text_from_html(response_page))
+        if "error" in normalized_response and ("validacion" in normalized_response or "obligatorio" in normalized_response):
+            return {
+                "ok": False,
+                "status": "failed",
+                "reason": "sire_record_validation_failed",
+                "payloadSummary": payload_result.get("summary"),
+                "responseSummary": {"status": "validation_error"},
+            }
+        if jsf_view_state_from_html(response_page):
+            current_page = response_page
+
+    save_control = sire_find_save_control(current_page)
+    if not save_control:
+        return {
+            "ok": False,
+            "status": "failed",
+            "reason": "sire_save_control_missing",
+            "payloadSummary": payload_result.get("summary"),
+            "responseSummary": {"status": "records_not_saved"},
+        }
+    view_state = jsf_view_state_from_html(current_page)
+    if not view_state:
+        return {
+            "ok": False,
+            "status": "failed",
+            "reason": "sire_save_view_state_missing",
+            "payloadSummary": payload_result.get("summary"),
+            "responseSummary": {"status": "records_not_saved"},
+        }
+    save_fields = [
+        ("AJAXREQUEST", "_viewRoot"),
+        ("cargueFormHospedaje", "cargueFormHospedaje"),
+        ("cargueFormHospedaje:tipoCargue", "F"),
+        (save_control, save_control),
+        ("javax.faces.ViewState", view_state),
+        ("AJAX:EVENTS_COUNT", "1"),
+    ]
+    final_url, save_page = sire_http_text(opener, form_url, save_fields, headers={"Referer": form_url}, timeout=60)
+    expected = len(payload.get("records") or [])
+    verified, counts = sire_verified_success(save_page, expected)
+    if not verified:
+        if "captcha" in normalized_choice(save_page):
+            return {
+                "ok": False,
+                "status": "blocked",
+                "reason": "sire_submit_challenge_required",
+                "payloadSummary": payload_result.get("summary"),
+            }
+        return {
+            "ok": False,
+            "status": "failed",
+            "reason": "sire_form_submission_unverified",
+            "payloadSummary": payload_result.get("summary"),
+            "responseSummary": {"finalUrl": final_url, "counts": counts},
+        }
+    return {
+        "ok": True,
+        "status": "submitted",
+        "receiptReference": sire_receipt_reference(payload, submission_type),
+        "payloadSummary": payload_result.get("summary"),
+        "responseSummary": {
+            "status": "submitted_to_sire_form",
+            "referenceType": "sire_valid_record_counts",
+            "counts": counts,
+        },
+    }
+
+
 def call_sire_submitter(config: dict[str, Any], prepared: dict[str, Any], submission_type: str) -> dict[str, Any]:
     payload, payload_result = build_sire_lodging_payload(config, prepared, submission_type)
     if not payload_result.get("ok"):
         return payload_result
+    mode = sire_submitter_mode(config)
     url = sire_submission_url(config)
     if not url:
+        if mode == "jsf_form" or (
+            sire_document_type_value(config)
+            and sire_document_number(config)
+            and sire_password(config)
+            and sire_company_value(config)
+        ):
+            return call_sire_jsf_form_submitter(config, prepared, submission_type)
         return {
             "ok": False,
             "status": "blocked",
@@ -3783,11 +4365,13 @@ def summarize_registro_pickup_result(result: dict[str, Any]) -> str:
     status = result.get("status")
     if status == "submitted":
         reference = result.get("receiptReference")
-        return f"- {label}: TRA enviado" + (f" (ref. {reference})" if reference else "")
-    if status == "no_tra_due":
+        submitted_types = result.get("submittedTypes") if isinstance(result.get("submittedTypes"), list) else []
+        type_label = ", ".join(str(item) for item in submitted_types) if submitted_types else "gobierno"
+        return f"- {label}: enviado {type_label}" + (f" (ref. {reference})" if reference else "")
+    if status == "no_government_due":
         due = result.get("dueSubmissionTypes") or []
         if due:
-            return f"- {label}: TRA no pendiente; pendiente {', '.join(str(item) for item in due)}"
+            return f"- {label}: nada enviado; pendiente {', '.join(str(item) for item in due)}"
         return f"- {label}: nada pendiente"
     if status == "needs_review":
         reason = result.get("reason") or "requiere revision en PMS"
@@ -3822,12 +4406,11 @@ def build_registro_pickup_message(summary: dict[str, Any]) -> str:
         lines.extend(summarize_registro_pickup_result(item) for item in errors)
     if not processed and not review and not errors:
         lines.append("")
-        lines.append("No hay registros pendientes para TRA.")
+        lines.append("No hay registros pendientes para TRA/SIRE.")
     if skipped:
-        sire_count = sum(1 for item in skipped if "sire" in ",".join(str(child) for child in item.get("dueSubmissionTypes") or []))
-        if sire_count:
-            lines.append("")
-            lines.append(f"SIRE pendiente en {sire_count} registro(s). Falta verificar el adaptador oficial antes de automatizarlo.")
+        lines.append("")
+        lines.append("Omitidos")
+        lines.extend(summarize_registro_pickup_result(item) for item in skipped)
     return "\n".join(lines)
 
 
@@ -3847,9 +4430,9 @@ def registro_pickup_in_window(item: dict[str, Any], start_date: str, end_date: s
 
 def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
-    submit_tra = validate_bool("submitTra", args.get("submitTra"))
-    if submit_tra is None:
-        submit_tra = True
+    submit_government = validate_bool("submitTra", args.get("submitTra"))
+    if submit_government is None:
+        submit_government = True
     notify = validate_bool("notify", args.get("notify"))
     if notify is None:
         notify = False
@@ -3868,7 +4451,7 @@ def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
     items = [item for item in all_items if registro_pickup_in_window(item, start_date, end_date)]
     summary: dict[str, Any] = {
         "ok": True,
-        "mode": "submit_tra" if submit_tra else "dry_run",
+        "mode": "submit_government" if submit_government else "dry_run",
         "window": {"startDate": start_date, "endDate": end_date},
         "pendingCount": len(all_items),
         "eligibleCount": len(items),
@@ -3897,8 +4480,9 @@ def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
             if not registration_id:
                 summary["needsReview"].append({**base, "status": "needs_review", "reason": "sin registro"})
                 continue
-            if "tra" not in due_types and status == "validated":
-                summary["skipped"].append({**base, "status": "no_tra_due"})
+            requested_types = [item for item in due_types if normalize_submission_type(item) in REGISTRO_SUBMISSION_TYPES]
+            if not requested_types and status == "validated":
+                summary["skipped"].append({**base, "status": "no_government_due"})
                 continue
             if status != "validated":
                 if document_count <= 0:
@@ -3916,8 +4500,8 @@ def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
                     continue
             submit_args = {
                 "registrationId": registration_id,
-                "submissionTypes": ["tra"],
-                "mode": "submit" if submit_tra else "dry_run",
+                "submissionTypes": requested_types,
+                "mode": "submit" if submit_government else "dry_run",
             }
             if reservation_id:
                 submit_args["reservationId"] = reservation_id
@@ -3929,15 +4513,21 @@ def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
                     first_result = row
                     break
             if submit_status == "submitted":
+                submitted_types = [
+                    row.get("submissionType")
+                    for row in submit_result.get("results") or []
+                    if isinstance(row, dict) and row.get("submitStatus") == "submitted"
+                ]
                 summary["processed"].append({
                     **base,
                     "status": "submitted",
+                    "submittedTypes": submitted_types,
                     "receiptReference": (first_result or {}).get("receiptReference"),
                 })
             elif submit_status in {"ready"}:
                 summary["processed"].append({**base, "status": "ready"})
             elif submit_status in {"no_due"}:
-                summary["skipped"].append({**base, "status": "no_tra_due"})
+                summary["skipped"].append({**base, "status": "no_government_due"})
             else:
                 reason = (first_result or {}).get("reason") or submit_status or "no listo"
                 target = summary["needsReview"] if submit_status in {"needs_info", "blocked"} else summary["errors"]

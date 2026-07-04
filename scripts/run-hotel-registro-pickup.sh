@@ -38,7 +38,7 @@ fi
     --session-id hotel-registro-pickup \
     --thinking medium \
     --timeout 1800 \
-    --message "Scheduled run: registro_daily_pickup. Call hotel_registro_daily_pickup with submitTra=true, notify=true, maxRecords=25, daysBack=1, and daysAhead=2. This should extract uploaded Registro documents, submit TRA only when ready, never submit SIRE, and send exactly one staff-safe Spanish Telegram summary. Do not include passport numbers, document numbers, birth dates, raw OCR, document URLs, prices, balances, deposits, or payment details."
+    --message "Scheduled run: registro_daily_pickup. Call hotel_registro_daily_pickup with submitTra=true, notify=true, maxRecords=25, daysBack=1, and daysAhead=2. This should extract uploaded Registro documents, submit TRA/SIRE only when ready and only through the receipt-gated configured submitter, and send exactly one staff-safe Spanish Telegram summary. Do not include passport numbers, document numbers, birth dates, raw OCR, document URLs, prices, balances, deposits, or payment details."
   printf '%s hotel registro pickup end\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 } >> "$LOG_FILE" 2>&1
 
