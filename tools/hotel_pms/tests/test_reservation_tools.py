@@ -747,7 +747,20 @@ class ReservationToolValidationTest(unittest.TestCase):
                     "registrationId": "reg-1",
                     "submissionType": "sire_entrada",
                     "status": "ready",
-                    "payload": {"guests": [{"documentNumber": "A12345678"}]},
+                    "payload": {
+                        "reservation": {"arrivalDate": "2026-06-26", "departureDate": "2026-06-27"},
+                        "guests": [{
+                            "documentType": "passport",
+                            "documentNumber": "A12345678",
+                            "birthDate": "1975-09-07",
+                            "firstName": "Sensitive",
+                            "lastName": "Guest",
+                            "nationalityCountry": "United States",
+                            "originCountry": "United States",
+                            "destinationCountry": "Colombia",
+                            "sireRequired": True,
+                        }],
+                    },
                 }
             raise AssertionError(f"unexpected PMS tool {tool_name}")
 
@@ -766,6 +779,93 @@ class ReservationToolValidationTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["results"][0]["reason"], "sire_submitter_not_configured")
+        self.assertEqual(result["results"][0]["payloadSummary"]["recordCount"], 1)
+        rendered = str(result)
+        self.assertNotIn("A12345678", rendered)
+        self.assertNotIn("Sensitive", rendered)
+
+    def test_build_sire_lodging_payload_uses_arrival_or_departure_date(self):
+        prepared = {
+            "registrationId": "reg-1",
+            "reservationId": "res-1",
+            "payload": {
+                "property": {"propertyId": "owlswatch"},
+                "reservation": {"arrivalDate": "2026-06-26", "departureDate": "2026-06-27"},
+                "guests": [
+                    {
+                        "documentType": "passport",
+                        "documentNumber": "A12345678",
+                        "birthDate": "1975-09-07",
+                        "firstName": "Miranda",
+                        "lastName": "Davies Smith",
+                        "nationalityCountry": "United States",
+                        "originCountry": "United States",
+                        "destinationCountry": "Colombia",
+                        "sireRequired": True,
+                    },
+                    {
+                        "documentType": "passport",
+                        "documentNumber": "COL-SKIP",
+                        "birthDate": "1975-09-07",
+                        "firstName": "Skip",
+                        "lastName": "Guest",
+                        "nationalityCountry": "Colombia",
+                        "originCountry": "Colombia",
+                        "destinationCountry": "Colombia",
+                        "sireRequired": False,
+                    },
+                ],
+            },
+        }
+        entrada, entrada_result = server.build_sire_lodging_payload({}, prepared, "sire_entrada")
+        salida, salida_result = server.build_sire_lodging_payload({}, prepared, "sire_salida")
+        self.assertTrue(entrada_result["ok"])
+        self.assertEqual(entrada["movementType"], "entrada")
+        self.assertEqual(entrada["movementDate"], "2026-06-26")
+        self.assertEqual(entrada["records"][0]["primerApellido"], "Davies")
+        self.assertEqual(entrada["records"][0]["segundoApellido"], "Smith")
+        self.assertEqual(len(entrada["records"]), 1)
+        self.assertTrue(salida_result["ok"])
+        self.assertEqual(salida["movementType"], "salida")
+        self.assertEqual(salida["movementDate"], "2026-06-27")
+
+    def test_call_sire_submitter_requires_receipt_before_success(self):
+        calls = []
+
+        def fake_http_json(url, payload, headers=None, timeout=30):
+            calls.append((url, payload, headers))
+            return {"success": True, "radicado": "SIRE-123"}
+
+        prepared = {
+            "registrationId": "reg-1",
+            "reservationId": "res-1",
+            "payload": {
+                "reservation": {"arrivalDate": "2026-06-26", "departureDate": "2026-06-27"},
+                "guests": [{
+                    "documentType": "passport",
+                    "documentNumber": "A12345678",
+                    "birthDate": "1975-09-07",
+                    "firstName": "Sensitive",
+                    "lastName": "Guest",
+                    "nationalityCountry": "United States",
+                    "originCountry": "United States",
+                    "destinationCountry": "Colombia",
+                    "sireRequired": True,
+                }],
+            },
+        }
+        old_http = server.http_json
+        try:
+            server.http_json = fake_http_json
+            config = {"mcp": {"servers": {"hotel_pms": {"env": {"SIRE_SUBMISSION_URL": "https://sire-adapter.example/submit", "SIRE_API_TOKEN": "secret"}}}}}
+            result = server.call_sire_submitter(config, prepared, "sire_entrada")
+        finally:
+            server.http_json = old_http
+        self.assertEqual(result["status"], "submitted")
+        self.assertEqual(result["receiptReference"], "SIRE-123")
+        self.assertEqual(calls[0][0], "https://sire-adapter.example/submit")
+        self.assertEqual(calls[0][2]["Authorization"], "Bearer secret")
+        self.assertEqual(calls[0][1]["records"][0]["numeroDocumento"], "A12345678")
 
     def test_registro_daily_pickup_uses_pending_window_and_notifies(self):
         calls: list[tuple[str, dict, str]] = []

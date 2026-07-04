@@ -200,7 +200,8 @@ Include `submissionTypes` only when staff asked for specific types.
 The submitter is receipt-gated:
 
 - TRA is only attempted if the TRA adapter is configured.
-- SIRE is blocked until its adapter is configured and verified.
+- SIRE is only attempted if its adapter endpoint or browser routine is
+  configured and verified.
 - PMS is marked submitted only if the tool gets a real receipt/reference.
 
 If the tool returns `blocked`, explain what is blocked.

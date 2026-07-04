@@ -43,6 +43,7 @@ DEFAULT_TRA_API_BASE_URL = "https://pms.mincit.gov.co"
 DEFAULT_TRA_LOGIN_URL = "https://tra.mincit.gov.co/login/"
 DEFAULT_TRA_NEW_GUEST_URL = "https://tra.mincit.gov.co/padd/"
 DEFAULT_TRA_REGISTERED_GUESTS_URL = "https://tra.mincit.gov.co/blo"
+DEFAULT_SIRE_LOGIN_URL = "https://apps.migracioncolombia.gov.co/sire/public/login.jsf"
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\-]{1,300}$")
 TEXT_RE = re.compile(r"^[\s\S]{0,50000}$")
@@ -94,7 +95,6 @@ REGISTRO_DOCUMENT_CONTENT_TYPES = {
 REGISTRO_SUBMISSION_TYPES = ("tra", "sire_entrada", "sire_salida")
 REGISTRO_STAFF_RECORDABLE_STATES = ("pending", "failed", "needs_info")
 REGISTRO_SUBMIT_MODES = ("dry_run", "submit")
-DEFAULT_SIRE_LOGIN_URL = "https://apps.migracioncolombia.gov.co/sire/public/login.jsf"
 
 OCR_MONTHS = {
     "JAN": 1,
@@ -2481,6 +2481,27 @@ def sire_login_url(config: dict[str, Any]) -> str:
     return raw
 
 
+def sire_submission_url(config: dict[str, Any]) -> str | None:
+    raw = cfg_env(config, "SIRE_SUBMISSION_URL") or cfg_env(config, "SIRE_API_URL")
+    if not raw:
+        return None
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ToolError("config_invalid", "SIRE submission URL must be an https URL.")
+    return raw
+
+
+def sire_api_token(config: dict[str, Any]) -> str | None:
+    return cfg_file(config, "SIRE_API_TOKEN") or cfg_env(config, "SIRE_API_TOKEN")
+
+
+def sire_auth_header(config: dict[str, Any], token: str) -> str:
+    scheme = (cfg_env(config, "SIRE_AUTH_SCHEME") or "Bearer").strip()
+    if not scheme or not re.match(r"^[A-Za-z][A-Za-z0-9_-]{0,30}$", scheme):
+        raise ToolError("config_invalid", "SIRE auth scheme is malformed.")
+    return f"{scheme} {token}"
+
+
 def prepared_government_payload(value: dict[str, Any]) -> dict[str, Any]:
     payload = value.get("payload")
     if not isinstance(payload, dict) or not payload:
@@ -3253,6 +3274,198 @@ def call_tra_form_submitter(config: dict[str, Any], prepared: dict[str, Any]) ->
     }
 
 
+def sire_movement_type(submission_type: str) -> str:
+    normalized = normalize_submission_type(submission_type)
+    if normalized == "sire_entrada":
+        return "entrada"
+    if normalized == "sire_salida":
+        return "salida"
+    raise ToolError("invalid_input", "SIRE submission type must be sire_entrada or sire_salida.")
+
+
+def sire_movement_date(payload: dict[str, Any], submission_type: str) -> Any:
+    reservation = payload.get("reservation") if isinstance(payload.get("reservation"), dict) else {}
+    if sire_movement_type(submission_type) == "entrada":
+        return first_present(reservation.get("arrivalDate"), reservation.get("checkInDate"), payload.get("arrivalDate"))
+    return first_present(reservation.get("departureDate"), reservation.get("checkOutDate"), payload.get("departureDate"))
+
+
+def sire_document_type(value: Any) -> str | None:
+    text = normalized_choice(value)
+    if not text:
+        return None
+    if "pasaporte" in text or "passport" in text:
+        return "Pasaporte"
+    if text in {"cc", "c c", "cedula", "cedula ciudadania", "cedula de ciudadania", "id card"}:
+        return "Cedula de Ciudadania"
+    if text in {"ce", "c e", "cedula extranjeria", "cedula de extranjeria"}:
+        return "Cedula de Extranjeria"
+    if "pep" in text:
+        return "PEP"
+    if "ppt" in text or "proteccion temporal" in text:
+        return "Permiso por Proteccion Temporal"
+    if "dni" in text or "documento nacional" in text or "documento extranjero" in text:
+        return "Documento Extranjero"
+    return None
+
+
+def split_sire_surnames(value: Any) -> tuple[str | None, str]:
+    text = " ".join(str(value or "").strip().split())
+    if not text:
+        return None, ""
+    parts = text.split(" ", 1)
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], parts[1]
+
+
+def build_sire_lodging_payload(
+    config: dict[str, Any],
+    prepared: dict[str, Any],
+    submission_type: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    normalized_type = normalize_submission_type(submission_type)
+    if normalized_type not in {"sire_entrada", "sire_salida"}:
+        raise ToolError("invalid_input", "SIRE payload builder only accepts SIRE submission types.")
+    payload = prepared_government_payload(prepared)
+    guests = payload.get("guests") if isinstance(payload.get("guests"), list) else []
+    movement_date = sire_movement_date(payload, normalized_type)
+    movement = sire_movement_type(normalized_type)
+    records: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for index, guest in enumerate([item for item in guests if isinstance(item, dict)], start=1):
+        if guest.get("sireRequired") is False:
+            continue
+        first_surname, second_surname = split_sire_surnames(first_present(
+            guest.get("lastName"),
+            guest.get("lastNames"),
+            guest.get("surname"),
+            guest.get("surnames"),
+            guest.get("primerApellido"),
+        ))
+        record = {
+            "tipoMovimiento": movement,
+            "fechaMovimiento": movement_date,
+            "tipoDocumento": sire_document_type(first_present(
+                guest.get("documentType"),
+                guest.get("docType"),
+                guest.get("tipoIdentificacion"),
+                guest.get("tipo_identificacion"),
+            )),
+            "numeroDocumento": first_present(guest.get("documentNumber"), guest.get("docNumber"), guest.get("numeroIdentificacion")),
+            "fechaNacimiento": first_present(guest.get("birthDate"), guest.get("dateOfBirth"), guest.get("fechaNacimiento")),
+            "primerApellido": first_surname,
+            "segundoApellido": first_present(guest.get("secondLastName"), guest.get("segundoApellido"), second_surname),
+            "nombres": first_present(guest.get("firstName"), guest.get("firstNames"), guest.get("givenNames"), guest.get("nombres")),
+            "nacionalidad": first_present(guest.get("nationalityCountry"), guest.get("nationalityLabel"), guest.get("nationalityIso")),
+            "paisProcedencia": first_present(guest.get("originCountry"), guest.get("originCountryName")),
+            "paisProximoDestino": first_present(guest.get("destinationCountry"), guest.get("destinationCountryName")),
+        }
+        required = (
+            "tipoMovimiento",
+            "fechaMovimiento",
+            "tipoDocumento",
+            "numeroDocumento",
+            "fechaNacimiento",
+            "primerApellido",
+            "nombres",
+            "nacionalidad",
+            "paisProcedencia",
+            "paisProximoDestino",
+        )
+        for key in required:
+            if record.get(key) in (None, ""):
+                missing.append(f"guests[{index}].{key}")
+        records.append({key: "" if value is None else str(value) for key, value in record.items()})
+    if not records:
+        return {}, {
+            "ok": False,
+            "status": "blocked",
+            "reason": "sire_no_required_guests",
+            "summary": {"submissionType": normalized_type, "recordCount": 0},
+        }
+    if missing:
+        return {}, {
+            "ok": False,
+            "status": "blocked",
+            "reason": "sire_payload_missing_required_fields",
+            "missingFields": missing,
+            "summary": {"submissionType": normalized_type, "recordCount": len(records), "movementType": movement, "movementDate": movement_date},
+        }
+    property_payload = payload.get("property") if isinstance(payload.get("property"), dict) else {}
+    reservation = payload.get("reservation") if isinstance(payload.get("reservation"), dict) else {}
+    submission_payload = {
+        "submissionType": normalized_type,
+        "reportType": "alojamiento_hospedaje",
+        "movementType": movement,
+        "movementDate": str(movement_date),
+        "registrationId": prepared.get("registrationId"),
+        "reservationId": prepared.get("reservationId") or reservation.get("reservationId"),
+        "propertyId": property_payload.get("propertyId"),
+        "records": records,
+    }
+    summary = {
+        "submissionType": normalized_type,
+        "reportType": "alojamiento_hospedaje",
+        "movementType": movement,
+        "movementDate": str(movement_date),
+        "recordCount": len(records),
+    }
+    return submission_payload, {"ok": True, "status": "ready", "summary": summary}
+
+
+def call_sire_submitter(config: dict[str, Any], prepared: dict[str, Any], submission_type: str) -> dict[str, Any]:
+    payload, payload_result = build_sire_lodging_payload(config, prepared, submission_type)
+    if not payload_result.get("ok"):
+        return payload_result
+    url = sire_submission_url(config)
+    if not url:
+        return {
+            "ok": False,
+            "status": "blocked",
+            "reason": "sire_submitter_not_configured",
+            "submissionType": normalize_submission_type(submission_type),
+            "loginUrl": sire_login_url(config),
+            "payloadSummary": payload_result.get("summary"),
+            "note": "SIRE payload validation is ready, but no verified SIRE API/browser adapter is configured.",
+        }
+    token = sire_api_token(config)
+    if not token:
+        return {
+            "ok": False,
+            "status": "blocked",
+            "reason": "sire_api_token_missing",
+            "submissionType": normalize_submission_type(submission_type),
+            "payloadSummary": payload_result.get("summary"),
+        }
+    response = http_json(
+        url,
+        payload,
+        {
+            "Authorization": sire_auth_header(config, token),
+            "x-ow-request-source": "hotel_registro_sire_submitter",
+            "x-ow-correlation-id": f"hotel-sire-{int(time.time())}-{os.getpid()}",
+        },
+        timeout=60,
+    )
+    receipt = receipt_reference_from_response(response)
+    if not receipt:
+        return {
+            "ok": False,
+            "status": "failed",
+            "reason": "sire_response_missing_receipt",
+            "payloadSummary": payload_result.get("summary"),
+            "responseSummary": safe_submission_response_summary(response),
+        }
+    return {
+        "ok": True,
+        "status": "submitted",
+        "receiptReference": receipt,
+        "payloadSummary": payload_result.get("summary"),
+        "responseSummary": safe_submission_response_summary(response),
+    }
+
+
 def blocked_sire_submitter(config: dict[str, Any], submission_type: str) -> dict[str, Any]:
     return {
         "ok": False,
@@ -3326,7 +3539,7 @@ def tool_hotel_registro_prepare_government_submission(args: dict[str, Any]) -> d
         "submissions": submissions,
         "warnings": [
             "PMS government payloads are prepared but not exposed to the model.",
-            "Live submission is gated by hotel_registro_submit_government and the runtime enable flag. TRA is configured; SIRE remains blocked until its adapter is verified.",
+            "Live submission is gated by hotel_registro_submit_government and the runtime enable flag. TRA is configured; SIRE requires a verified adapter endpoint or browser routine.",
         ],
     }
 
@@ -3478,12 +3691,54 @@ def tool_hotel_registro_submit_government(args: dict[str, Any]) -> dict[str, Any
             })
             continue
 
-        outcome = blocked_sire_submitter(config, submission_type)
-        overall_status = "blocked" if overall_status == "submitted" else overall_status
+        outcome = call_sire_submitter(config, prepared, submission_type)
+        if outcome.get("status") == "submitted" and outcome.get("receiptReference"):
+            record_result = record_government_submission(
+                config,
+                registration_id=registration_id,
+                submission_type=submission_type,
+                state="submitted",
+                receipt_reference=str(outcome["receiptReference"]),
+                idempotency_key=idempotency_key,
+                payload_summary={
+                    "submissionType": submission_type,
+                    "guestCount": base.get("guestCount"),
+                    "reservationId": reservation_id,
+                    **(outcome.get("payloadSummary") if isinstance(outcome.get("payloadSummary"), dict) else {}),
+                },
+                response_summary=outcome.get("responseSummary") if isinstance(outcome.get("responseSummary"), dict) else {},
+            )
+            results.append({
+                **base,
+                "submitStatus": "submitted",
+                "receiptReference": outcome["receiptReference"],
+                "recorded": staff_safe_value(record_result),
+            })
+            continue
+        overall_status = "blocked" if outcome.get("status") == "blocked" else "partial_failure"
+        if outcome.get("status") == "failed":
+            record_government_submission(
+                config,
+                registration_id=registration_id,
+                submission_type=submission_type,
+                state="failed",
+                idempotency_key=idempotency_key,
+                payload_summary={
+                    "submissionType": submission_type,
+                    "guestCount": base.get("guestCount"),
+                    "reservationId": reservation_id,
+                    **(outcome.get("payloadSummary") if isinstance(outcome.get("payloadSummary"), dict) else {}),
+                },
+                response_summary=outcome.get("responseSummary") if isinstance(outcome.get("responseSummary"), dict) else {},
+                error_code=str(outcome.get("reason") or "submit_failed"),
+                error_message="SIRE submission did not return a verified receipt/reference.",
+            )
         results.append({
             **base,
-            "submitStatus": outcome["status"],
-            "reason": outcome["reason"],
+            "submitStatus": outcome.get("status") or "failed",
+            "reason": outcome.get("reason") or "submit_failed",
+            "missingFields": staff_safe_value(outcome.get("missingFields")),
+            "payloadSummary": staff_safe_value(outcome.get("payloadSummary")),
         })
 
     return {
@@ -3495,7 +3750,7 @@ def tool_hotel_registro_submit_government(args: dict[str, Any]) -> dict[str, Any
         "results": results,
         "warnings": [
             "Only results with a receiptReference were recorded as submitted in PMS.",
-            "SIRE live submission remains blocked until its adapter is configured and verified.",
+            "SIRE live submission requires a verified SIRE adapter endpoint or browser routine.",
         ],
     }
 
@@ -3572,7 +3827,7 @@ def build_registro_pickup_message(summary: dict[str, Any]) -> str:
         sire_count = sum(1 for item in skipped if "sire" in ",".join(str(child) for child in item.get("dueSubmissionTypes") or []))
         if sire_count:
             lines.append("")
-            lines.append(f"SIRE pendiente en {sire_count} registro(s). Todavia no esta automatizado.")
+            lines.append(f"SIRE pendiente en {sire_count} registro(s). Falta verificar el adaptador oficial antes de automatizarlo.")
     return "\n".join(lines)
 
 

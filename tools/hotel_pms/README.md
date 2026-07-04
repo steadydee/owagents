@@ -75,10 +75,12 @@ a configured official PMS API token from `https://pms.mincit.gov.co/token/`.
 The official adapter posts the primary guest to `/one/` and accompanying guests
 to `/two/` using the primary guest `code` as `padre`. Until the token is
 available, the runtime includes a conservative TRA manual-form adapter that can
-only mark submitted after the registered guest is visible in TRA. SIRE remains
-blocked until its adapter is verified. The tool records `submitted` in PMS only
-after receiving a real receipt/reference or a verified TRA registration-table
-match.
+only mark submitted after the registered guest is visible in TRA. SIRE payload
+validation is implemented for the official `Alojamiento y Hospedaje` form
+contract and can call a configured SIRE adapter endpoint, but live SIRE remains
+blocked until that endpoint or browser routine is verified. The tool records
+`submitted` in PMS only after receiving a real receipt/reference or a verified
+TRA registration-table match.
 
 `hotel_registro_record_submission_status` can record `pending`, `failed`, or
 `needs_info` status for a TRA/SIRE attempt in PMS. It deliberately rejects
@@ -115,5 +117,8 @@ Telegram or agent memory.
 - `TRA_USERNAME`/`TRA_RNT` or `TRA_USERNAME_FILE`/`TRA_RNT_FILE` optional
 - `TRA_PASSWORD` or `TRA_PASSWORD_FILE` optional
 - `SIRE_LOGIN_URL` optional
+- `SIRE_SUBMISSION_URL` or `SIRE_API_URL` optional verified SIRE adapter endpoint
+- `SIRE_API_TOKEN` or `SIRE_API_TOKEN_FILE` optional token for the verified SIRE adapter endpoint
+- `SIRE_AUTH_SCHEME` optional, defaults to `Bearer`
 
 Tokens and secrets are runtime-only. Do not commit them.

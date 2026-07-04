@@ -41,8 +41,9 @@ The Hotel OpenClaw agent has these Registro tools:
   - Until the official API token is available, a conservative TRA manual-form
     adapter can use runtime-only TRA credentials and records submitted only
     after the guest is visible in TRA's registered-guests table.
-  - SIRE is still blocked until its browser/API adapter is configured and
-    verified.
+  - SIRE validates the PMS-prepared `Alojamiento y Hospedaje` payload internally
+    and can call a configured adapter endpoint, but live SIRE remains blocked
+    until that endpoint or browser routine is verified.
   - PMS is marked submitted only after a real receipt/reference is returned.
   - It never returns guest identity payloads to the model.
 
