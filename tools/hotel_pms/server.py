@@ -78,6 +78,7 @@ PMS_REGISTRO_READ_TOOLS = (
 )
 
 PMS_REGISTRO_WRITE_TOOLS = (
+    "registro_prepare_reservation_documents",
     "registro_record_guest_extraction",
     "registro_record_guest_submission",
     "registro_record_guest_submission_error",
