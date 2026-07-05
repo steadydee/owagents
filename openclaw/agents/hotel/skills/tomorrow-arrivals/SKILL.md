@@ -135,6 +135,14 @@ classify the reservation. Owl's Watch uses three normal operational categories:
 - `pasadía` for `bookingCategory: "day_pass"`
 - `tour de aves` for `bookingCategory: "bird_tour"`
 
+If raw PMS fields are visible, classify from `bookingType` or `isOvernight`
+before looking at any date:
+
+- `bookingType: "overnight_stay"` or `isOvernight: true` means lodging/cabañas. Use `departureDate` and `nights`.
+- `bookingType: "bird_tour"` means tour de aves. Use `visitDate` or `arrivalDate`; do not mention checkout/departure.
+- `bookingType: "day_pass"` means pasadía. Use `visitDate` or `arrivalDate`; do not mention checkout/departure.
+- If `departureDate` is `null`, do not invent one.
+
 Pasadías and standalone bird tours are same-day activities. They appear under
 `Llegan` on the activity date only. Do not put `bookingCategory: "day_pass"` or
 `bookingCategory: "bird_tour"` under `Salen` or `Se quedan otro día`. `Salen`

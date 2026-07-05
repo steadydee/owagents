@@ -258,12 +258,27 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(server.booking_category(reservation), "unknown")
         self.assertEqual(server.visit_phrase(reservation), "reserva sin tipo definido")
 
+    def test_booking_category_does_not_guess_lodging_when_not_overnight(self):
+        reservation = {
+            "guestName": "Keith",
+            "bookingType": None,
+            "isOvernight": False,
+            "nights": 1,
+            "unitType": "Cabin",
+            "departureDate": "2026-07-06",
+        }
+        self.assertEqual(server.booking_category(reservation), "unknown")
+        self.assertEqual(server.visit_phrase(reservation), "reserva sin tipo definido")
+
     def test_normalize_reservation_uses_booking_type_from_list_row(self):
         normalized = server.normalize_reservation(
             {
                 "reservationId": "res-123",
                 "guestName": "Sergio Henao",
                 "bookingType": "day_pass",
+                "isOvernight": False,
+                "visitDate": "2026-06-27",
+                "departureDate": "2026-06-28",
                 "nights": 1,
             },
             {"reservation": {"reservationId": "res-123", "guestName": "Sergio Henao"}},
@@ -272,11 +287,16 @@ class ReservationToolValidationTest(unittest.TestCase):
         )
         self.assertEqual(normalized["bookingCategory"], "day_pass")
         self.assertEqual(normalized["visitPhrase"], "pasadía")
+        self.assertEqual(normalized["isOvernight"], False)
+        self.assertEqual(normalized["visitDate"], "2026-06-27")
+        self.assertIsNone(normalized["departureDate"])
+        self.assertEqual(normalized["nights"], 0)
 
     def test_same_day_activities_are_not_lodging_movements(self):
         rows = [
             {"reservationId": "day-pass", "bookingType": "day_pass", "guestName": "Sergio"},
             {"reservationId": "bird-tour", "bookingType": "bird_tour", "guestName": "Poorvi"},
+            {"reservationId": "not-overnight", "bookingType": None, "isOvernight": False, "guestName": "Keith", "unitType": "Cabin"},
             {
                 "reservationId": "cabin",
                 "bookingType": "overnight_stay",
@@ -287,6 +307,23 @@ class ReservationToolValidationTest(unittest.TestCase):
         ]
         filtered = server.filter_lodging_movements(rows)
         self.assertEqual([row["reservationId"] for row in filtered], ["cabin", "unknown"])
+
+    def test_safe_reservation_summary_keeps_operational_booking_fields(self):
+        row = {
+            "reservationId": "activity",
+            "guestName": "Keith",
+            "bookingType": "bird_tour",
+            "isOvernight": False,
+            "visitDate": "2026-07-05",
+            "departureDate": None,
+            "nights": 0,
+            "totalAmount": 123456,
+        }
+        summary = server.safe_reservation_summary(row)
+        self.assertEqual(summary["bookingType"], "bird_tour")
+        self.assertEqual(summary["isOvernight"], False)
+        self.assertEqual(summary["visitDate"], "2026-07-05")
+        self.assertNotIn("totalAmount", summary)
 
     def test_booking_category_uses_cabin_unit_for_legacy_rows(self):
         reservation = {

@@ -1736,6 +1736,8 @@ def safe_reservation_summary(row: dict[str, Any]) -> dict[str, Any]:
         "stage",
         "stageLabel",
         "bookingType",
+        "isOvernight",
+        "visitDate",
         "arrivalDate",
         "departureDate",
         "nights",
@@ -1814,12 +1816,15 @@ def unit_text(reservation: dict[str, Any]) -> str:
 
 def booking_category(reservation: dict[str, Any]) -> str:
     booking_type = str(reservation.get("bookingType") or "").lower()
+    is_overnight = reservation.get("isOvernight")
     unit = unit_text(reservation)
     notes = " ".join(str(reservation.get(k) or "") for k in ("specialRequests", "internalNotes", "dietaryNotes")).lower()
     if booking_type == "day_pass":
         return "day_pass"
     if booking_type == "bird_tour":
         return "bird_tour"
+    if is_overnight is False:
+        return "unknown"
     if booking_type == "overnight_stay":
         if "guide-cabin" in unit or "guide cabin" in unit or "guide room" in unit or "habitacion de guia" in unit or "habitación de guía" in unit:
             if "cabin" in unit.replace("guide-cabin", "").replace("guide cabin", "") or "caba" in unit:
@@ -1850,7 +1855,9 @@ def filter_lodging_movements(rows: list[Any]) -> list[dict[str, Any]]:
     return [
         row
         for row in rows
-        if isinstance(row, dict) and not is_same_day_activity(row)
+        if isinstance(row, dict)
+        and row.get("isOvernight") is not False
+        and not is_same_day_activity(row)
     ]
 
 
@@ -1901,6 +1908,16 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
         if safe_item:
             incomplete.append(safe_item)
     count = guest_count(classification)
+    category = booking_category(classification)
+    same_day_activity = category in SAME_DAY_ACTIVITY_CATEGORIES
+    visit_date = (
+        classification.get("visitDate")
+        or classification.get("activityDate")
+        or reservation.get("visitDate")
+        or row.get("visitDate")
+        or reservation.get("arrivalDate")
+        or row.get("arrivalDate")
+    )
     return {
         "reservationId": reservation.get("reservationId") or reservation.get("id") or row.get("reservationId"),
         "movement": movement,
@@ -1908,11 +1925,13 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
         "guestCount": count,
         "partyPhrase": f"party of {count}" if count else "party",
         "bookingType": classification.get("bookingType"),
-        "bookingCategory": booking_category(classification),
+        "isOvernight": classification.get("isOvernight"),
+        "visitDate": visit_date if same_day_activity else classification.get("visitDate"),
+        "bookingCategory": category,
         "visitPhrase": visit_phrase(classification),
         "arrivalDate": reservation.get("arrivalDate") or row.get("arrivalDate"),
-        "departureDate": reservation.get("departureDate") or row.get("departureDate"),
-        "nights": reservation.get("nights") or row.get("nights"),
+        "departureDate": None if same_day_activity else (reservation.get("departureDate") or row.get("departureDate")),
+        "nights": 0 if same_day_activity else (reservation.get("nights") or row.get("nights")),
         "unitType": reservation.get("unitType") or row.get("unitType"),
         "unitCode": classification.get("unitCode"),
         "unitName": classification.get("unitName"),
@@ -1991,7 +2010,7 @@ def tool_hotel_pms_list_departures(args: dict[str, Any]) -> dict[str, Any]:
 def tool_hotel_pms_list_in_house(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
-    rows = pms_tool(config, "list_in_house_guests", {"date": date}) or []
+    rows = filter_lodging_movements(pms_tool(config, "list_in_house_guests", {"date": date}) or [])
     return {"ok": True, "date": date, "inHouse": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
 
 
