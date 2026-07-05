@@ -3720,6 +3720,8 @@ def sire_country_value_from_options(options: dict[str, list[dict[str, str]]], se
         "north korea": "corea del norte",
         "czech republic": "republica checa",
         "czechia": "republica checa",
+        "chinese": "china",
+        "chn": "china",
     }
     target = aliases.get(target, target)
     if not target:
