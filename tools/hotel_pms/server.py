@@ -853,14 +853,15 @@ def registro_guest_blockers(guests: list[dict[str, Any]]) -> list[dict[str, Any]
         missing = guest.get("missingFields")
         if isinstance(missing, list) and missing:
             guest_blockers.append("missing_fields")
-        extraction_status = str(guest.get("extractionStatus") or "").lower()
-        if extraction_status and extraction_status not in {"extracted", "validated", "complete"}:
-            guest_blockers.append(f"extraction_status:{extraction_status}")
         submission_status = str(guest.get("submissionStatus") or "").lower()
         if submission_status and submission_status != "ready":
             guest_blockers.append(f"submission_status:{submission_status}")
         if not submission_status:
             guest_blockers.append("submission_status_missing")
+        extraction_status = str(guest.get("extractionStatus") or "").lower()
+        pms_ready = submission_status == "ready" and not (isinstance(missing, list) and missing)
+        if extraction_status and extraction_status not in {"extracted", "validated", "complete"} and not pms_ready:
+            guest_blockers.append(f"extraction_status:{extraction_status}")
         if guest_blockers:
             blockers.append({
                 "scope": safe_guest_submission_label(index, guest),
@@ -3542,7 +3543,7 @@ def sire_document_type(value: Any) -> str | None:
         return None
     if "pasaporte" in text or "passport" in text:
         return "Pasaporte"
-    if text in {"cc", "c c", "cedula", "cedula ciudadania", "cedula de ciudadania", "id card"}:
+    if text in {"cc", "c c", "cedula", "cedula ciudadania", "cedula de ciudadania"}:
         return "Cedula de Ciudadania"
     if text in {"ce", "c e", "cedula extranjeria", "cedula de extranjeria"}:
         return "Cedula de Extranjeria"
@@ -3550,7 +3551,7 @@ def sire_document_type(value: Any) -> str | None:
         return "PEP"
     if "ppt" in text or "proteccion temporal" in text:
         return "Permiso por Proteccion Temporal"
-    if "dni" in text or "documento nacional" in text or "documento extranjero" in text:
+    if "dni" in text or "id card" in text or "identity card" in text or "documento nacional" in text or "documento extranjero" in text:
         return "Documento Extranjero"
     return None
 

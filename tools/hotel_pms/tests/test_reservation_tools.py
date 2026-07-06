@@ -539,12 +539,32 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(plan["blockers"][0]["scope"], "guest_primary")
         self.assertIn("missing_fields", plan["blockers"][0]["reasons"])
 
+    def test_registro_submission_plan_trusts_pms_ready_status(self):
+        plan = server.build_registro_submission_plan(
+            {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["tra"]},
+            [
+                {
+                    "role": "primary",
+                    "submissionStatus": "ready",
+                    "extractionStatus": "needs_review",
+                    "missingFields": [],
+                }
+            ],
+        )
+        self.assertEqual(plan["status"], "ready")
+        self.assertEqual(plan["readyGuestCount"], 1)
+
     def test_registro_submission_plan_no_due_is_no_due_when_complete(self):
         plan = server.build_registro_submission_plan(
             {"registrationId": "reg-1", "status": "complete", "dueSubmissionTypes": []},
             [{"role": "primary", "submissionStatus": "ready", "missingFields": []}],
         )
         self.assertEqual(plan["status"], "no_due")
+
+    def test_sire_document_type_maps_generic_id_to_foreign_document(self):
+        self.assertEqual(server.sire_document_type("id_card"), "Documento Extranjero")
+        self.assertEqual(server.sire_document_type("passport"), "Pasaporte")
+        self.assertEqual(server.sire_document_type("cedula de ciudadania"), "Cedula de Ciudadania")
 
     def test_submission_type_normalization_and_validation(self):
         self.assertEqual(server.normalize_submission_type("SIRE"), "sire_entrada")
