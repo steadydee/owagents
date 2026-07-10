@@ -22,6 +22,9 @@ flowchart LR
   EmailTools --> Luna["Luna context"]
   QuoteTools --> Drive["Google Drive quote sheets"]
   CobrosTools --> DriveDocs["Google Drive cuenta de cobro Docs/PDFs"]
+  FincaTelegram["OW Finca Telegram group"] --> Finca["Finca"]
+  Finca --> FincaTools["finca_tasks tools"]
+  FincaTools --> Operations
 ```
 
 ## Source Of Truth
@@ -48,5 +51,7 @@ This repo stores source and templates. The live runtime lives under:
 - `~/.openclaw/workspace-owlswatch-cotiza/`
 - `~/.openclaw/workspace-owlswatch-correo/`
 - `~/.openclaw/workspace-owlswatch-cobros/`
+- `~/.openclaw-finca/`
+- `~/.openclaw/workspace-finca-ops/`
 
 Do not commit runtime sessions, memory logs, spools, service-account JSON, auth state, or real `openclaw.json`.

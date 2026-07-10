@@ -1,0 +1,146 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace-finca-ops",
+      "skills": [
+        "manage-finca-tasks"
+      ],
+      "models": {
+        "deepseek/deepseek-reasoner": {}
+      },
+      "model": {
+        "primary": "deepseek/deepseek-reasoner"
+      }
+    },
+    "list": [
+      {
+        "id": "finca",
+        "name": "Finca",
+        "default": true,
+        "model": "deepseek/deepseek-reasoner",
+        "models": {
+          "deepseek/deepseek-reasoner": {}
+        },
+        "workspace": "~/.openclaw/workspace-finca-ops",
+        "agentDir": "~/.openclaw-finca/agents/finca/agent",
+        "skills": [
+          "manage-finca-tasks"
+        ],
+        "tools": {
+          "profile": "minimal",
+          "alsoAllow": [
+            "session_status",
+            "finca_tasks_list",
+            "finca_tasks_get",
+            "finca_tasks_create",
+            "finca_tasks_update",
+            "finca_tasks_attach_photos",
+            "finca_tasks_send_daily_report",
+            "finca_telegram_send_message"
+          ],
+          "deny": [
+            "exec",
+            "browser",
+            "gateway",
+            "cron",
+            "nodes",
+            "canvas",
+            "group:fs",
+            "group:web",
+            "group:runtime",
+            "group:automation",
+            "group:messaging",
+            "bundle-mcp"
+          ]
+        }
+      }
+    ]
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 19501,
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "<generate locally>"
+    }
+  },
+  "commands": {
+    "ownerAllowFrom": [
+      "telegram:<dennis_telegram_user_id>"
+    ]
+  },
+  "mcp": {
+    "servers": {
+      "finca_tasks": {
+        "command": "node",
+        "args": [
+          "~/.openclaw/workspace-finca-ops/tools/finca_tasks/openclaw-plugin.js"
+        ],
+        "env": {
+          "OPENCLAW_CONFIG_PATH": "~/.openclaw-finca/openclaw.json",
+          "OPENCLAW_STATE_DIR": "~/.openclaw-finca",
+          "FINCA_WORKSPACE": "~/.openclaw/workspace-finca-ops",
+          "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
+          "OPERATIONS_PROPERTY_ID": "owlswatch",
+          "OW_AGENT_TOKEN_SECRET_FILE": "~/.openclaw-finca/secrets/operations-agent-secret",
+          "FINCA_TELEGRAM_NOTIFY_CHAT_ID": "<ow_finca_group_chat_id>",
+          "FINCA_TASKS_MOCKS": "0"
+        }
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "finca-tasks": {
+        "enabled": true
+      }
+    },
+    "load": {
+      "paths": [
+        "~/.openclaw/workspace-finca-ops/tools/finca_tasks"
+      ]
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "<botfather_token>",
+      "dmPolicy": "allowlist",
+      "allowFrom": [
+        "<dennis_telegram_user_id>",
+        "<authorized_worker_user_id>"
+      ],
+      "streaming": {
+        "mode": "off",
+        "preview": {
+          "toolProgress": false
+        },
+        "progress": {
+          "label": false,
+          "toolProgress": false,
+          "maxLines": 1
+        },
+        "block": {
+          "enabled": false
+        }
+      },
+      "groupPolicy": "allowlist",
+      "groupAllowFrom": [
+        "<dennis_telegram_user_id>",
+        "<authorized_worker_user_id>"
+      ],
+      "groups": {
+        "<ow_finca_group_chat_id>": {
+          "requireMention": false,
+          "groupPolicy": "allowlist",
+          "ingest": true,
+          "allowFrom": [
+            "<dennis_telegram_user_id>",
+            "<authorized_worker_user_id>"
+          ]
+        }
+      }
+    }
+  }
+}
