@@ -1,0 +1,23 @@
+{
+  "id": "finca-tasks",
+  "name": "OW Finca Task Tools",
+  "description": "Narrow Operations task and Telegram tools for the OW Finca agent.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "finca_tasks_list",
+      "finca_tasks_get",
+      "finca_tasks_create",
+      "finca_tasks_update",
+      "finca_tasks_attach_photos",
+      "finca_tasks_send_daily_report",
+      "finca_telegram_send_message"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}
