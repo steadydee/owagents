@@ -6,6 +6,8 @@ ACTION="${1:-install}"
 LABEL="ai.openclaw.finca.daily-report"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 ENABLED_FILE="$HOME/.openclaw-finca/daily-report.enabled"
+BIN_DIR="$HOME/.openclaw-finca/bin"
+RUNNER="$BIN_DIR/run-finca-daily-report.sh"
 
 if [ "$ACTION" = "uninstall" ]; then
   launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
@@ -25,8 +27,8 @@ if [ "$ACTION" != "install" ]; then
   exit 2
 fi
 
-mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.openclaw-finca" /tmp/openclaw
-chmod +x "$ROOT/scripts/run-finca-daily-report.sh"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.openclaw-finca" "$BIN_DIR" /tmp/openclaw
+install -m 700 "$ROOT/scripts/run-finca-daily-report.sh" "$RUNNER"
 touch "$ENABLED_FILE"
 
 cat > "$PLIST" <<PLIST
@@ -34,7 +36,7 @@ cat > "$PLIST" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key><array><string>$ROOT/scripts/run-finca-daily-report.sh</string></array>
+  <key>ProgramArguments</key><array><string>$RUNNER</string></array>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/openclaw/finca-daily-report.stdout.log</string>
