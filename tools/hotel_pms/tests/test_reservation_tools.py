@@ -1063,6 +1063,8 @@ class ReservationToolValidationTest(unittest.TestCase):
                         "dueSubmissionTypes": ["tra"],
                     },
                 ]
+            if tool_name == "get_reservation":
+                return {"reservationId": "res-1", "adultsCount": 2, "childrenCount": 0, "infantsCount": 0}
             if tool_name == "registro_get_by_reservation":
                 return {"registrationId": "reg-1", "status": "validated", "dueSubmissionTypes": ["tra"]}
             if tool_name == "registro_list_guests":
@@ -1128,6 +1130,57 @@ class ReservationToolValidationTest(unittest.TestCase):
         rendered = str(result)
         self.assertNotIn("Old Guest: enviado tra", rendered)
         self.assertTrue(any(call[0] == "registro_list_pending" for call in calls))
+
+    def test_registro_daily_pickup_reports_missing_participant_document(self):
+        def fake_local_date(config, offset=0):
+            base = dt.date(2026, 7, 11)
+            return (base + dt.timedelta(days=offset)).isoformat()
+
+        def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
+            if tool_name == "registro_list_pending":
+                return [{
+                    "registrationId": "reg-brad",
+                    "reservationId": "res-brad",
+                    "guestName": "Brad Boyle",
+                    "status": "needs_info",
+                    "documentCount": 1,
+                    "arrivalDate": "2026-07-06",
+                    "departureDate": "2026-07-08",
+                    "dueSubmissionTypes": [],
+                }]
+            if tool_name == "get_reservation":
+                return {"reservationId": "res-brad", "adultsCount": 2, "childrenCount": 0, "infantsCount": 0}
+            raise AssertionError(f"unexpected PMS tool {tool_name}")
+
+        old_load = server.load_config
+        old_pms = server.pms_tool
+        old_local_date = server.local_date
+        old_extract = server.tool_hotel_registro_extract_reservation
+        try:
+            server.load_config = lambda: {}
+            server.pms_tool = fake_pms_tool
+            server.local_date = fake_local_date
+            server.tool_hotel_registro_extract_reservation = lambda args: {
+                "ok": True,
+                "reservationId": args["reservationId"],
+                "registrationId": "reg-brad",
+                "guestCount": 1,
+                "documentCount": 1,
+                "results": [{"status": "extracted_with_review_flags"}],
+            }
+            result = server.tool_hotel_registro_daily_pickup({"notify": False, "submitTra": False, "daysBack": 7})
+        finally:
+            server.load_config = old_load
+            server.pms_tool = old_pms
+            server.local_date = old_local_date
+            server.tool_hotel_registro_extract_reservation = old_extract
+
+        self.assertEqual(result["eligibleCount"], 1)
+        self.assertEqual(result["needsReview"][0]["expectedGuestCount"], 2)
+        self.assertEqual(result["needsReview"][0]["guestCount"], 1)
+        self.assertIn("falta documento/registro de 1 huesped", result["needsReview"][0]["reason"])
+        self.assertIn("1 huesped necesita revision de extraccion", result["needsReview"][0]["reason"])
+        self.assertIn("Brad Boyle", result["message"])
 
     def test_build_tra_form_fields_maps_required_form_values(self):
         html = """
