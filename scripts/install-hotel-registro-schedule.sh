@@ -6,6 +6,8 @@ ACTION="${1:-install}"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 ENABLED_FILE="$HOME/.openclaw-hotel/registro-pickup.enabled"
 LABEL="ai.openclaw.hotel.registro-pickup"
+BIN_DIR="$HOME/.openclaw-hotel/bin"
+RUNNER="$BIN_DIR/run-hotel-registro-pickup.sh"
 
 unload_one() {
   local label="$1"
@@ -32,8 +34,8 @@ if [ "$ACTION" != "install" ]; then
   exit 2
 fi
 
-mkdir -p "$PLIST_DIR" "$(dirname "$ENABLED_FILE")" /tmp/openclaw
-chmod +x "$ROOT/scripts/run-hotel-registro-pickup.sh"
+mkdir -p "$PLIST_DIR" "$(dirname "$ENABLED_FILE")" "$BIN_DIR" /tmp/openclaw
+install -m 700 "$ROOT/scripts/run-hotel-registro-pickup.sh" "$RUNNER"
 touch "$ENABLED_FILE"
 
 cat > "$PLIST_DIR/$LABEL.plist" <<PLIST
@@ -42,7 +44,7 @@ cat > "$PLIST_DIR/$LABEL.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key><array><string>$ROOT/scripts/run-hotel-registro-pickup.sh</string></array>
+  <key>ProgramArguments</key><array><string>$RUNNER</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
   <key>RunAtLoad</key><true/>
@@ -58,4 +60,5 @@ launchctl bootstrap "gui/$(id -u)" "$plist"
 
 echo "Installed Hotel Registro pickup schedule"
 echo "Registro pickup: 17:00 America/Bogota"
+echo "Registro lookback: 7 days"
 echo "Disable without uninstall: $0 disable"

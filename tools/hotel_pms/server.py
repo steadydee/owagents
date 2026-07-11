@@ -4451,6 +4451,30 @@ def registro_pickup_in_window(item: dict[str, Any], start_date: str, end_date: s
     return False
 
 
+def reservation_expected_guest_count(value: Any) -> int | None:
+    if not isinstance(value, dict):
+        return None
+    reservation = value.get("reservation") if isinstance(value.get("reservation"), dict) else value
+    direct = reservation.get("guestCount")
+    if isinstance(direct, int) and not isinstance(direct, bool) and direct > 0:
+        return direct
+    counts = []
+    found = False
+    for key in ("adultsCount", "childrenCount", "infantsCount"):
+        item = reservation.get(key)
+        if isinstance(item, int) and not isinstance(item, bool) and item >= 0:
+            counts.append(item)
+            found = True
+    total = sum(counts)
+    return total if found and total > 0 else None
+
+
+def missing_registro_guest_reason(count: int) -> str:
+    if count == 1:
+        return "falta documento/registro de 1 huesped"
+    return f"faltan documentos/registros de {count} huespedes"
+
+
 def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     submit_government = validate_bool("submitTra", args.get("submitTra"))
@@ -4500,6 +4524,15 @@ def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
             "dueSubmissionTypes": staff_safe_value(due_types),
         }
         try:
+            expected_guest_count = None
+            if reservation_id:
+                try:
+                    reservation = pms_tool(config, "get_reservation", {"reservationId": reservation_id}) or {}
+                    expected_guest_count = reservation_expected_guest_count(reservation)
+                except ToolError:
+                    expected_guest_count = None
+            if expected_guest_count is not None:
+                base["expectedGuestCount"] = expected_guest_count
             if not registration_id:
                 summary["needsReview"].append({**base, "status": "needs_review", "reason": "sin registro"})
                 continue
@@ -4516,10 +4549,27 @@ def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
                     continue
                 extraction = tool_hotel_registro_extract_reservation({"reservationId": reservation_id, "record": True})
                 base["extractionStatus"] = extraction.get("status") or "processed"
-                base["guestCount"] = extraction.get("guestCount")
-                review_count = sum(1 for row in extraction.get("results") or [] if isinstance(row, dict) and row.get("status") == "needs_review")
+                extraction_results = extraction.get("results") if isinstance(extraction.get("results"), list) else []
+                extracted_guest_count = extraction.get("guestCount")
+                if not isinstance(extracted_guest_count, int) or isinstance(extracted_guest_count, bool):
+                    extracted_guest_count = len(extraction_results)
+                base["guestCount"] = extracted_guest_count
+                review_reasons = []
+                if expected_guest_count is not None and extracted_guest_count < expected_guest_count:
+                    review_reasons.append(missing_registro_guest_reason(expected_guest_count - extracted_guest_count))
+                review_count = sum(
+                    1
+                    for row in extraction_results
+                    if isinstance(row, dict) and row.get("status") in {"needs_review", "extracted_with_review_flags"}
+                )
                 if review_count:
-                    summary["needsReview"].append({**base, "status": "needs_review", "reason": f"{review_count} huesped(es) necesitan revision"})
+                    review_reasons.append(
+                        "1 huesped necesita revision de extraccion"
+                        if review_count == 1
+                        else f"{review_count} huespedes necesitan revision de extraccion"
+                    )
+                if review_reasons:
+                    summary["needsReview"].append({**base, "status": "needs_review", "reason": "; ".join(review_reasons)})
                     continue
             submit_args = {
                 "registrationId": registration_id,
