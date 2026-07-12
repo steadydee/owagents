@@ -4437,6 +4437,12 @@ def build_registro_pickup_message(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def registro_pickup_notification_needed(summary: dict[str, Any]) -> bool:
+    review = summary.get("needsReview") if isinstance(summary.get("needsReview"), list) else []
+    errors = summary.get("errors") if isinstance(summary.get("errors"), list) else []
+    return bool(review or errors)
+
+
 def registro_pickup_in_window(item: dict[str, Any], start_date: str, end_date: str) -> bool:
     arrival = date_part(item.get("arrivalDate"))
     departure = date_part(item.get("departureDate"))
@@ -4614,8 +4620,12 @@ def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
 
     message = build_registro_pickup_message(summary)
     summary["message"] = message
-    if notify:
+    notification_needed = registro_pickup_notification_needed(summary)
+    summary["notificationNeeded"] = notification_needed
+    if notify and notification_needed:
         summary["telegram"] = tool_hotel_telegram_send_message({"text": message})
+    elif notify:
+        summary["telegram"] = {"ok": True, "sent": False, "reason": "no_action_required"}
     return summary
 
 
