@@ -27,6 +27,8 @@ Operations is the source of truth. Telegram is only the conversational interface
 - Blocking requires a reason and preserves progress.
 - Completed or cancelled tasks require an explicit reopen action before more progress is recorded.
 - If a reference is ambiguous, ask for the `F-####` task code.
+- After creating or updating a task, confirm only that task in one short line.
+- Do not list other pending tasks or remaining-task counts unless the user asks for a list or the scheduled daily report is running.
 
 ## Language
 
