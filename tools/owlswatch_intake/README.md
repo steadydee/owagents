@@ -11,6 +11,13 @@ The server owns all external side effects:
 
 Tokens are read from environment variables first, then from the owlswatch OpenClaw profile config. Tokens are never accepted as tool parameters and are never returned in results.
 
+Receipt normalization is deterministic at the tool boundary:
+
+- categories are converted to the canonical Operations category names;
+- transfer recipients are preferred over payment rails as vendors;
+- captions, OCR, confidence, and actionable flags are preserved in the intake payload;
+- missing tax/subtotal/payment metadata and provider provenance do not create review noise.
+
 ## Config Inputs
 
 Preferred environment/config names:

@@ -106,7 +106,16 @@ Call `owlswatch_telegram_send_chat_action` with `chat_id` and `action: "typing"`
 
 Call `owlswatch_vision_extract_receipt` with the uploaded blob URLs and `user_caption_if_present`.
 
-The tool returns strict JSON. It must never invent values. Uncertain fields are null and explained in `flags`.
+The tool returns strict JSON. It must never invent values. Uncertain identity/amount/date fields are null and explained in `flags`.
+
+The tool also normalizes the category to one canonical Operations category and uses the caption as business-purpose context. For transfer screenshots, `vendor_name` is the visible recipient/payee rather than the payment rail (`Nequi`, `Bre-B`, or `Bancolombia`) whenever a recipient is present.
+
+Do not rewrite the extraction result. In particular:
+
+- Do not replace its canonical `category` with the raw caption.
+- Do not replace a payee with `Nequi`, `Bre-B`, `Bancolombia`, or `Comprobante`.
+- Do not add provenance such as `openai_vision` to review flags.
+- Missing tax, subtotal, payment method, or change are not review blockers.
 
 If extraction fails, continue to Step 6 with `extraction_status: "failed"`. The draft must still be created with the attached receipt photos.
 
@@ -135,7 +144,7 @@ Call `owlswatch_operations_create_expense_draft` with exactly one root argument 
 
 Never call this tool with an empty payload. Never place `idempotencyKey`, `expense`, `attachments`, or other draft fields beside `payload`; they must all be inside `payload`.
 
-Use this minimal payload shape:
+Pass the complete extraction result back to the intake tool under `receiptExtraction`. The tool owns the final Operations schema and preserves the caption, confidence, OCR, and actionable flags. Use this payload shape:
 
 ```json
 {
@@ -143,26 +152,30 @@ Use this minimal payload shape:
   "sourceMessageId": "telegram-{chat_id}-{message_id}",
   "submittedBy": "Telegram receipt submitter",
   "idempotencyKey": "telegram-{chat_id}-{message_id}",
-  "expense": {
-    "vendorName": null,
-    "expenseDate": null,
+  "userCaption": "exact Telegram caption or null",
+  "receiptExtraction": {
+    "vendor_name": null,
+    "expense_date": null,
     "currency": "COP",
-    "totalAmount": null,
-    "category": null,
-    "notes": null
-  },
-  "attachments": [],
-  "agent": {
-    "name": "Cuenta",
-    "confidence": null,
+    "total_amount": null,
+    "tax_amount": null,
+    "category": "Other",
+    "confidence": 0,
     "flags": [],
-    "rawOcrText": "",
-    "extractionStatus": "succeeded"
+    "raw_ocr_text": "",
+    "extraction_status": "failed"
+  },
+  "expense": {},
+  "attachments": [],
+  "telegram": {
+    "chatId": "{chat_id}",
+    "messageId": "{message_id}",
+    "messageThreadId": "{message_thread_id_or_null}"
   }
 }
 ```
 
-The payload should include null values rather than guessed values when extraction is unclear. The review status must remain draft or pending review.
+Copy the actual output of `owlswatch_vision_extract_receipt` into `receiptExtraction`; the example values above are placeholders, not values to substitute. The payload should include null identity/amount/date values rather than guesses when extraction is unclear. Operations decides whether a complete receipt can be recorded automatically or needs review.
 
 ### Step 7 - Reply on Telegram
 
