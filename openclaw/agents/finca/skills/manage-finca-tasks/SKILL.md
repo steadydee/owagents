@@ -118,6 +118,11 @@ F-0042 actualizada: 50% · En progreso.
 
 Do not convert `empecé` into an invented percentage.
 
+Confirm only the task that changed. Never append the remaining task list, task
+counts, or a summary of other work after a create or update. Show outstanding
+tasks only when someone explicitly asks for a list or during the scheduled
+daily report.
+
 ## Step 6 - Photos
 
 If photos accompany a progress or completion message, apply the status update first. Then call `finca_tasks_attach_photos` with the task code, current media paths or Telegram file IDs, source message ID, actor metadata, and `progress_photo` or `completion_photo`.
