@@ -1443,6 +1443,99 @@ def normalize_registro_extraction(parsed: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+REGISTRO_EXTRACTION_CORE_FIELDS = (
+    "docNumber",
+    "nationalityIso",
+    "primerApellido",
+    "nombres",
+    "fechaNacimiento",
+)
+
+
+def registro_extraction_needs_vision(extraction: dict[str, Any] | None) -> bool:
+    if not isinstance(extraction, dict):
+        return True
+    if extraction.get("validationErrors"):
+        return True
+    return any(not extraction.get(field) for field in REGISTRO_EXTRACTION_CORE_FIELDS)
+
+
+def registro_extraction_quality(extraction: dict[str, Any]) -> tuple[int, int, float]:
+    core_fields = sum(1 for field in REGISTRO_EXTRACTION_CORE_FIELDS if extraction.get(field))
+    errors = extraction.get("validationErrors") if isinstance(extraction.get("validationErrors"), list) else []
+    confidence = extraction.get("extractionConfidence")
+    return core_fields, -len(errors), float(confidence) if isinstance(confidence, (int, float)) else 0.0
+
+
+def merge_registro_extractions(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    primary, fallback = sorted((first, second), key=registro_extraction_quality, reverse=True)
+    merged = dict(primary)
+    mergeable_fields = (
+        "docType",
+        "docNumber",
+        "nationalityIso",
+        "nationalityLabel",
+        "primerApellido",
+        "segundoApellido",
+        "nombres",
+        "firstName",
+        "lastName",
+        "displayName",
+        "fechaNacimiento",
+        "sexo",
+        "docExpiry",
+        "docIssueDate",
+        "docIssuingCountry",
+        "sireRequired",
+    )
+    for field in mergeable_fields:
+        if merged.get(field) in (None, "") and fallback.get(field) not in (None, ""):
+            merged[field] = fallback.get(field)
+
+    checks = [value for value in (primary.get("mrzChecksumsOk"), fallback.get("mrzChecksumsOk")) if isinstance(value, bool)]
+    merged["mrzChecksumsOk"] = True if True in checks else (False if checks and all(value is False for value in checks) else None)
+    confidences = [
+        float(value)
+        for value in (primary.get("extractionConfidence"), fallback.get("extractionConfidence"))
+        if isinstance(value, (int, float))
+    ]
+    merged["extractionConfidence"] = max(confidences, default=0.0)
+    methods = [
+        str(value)
+        for value in (primary.get("extractionMethod"), fallback.get("extractionMethod"))
+        if isinstance(value, str) and value.strip()
+    ]
+    merged["extractionMethod"] = "+".join(dict.fromkeys(methods)) or "combined_document_extraction"
+    warnings = []
+    for extraction in (primary, fallback):
+        for warning in extraction.get("warnings") if isinstance(extraction.get("warnings"), list) else []:
+            if warning not in warnings:
+                warnings.append(warning)
+    merged["warnings"] = warnings
+
+    errors = []
+    if merged.get("mrzChecksumsOk") is False:
+        errors.append("mrz_checksum_failed")
+    required = {
+        "document_number_missing": merged.get("docNumber"),
+        "name_missing": merged.get("nombres"),
+        "surname_missing": merged.get("primerApellido"),
+        "nationality_missing": merged.get("nationalityIso") or merged.get("nationalityLabel"),
+        "birth_date_missing": merged.get("fechaNacimiento"),
+    }
+    for flag, value in required.items():
+        if not value:
+            errors.append(flag)
+    if errors and merged["extractionConfidence"] < 0.65:
+        errors.append("low_confidence")
+    merged["validationErrors"] = errors
+    return merged
+
+
+def guest_extraction_is_protected(guest: dict[str, Any]) -> bool:
+    return str(guest.get("verificationStatus") or "").strip().lower() in {"verified", "corrected"}
+
+
 def openai_extract_registro_document(api_key: str, model: str, content_type: str, encoded_file: str, context: dict[str, Any]) -> dict[str, Any]:
     schema = {
         "type": "object",
@@ -1491,6 +1584,9 @@ def openai_extract_registro_document(api_key: str, model: str, content_type: str
     instructions = (
         "Extract legal identity fields from this guest passport or identity-card image for hotel government reporting in Colombia. "
         "Use only what is visible on the document. Never invent missing values. "
+        "The photo may show two facing passport pages. Read the biographic identity/data page containing PASSPORT, the portrait, "
+        "passport number, surname, given names, nationality, birth date, issue/expiry dates, and MRZ. "
+        "Ignore the signature, visa, observations, and restrictions page above it. Two pages of the same open passport are not multiple documents. "
         "Return dates as YYYY-MM-DD. Use documentType passport, id_card, or other. "
         "For passports, use MRZ when visible and set mrzChecksumsOk only if you can verify it. "
         "Confidence is 0-100; use high confidence when core fields are clearly readable, not 0. "
@@ -2218,6 +2314,13 @@ def extract_guest_document(
         if record:
             record_guest_needs_review(config, registration_id, registration_guest_id, reason)
         return {"registrationGuestId": registration_guest_id, "status": "needs_review", "reason": reason}
+    if guest_extraction_is_protected(guest):
+        return {
+            "registrationGuestId": registration_guest_id,
+            "documentId": document_id,
+            "status": "verified_skipped",
+            "reason": "staff_verified_extraction_preserved",
+        }
     fetch_token = document_fetch_token(document)
     if not fetch_token:
         reason = "document_fetch_token_missing"
@@ -2244,21 +2347,30 @@ def extract_guest_document(
         if record:
             record_guest_needs_review(config, registration_id, registration_guest_id, reason)
         return {"registrationGuestId": registration_guest_id, "documentId": document_id, "status": "needs_review", "reason": reason}
-    extraction = local_extract_registro_document(content_type, encoded_file, guest)
-    if extraction is None:
+    local_extraction = local_extract_registro_document(content_type, encoded_file, guest)
+    extraction = local_extraction
+    if registro_extraction_needs_vision(local_extraction):
         api_key = registro_vision_api_key(config)
-        if not api_key:
+        if not api_key and local_extraction is None:
             reason = "registro_vision_provider_not_configured"
             if record:
                 record_guest_needs_review(config, registration_id, registration_guest_id, reason)
             return {"registrationGuestId": registration_guest_id, "documentId": document_id, "status": "needs_review", "reason": reason}
-        extraction = openai_extract_registro_document(
-            api_key,
-            registro_vision_model(config),
-            content_type,
-            encoded_file,
-            {"registrationGuestId": registration_guest_id, "documentId": document_id, "fileName": document.get("fileName")},
-        )
+        if api_key:
+            try:
+                vision_extraction = openai_extract_registro_document(
+                    api_key,
+                    registro_vision_model(config),
+                    content_type,
+                    encoded_file,
+                    {"registrationGuestId": registration_guest_id, "documentId": document_id, "fileName": document.get("fileName")},
+                )
+                extraction = vision_extraction if local_extraction is None else merge_registro_extractions(local_extraction, vision_extraction)
+            except ToolError:
+                if local_extraction is None:
+                    raise
+    if extraction is None:
+        raise ToolError("document_extraction_failed", "The document could not be read.", retryable=True)
     record_result = None
     if record:
         payload = clean_payload({
