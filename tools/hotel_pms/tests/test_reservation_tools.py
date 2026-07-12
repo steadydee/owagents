@@ -1125,8 +1125,10 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(result["processed"][0]["label"], "Rishab Whatsapp")
         self.assertEqual(result["processed"][0]["receiptReference"], "TRA-RECEIPT-1")
         self.assertEqual(recorded[0]["state"], "submitted")
-        self.assertTrue(telegram)
-        self.assertIn("Rishab Whatsapp: enviado tra", telegram[0])
+        self.assertFalse(telegram)
+        self.assertFalse(result["notificationNeeded"])
+        self.assertEqual(result["telegram"], {"ok": True, "sent": False, "reason": "no_action_required"})
+        self.assertIn("Rishab Whatsapp: enviado tra", result["message"])
         rendered = str(result)
         self.assertNotIn("Old Guest: enviado tra", rendered)
         self.assertTrue(any(call[0] == "registro_list_pending" for call in calls))
@@ -1156,6 +1158,8 @@ class ReservationToolValidationTest(unittest.TestCase):
         old_pms = server.pms_tool
         old_local_date = server.local_date
         old_extract = server.tool_hotel_registro_extract_reservation
+        old_telegram = server.tool_hotel_telegram_send_message
+        telegram = []
         try:
             server.load_config = lambda: {}
             server.pms_tool = fake_pms_tool
@@ -1168,12 +1172,14 @@ class ReservationToolValidationTest(unittest.TestCase):
                 "documentCount": 1,
                 "results": [{"status": "extracted_with_review_flags"}],
             }
-            result = server.tool_hotel_registro_daily_pickup({"notify": False, "submitTra": False, "daysBack": 7})
+            server.tool_hotel_telegram_send_message = lambda args: telegram.append(args["text"]) or {"ok": True, "message_id": 1}
+            result = server.tool_hotel_registro_daily_pickup({"notify": True, "submitTra": False, "daysBack": 7})
         finally:
             server.load_config = old_load
             server.pms_tool = old_pms
             server.local_date = old_local_date
             server.tool_hotel_registro_extract_reservation = old_extract
+            server.tool_hotel_telegram_send_message = old_telegram
 
         self.assertEqual(result["eligibleCount"], 1)
         self.assertEqual(result["needsReview"][0]["expectedGuestCount"], 2)
@@ -1181,6 +1187,9 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertIn("falta documento/registro de 1 huesped", result["needsReview"][0]["reason"])
         self.assertIn("1 huesped necesita revision de extraccion", result["needsReview"][0]["reason"])
         self.assertIn("Brad Boyle", result["message"])
+        self.assertTrue(result["notificationNeeded"])
+        self.assertEqual(len(telegram), 1)
+        self.assertIn("Brad Boyle", telegram[0])
 
     def test_build_tra_form_fields_maps_required_form_values(self):
         html = """

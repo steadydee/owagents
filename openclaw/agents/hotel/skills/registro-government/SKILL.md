@@ -85,7 +85,7 @@ If the instruction is a scheduled run such as `registro_daily_pickup`,
     "submitTra": true,
     "notify": true,
     "maxRecords": 25,
-    "daysBack": 1,
+    "daysBack": 7,
     "daysAhead": 2
   }
 }
@@ -97,8 +97,12 @@ This tool owns the loop:
 - extracts uploaded documents when needed
 - submits TRA/SIRE only when PMS says the record is ready and the configured
   submitter returns a verified receipt/reference
-- limits the normal sweep to yesterday through two days ahead
-- sends one staff-safe Telegram summary
+- limits the normal sweep to seven days back through two days ahead so late
+  document uploads are still collected
+- keeps Telegram silent for successful, skipped, already-complete, and empty
+  runs
+- sends one staff-safe Telegram alert only when `needsReview` or `errors` is
+  non-empty
 
 After the tool returns, reply with one short confirmation in the OpenClaw chat.
 Do not send an additional Telegram message unless the tool reports that its
