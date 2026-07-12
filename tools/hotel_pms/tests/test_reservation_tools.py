@@ -487,6 +487,58 @@ class ReservationToolValidationTest(unittest.TestCase):
         })
         self.assertIn("mrz_checksum_failed", extracted["validationErrors"])
 
+    def test_partial_local_extraction_requires_vision_escalation(self):
+        partial = server.normalize_registro_extraction({
+            "documentType": "passport",
+            "surname": "SAMPLE",
+            "givenNames": "ALEX",
+            "confidence": 60,
+            "flags": ["mrz_not_found"],
+        })
+        self.assertTrue(server.registro_extraction_needs_vision(partial))
+
+    def test_complete_extraction_does_not_require_vision_escalation(self):
+        complete = server.normalize_registro_extraction({
+            "documentType": "passport",
+            "documentNumber": "C1234567",
+            "nationalityIso": "CAN",
+            "surname": "SAMPLE",
+            "givenNames": "ALEX",
+            "dateOfBirth": "1980-01-02",
+            "confidence": 95,
+            "flags": [],
+        })
+        self.assertFalse(server.registro_extraction_needs_vision(complete))
+
+    def test_merge_extractions_keeps_local_name_and_vision_identity_fields(self):
+        local = server.normalize_registro_extraction({
+            "documentType": "passport",
+            "surname": "SAMPLE",
+            "givenNames": "ALEX",
+            "confidence": 60,
+            "flags": ["mrz_not_found"],
+        })
+        vision = server.normalize_registro_extraction({
+            "documentType": "passport",
+            "documentNumber": "C1234567",
+            "nationalityIso": "CAN",
+            "dateOfBirth": "1980-01-02",
+            "confidence": 94,
+            "flags": [],
+        })
+        merged = server.merge_registro_extractions(local, vision)
+        self.assertEqual(merged["docNumber"], "C1234567")
+        self.assertEqual(merged["nationalityIso"], "CAN")
+        self.assertEqual(merged["primerApellido"], "SAMPLE")
+        self.assertEqual(merged["nombres"], "ALEX")
+        self.assertEqual(merged["fechaNacimiento"], "1980-01-02")
+        self.assertEqual(merged["validationErrors"], [])
+
+    def test_verified_or_corrected_extraction_is_protected(self):
+        self.assertTrue(server.guest_extraction_is_protected({"verificationStatus": "verified"}))
+        self.assertTrue(server.guest_extraction_is_protected({"verificationStatus": "corrected"}))
+        self.assertFalse(server.guest_extraction_is_protected({"verificationStatus": "unreviewed"}))
+
     def test_registro_submission_plan_ready_uses_due_types_without_pii(self):
         plan = server.build_registro_submission_plan(
             {
