@@ -86,19 +86,56 @@ Plus two standing rules in every skill that ingests external content:
 - Every credential an agent depends on has a rotation runbook — app tokens, bot tokens, and service-account keys alike.
 - Google access uses the narrowest scope per call (`gmail.readonly` for reads; `gmail.compose` only behind an explicit enable flag), and read surfaces are scoped (a dedicated label, not `*`) wherever the provider allows.
 
-## 8. Testing
+## 8. Git, Worktrees, Releases, And Drift
+
+`main` is the rebuildable source of truth for the agent platform. A remote
+feature branch is a backup of work in progress, not a release. A live workspace
+is a deployment target, not source code.
+
+- Give every Codex task its own worktree and feature branch created from
+  `origin/main`. Never let two Codex instances share a branch or worktree.
+- Every ordinary pull request targets `main`. Stacked feature branches require
+  an explicit integration plan and are the exception, not the default.
+- A feature is complete only when its tests pass, its PR is merged, `main` is
+  pushed, the exact `origin/main` commit is deployed, and the live probes pass.
+- Do not leave completed PRs in draft. Do not leave merged branches and
+  worktrees behind.
+- Interrupted work must be committed and pushed to a clearly named `wip/...`
+  branch. Never rely on uncommitted local modifications as a backup.
+- Live deploy scripts must refuse to run unless the checkout is clean, the
+  current branch is `main`, and `HEAD` exactly equals the freshly fetched
+  `origin/main`.
+- Deployment scripts must run the secret scan before copying files and must
+  print the deployed Git SHA in their completion output.
+- Keep sanitized profile examples synchronized with intentional live model,
+  tool-policy, schedule, and routing changes in the same PR. Secrets and live
+  state remain runtime-only.
+- Record the deployed SHA per profile. A drift audit should compare versioned
+  workspace files with that SHA and alert when live files differ.
+
+The required flow is:
+
+```text
+feature worktree -> tests -> PR to main -> merge -> synchronized clean main
+-> deploy exact SHA -> gateway/channel probes -> remove worktree and branch
+```
+
+Before any live deployment, run `scripts/assert-release-ready.sh`. This is an
+enforced gate, not an optional checklist.
+
+## 9. Testing
 
 - Deterministic logic gets unit or golden tests before it goes live: pricing and normalization, payee/field resolution for accounting documents, dedupe-key derivation. The rule of thumb: if a wrong answer costs money or trust, it has tests.
 - Every tool package has a smoke script: compile, `tools/list`, and a grep for its expected tool names. Smokes run before commit and after deploy.
 - A consistency check enforces the contract chain: tools referenced by a SKILL.md ⊆ the agent's `alsoAllow` ⊆ the package's published catalog, and every `alsoAllow` entry appears in `docs/security-boundaries.md`. Run it with the smokes.
 
-## 9. Data Hygiene
+## 10. Data Hygiene
 
 - Versioned business rules (pricebooks, schemas, operator catalogs) belong in git. Personal and banking data (account numbers, cédulas, personal NITs) never do — they live in runtime-only files referenced by env path, exactly like tokens.
 - Example configs use `<placeholder>` values for every token, chat id, and personal identifier. Non-secret real identifiers (Drive folder ids) are tolerated but not encouraged.
 - Run `scripts/check-no-secrets.sh` before every commit. Sharing a repo or bundle externally (including with another LLM) is publication: re-check it for personal data first, not just credentials.
 
-## 10. New Agent Checklist
+## 11. New Agent Checklist
 
 Follow `docs/runbooks/add-new-agent.md` for the steps. Before building, answer in the agent's README:
 

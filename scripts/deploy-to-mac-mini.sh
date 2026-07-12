@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"$ROOT/scripts/assert-release-ready.sh"
 
 MAIN_WORKSPACE="${MAIN_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-main}"
 CUENTA_WORKSPACE="${CUENTA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch}"
@@ -131,4 +132,5 @@ openclaw --profile "$PROFILE" skills check --agent correo
 openclaw --profile "$PROFILE" skills check --agent cobros
 
 echo "Deploy complete. Backup: $BACKUP_DIR"
+echo "Deployed git commit: $(git -C "$ROOT" rev-parse HEAD)"
 echo "Restart with: openclaw --profile $PROFILE gateway restart"
