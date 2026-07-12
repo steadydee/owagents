@@ -19,6 +19,7 @@ import shutil
 import sys
 import time
 import traceback
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,6 +37,158 @@ DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,160}$")
 TEXT_RE = re.compile(r"^[\s\S]{0,4096}$")
+
+CANONICAL_EXPENSE_CATEGORIES = (
+    "Food & Groceries",
+    "Restaurant Supplies",
+    "Cabin Supplies",
+    "Cleaning Supplies",
+    "Maintenance & Repairs",
+    "Construction / Improvements",
+    "Transportation & Fuel",
+    "Guides / Operators / Commissions",
+    "Payroll / Contractors",
+    "Marketing & Advertising",
+    "Software & Subscriptions",
+    "Utilities",
+    "Office / Admin",
+    "Guest Experience",
+    "Taxes / Government Fees",
+    "Banking / Payment Fees",
+    "Other",
+)
+
+GENERIC_TRANSFER_VENDOR_NAMES = {
+    "bancolombia",
+    "bre b",
+    "comprobante",
+    "daviplata",
+    "nequi",
+    "pago",
+    "payment",
+    "sin proveedor",
+    "transfer",
+    "transferencia",
+    "unknown",
+    "unknown vendor",
+}
+
+CATEGORY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "Payroll / Contractors",
+        (
+            r"\bnomina\b",
+            r"\bsalario\b",
+            r"\bsueldo\b",
+            r"\bpayroll\b",
+            r"\bwages?\b",
+            r"\bcontractors?\b",
+        ),
+    ),
+    (
+        "Guides / Operators / Commissions",
+        (
+            r"\bguia\b",
+            r"\bguianza\b",
+            r"\bguide\b",
+            r"\boperador\b",
+            r"\boperator\b",
+            r"\bcomision\s+(?:de\s+)?(?:guia|operador|agencia)\b",
+        ),
+    ),
+    (
+        "Utilities",
+        (
+            r"\bpipas?\s+(?:de\s+)?gas\b",
+            r"\bcilindros?\s+(?:de\s+)?gas\b",
+            r"\bgas\s+propano\b",
+            r"\bglp\b",
+            r"\bgas\s+domiciliario\b",
+            r"\binternet\b",
+            r"\belectricidad\b",
+            r"\benergia\b",
+            r"\bacueducto\b",
+            r"\bservicios?\s+publicos?\b",
+        ),
+    ),
+    (
+        "Transportation & Fuel",
+        (
+            r"\bgasolina\b",
+            r"\bdiesel\b",
+            r"\bcombustible\b",
+            r"\bterpel\b",
+            r"\btaxi\b",
+            r"\bpeaje\b",
+            r"\btransporte\b",
+            r"\btransportation\b",
+        ),
+    ),
+    (
+        "Food & Groceries",
+        (
+            r"\bgrocer(?:y|ies)\b",
+            r"\bmercado\b",
+            r"\bmercaldas\b",
+            r"\bsupermercado\b",
+            r"\bfruver\b",
+            r"\bcarnic(?:os|eria)\b",
+            r"\bcarnes?\b",
+            r"\bbutcher\b",
+            r"\bempanadas?\b",
+            r"\balimentos?\b",
+            r"\bcomida\b",
+            r"\bfood\b",
+        ),
+    ),
+    (
+        "Cleaning Supplies",
+        (r"\blimpieza\b", r"\baseo\b", r"\bcleaning\b", r"\bdetergente\b"),
+    ),
+    (
+        "Construction / Improvements",
+        (r"\bconstruccion\b", r"\bobra\b", r"\bcapex\b", r"\bmejora(?:s)?\b"),
+    ),
+    (
+        "Maintenance & Repairs",
+        (
+            r"\bmantenimiento\b",
+            r"\breparacion\b",
+            r"\bferreteria\b",
+            r"\bhomecenter\b",
+            r"\bhardware\b",
+            r"\bmateriales?\b",
+        ),
+    ),
+    (
+        "Cabin Supplies",
+        (r"\bcabana\b", r"\bcabin\b", r"\bhabitacion\b", r"\blenceria\b"),
+    ),
+    (
+        "Software & Subscriptions",
+        (r"\bsoftware\b", r"\bsuscripcion\b", r"\bsubscription\b", r"\bhosting\b"),
+    ),
+    (
+        "Marketing & Advertising",
+        (r"\bmarketing\b", r"\bpublicidad\b", r"\badvertising\b"),
+    ),
+    (
+        "Taxes / Government Fees",
+        (r"\bimpuesto\b", r"\bdian\b", r"\brnt\b", r"\btasa\s+gubernamental\b"),
+    ),
+    (
+        "Banking / Payment Fees",
+        (r"\bcomision\s+bancaria\b", r"\bbank\s+fee\b", r"\bcuota\s+de\s+manejo\b"),
+    ),
+    (
+        "Office / Admin",
+        (r"\boficina\b", r"\bpapeleria\b", r"\bstationery\b", r"\badministrativ[oa]\b"),
+    ),
+    (
+        "Guest Experience",
+        (r"\bhuesped(?:es)?\b", r"\bguest\b", r"\bcortesia\b", r"\bamenities\b"),
+    ),
+)
 
 
 class ToolError(Exception):
@@ -131,6 +284,148 @@ def set_first_present(target: dict[str, Any], key: str, *values: Any) -> None:
         target[key] = value
 
 
+def normalize_text(value: Any) -> str:
+    text = unicodedata.normalize("NFD", str(value or "").lower())
+    return re.sub(r"\s+", " ", "".join(char for char in text if unicodedata.category(char) != "Mn")).strip()
+
+
+def unique_flags(flags: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in flags:
+        text = str(value or "").strip()
+        key = normalize_text(text).replace("-", "_").replace(" ", "_")
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def is_generic_transfer_vendor(value: Any) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalize_text(value)).strip()
+    return not normalized or normalized in GENERIC_TRANSFER_VENDOR_NAMES or normalized.startswith("comprobante ")
+
+
+def clean_vendor_candidate(value: Any) -> str | None:
+    lines = str(value or "").strip().splitlines()
+    if not lines:
+        return None
+    candidate = lines[0].strip(" :-–—")
+    candidate = re.sub(r"\s+", " ", candidate)
+    candidate = re.sub(r"\s*\([^)]*$", "", candidate).strip()
+    candidate = re.sub(r"\s+(?:ahorros|corriente|savings|checking)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
+    normalized = normalize_text(candidate)
+    if (
+        len(candidate) < 2
+        or len(candidate) > 160
+        or re.fullmatch(r"[\d*\- ]+", candidate)
+        or normalized in GENERIC_TRANSFER_VENDOR_NAMES
+        or normalized in {"producto destino", "cuenta destino", "enviado a", "beneficiario", "destinatario"}
+    ):
+        return None
+    return candidate
+
+
+def derive_transfer_vendor(*values: Any) -> str | None:
+    patterns = (
+        r"(?:enviado\s+a|pagado\s+a|pague\s+a|paid\s+to|payment\s+to|transfer(?:encia)?\s+a)\s*[:\-–—]?\s*([^\n;,]+)",
+        r"(?:producto\s+destino|cuenta\s+destino|beneficiario|destinatario|comercio)\s*[:\-–—]?\s*[\n ]+([^\n;,]+)",
+    )
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            candidate = clean_vendor_candidate(match.group(1) if match else None)
+            if candidate:
+                return candidate
+    return None
+
+
+def canonical_expense_category(category: Any, caption: Any, vendor: Any, raw_ocr_text: Any, notes: Any = None) -> str:
+    normalized_category = normalize_text(category)
+    for canonical in CANONICAL_EXPENSE_CATEGORIES:
+        if normalized_category == normalize_text(canonical):
+            return canonical
+
+    # The caption expresses business purpose more reliably than bank/receipt text,
+    # so evaluate it first, then vendor/category/OCR context.
+    for value in (caption, notes, vendor, category, raw_ocr_text):
+        text = normalize_text(value)
+        if not text:
+            continue
+        for canonical, patterns in CATEGORY_PATTERNS:
+            if any(re.search(pattern, text) for pattern in patterns):
+                return canonical
+    return "Other"
+
+
+def is_missing_vendor_flag(value: str) -> bool:
+    normalized = normalize_text(value).replace("-", "_").replace(" ", "_")
+    return normalized in {"vendor_name_missing", "missing_vendor", "missing_vendor_name", "vendor_missing"}
+
+
+def is_missing_total_flag(value: str) -> bool:
+    normalized = normalize_text(value).replace("-", "_").replace(" ", "_")
+    return normalized in {"total_amount_missing", "amount_missing", "missing_total", "total_missing"}
+
+
+def is_missing_date_flag(value: str) -> bool:
+    normalized = normalize_text(value).replace("-", "_").replace(" ", "_")
+    return normalized in {"expense_date_missing", "date_missing", "missing_date"}
+
+
+def is_missing_category_flag(value: str) -> bool:
+    normalized = normalize_text(value).replace("-", "_").replace(" ", "_")
+    return normalized in {"category_missing", "missing_category"}
+
+
+def is_non_actionable_receipt_flag(value: str) -> bool:
+    normalized = normalize_text(value).replace("-", "_").replace(" ", "_")
+    return (
+        normalized in {"openai_vision", "partial"}
+        or "tax" in normalized
+        or "iva" in normalized
+        or "subtotal" in normalized
+        or "payment_method" in normalized
+        or "payment_change" in normalized
+        or "change_not_found" in normalized
+    )
+
+
+def actionable_receipt_flags(
+    flags: list[Any],
+    *,
+    vendor_name: Any,
+    total_amount: Any,
+    expense_date: Any,
+    category: Any,
+) -> list[str]:
+    result: list[str] = []
+    for flag in unique_flags(flags):
+        if is_non_actionable_receipt_flag(flag):
+            continue
+        if vendor_name and is_missing_vendor_flag(flag):
+            continue
+        if total_amount is not None and is_missing_total_flag(flag):
+            continue
+        if expense_date and is_missing_date_flag(flag):
+            continue
+        if category and is_missing_category_flag(flag):
+            continue
+        result.append(flag)
+
+    if not vendor_name and not any(is_missing_vendor_flag(flag) for flag in result):
+        result.append("vendor_name_missing")
+    if total_amount is None and not any(is_missing_total_flag(flag) for flag in result):
+        result.append("total_amount_missing")
+    if not expense_date and not any(is_missing_date_flag(flag) for flag in result):
+        result.append("expense_date_missing")
+    return unique_flags(result)
+
+
 def normalize_submitted_by(value: Any) -> Any:
     if not isinstance(value, dict):
         return value
@@ -148,6 +443,15 @@ def normalize_expense_draft_payload(config: dict[str, Any], payload: dict[str, A
     normalized.pop("property_id", None)
     normalized["propertyId"] = operations_property_id(config)
 
+    extraction = first_present(normalized.pop("receiptExtraction", None), normalized.pop("receipt_extraction", None))
+    if not isinstance(extraction, dict):
+        extraction = {}
+    caption = first_present(
+        normalized.get("userCaption"),
+        normalized.get("user_caption"),
+        normalized.get("caption"),
+    )
+
     expense = dict(normalized.get("expense") or {})
     set_first_present(
         expense,
@@ -155,6 +459,8 @@ def normalize_expense_draft_payload(config: dict[str, Any], payload: dict[str, A
         expense.get("expense_date"),
         expense.get("expenseDate"),
         expense.get("date"),
+        extraction.get("expense_date"),
+        extraction.get("expenseDate"),
     )
     set_first_present(
         expense,
@@ -164,20 +470,57 @@ def normalize_expense_draft_payload(config: dict[str, Any], payload: dict[str, A
         expense.get("vendor_name_raw"),
         expense.get("vendorNameRaw"),
         expense.get("vendor"),
+        extraction.get("vendor_name"),
+        extraction.get("vendorName"),
     )
-    set_first_present(expense, "total_amount", expense.get("total_amount"), expense.get("totalAmount"), expense.get("total"))
-    set_first_present(expense, "tax_amount", expense.get("tax_amount"), expense.get("taxAmount"))
+    set_first_present(
+        expense,
+        "total_amount",
+        expense.get("total_amount"),
+        expense.get("totalAmount"),
+        expense.get("total"),
+        extraction.get("total_amount"),
+        extraction.get("totalAmount"),
+    )
+    set_first_present(expense, "currency", expense.get("currency"), extraction.get("currency"))
+    set_first_present(expense, "tax_amount", expense.get("tax_amount"), expense.get("taxAmount"), extraction.get("tax_amount"))
     set_first_present(expense, "subtotal_amount", expense.get("subtotal_amount"), expense.get("subtotalAmount"))
     set_first_present(expense, "tip_amount", expense.get("tip_amount"), expense.get("tipAmount"))
     set_first_present(
         expense,
         "notes",
         expense.get("notes"),
+        expense.get("note"),
         expense.get("description"),
         expense.get("business_purpose"),
         expense.get("businessPurpose"),
+        caption,
     )
+
+    raw_ocr_text = first_present(
+        extraction.get("raw_ocr_text"),
+        extraction.get("rawOcrText"),
+        (normalized.get("agent") or {}).get("raw_ocr_text") if isinstance(normalized.get("agent"), dict) else None,
+        (normalized.get("agent") or {}).get("rawOcrText") if isinstance(normalized.get("agent"), dict) else None,
+    )
+    vendor_name = first_present(expense.get("vendor_name"), expense.get("vendorName"))
+    derived_vendor = derive_transfer_vendor(caption, expense.get("notes"), raw_ocr_text)
+    if is_generic_transfer_vendor(vendor_name) and derived_vendor:
+        expense["vendor_name"] = derived_vendor
+        vendor_name = derived_vendor
+    category = canonical_expense_category(
+        first_present(expense.get("category"), extraction.get("category")),
+        caption,
+        vendor_name,
+        raw_ocr_text,
+        expense.get("notes"),
+    )
+    expense["category"] = category
     normalized["expense"] = expense
+
+    if caption is not None:
+        normalized.pop("user_caption", None)
+        normalized["userCaption"] = caption
 
     submitted_by = normalize_submitted_by(normalized.get("submittedBy", normalized.get("submitted_by")))
     if submitted_by is not None:
@@ -186,7 +529,37 @@ def normalize_expense_draft_payload(config: dict[str, Any], payload: dict[str, A
 
     agent = normalized.get("agent")
     if isinstance(agent, str):
-        normalized["agent"] = {"name": agent}
+        agent = {"name": agent}
+    elif not isinstance(agent, dict):
+        agent = {}
+    if extraction:
+        agent = {
+            **agent,
+            "name": first_present(agent.get("name"), "Cuenta"),
+            "confidence": first_present(agent.get("confidence"), extraction.get("confidence")),
+            "extractionStatus": first_present(
+                agent.get("extractionStatus"),
+                agent.get("extraction_status"),
+                extraction.get("extraction_status"),
+                extraction.get("extractionStatus"),
+            ),
+            "rawOcrText": first_present(agent.get("rawOcrText"), agent.get("raw_ocr_text"), raw_ocr_text),
+        }
+    combined_flags = [
+        *(agent.get("flags") if isinstance(agent.get("flags"), list) else []),
+        *(extraction.get("flags") if isinstance(extraction.get("flags"), list) else []),
+        *(normalized.get("flags") if isinstance(normalized.get("flags"), list) else []),
+    ]
+    flags = actionable_receipt_flags(
+        combined_flags,
+        vendor_name=vendor_name,
+        total_amount=expense.get("total_amount"),
+        expense_date=expense.get("expense_date"),
+        category=category,
+    )
+    agent["flags"] = flags
+    normalized["flags"] = flags
+    normalized["agent"] = agent
     return normalized
 
 
@@ -274,7 +647,11 @@ def extract_response_text(data: dict[str, Any]) -> str | None:
     return None
 
 
-def normalize_receipt_extraction(data: dict[str, Any], fallback_flags: list[str]) -> dict[str, Any]:
+def normalize_receipt_extraction(
+    data: dict[str, Any],
+    fallback_flags: list[str] | None = None,
+    caption: str | None = None,
+) -> dict[str, Any]:
     allowed = {
         "vendor_name",
         "expense_date",
@@ -288,16 +665,38 @@ def normalize_receipt_extraction(data: dict[str, Any], fallback_flags: list[str]
         "extraction_status",
     }
     result = {key: data.get(key) for key in allowed}
+    raw_ocr_text = result.get("raw_ocr_text")
+    vendor_name = result.get("vendor_name")
+    derived_vendor = derive_transfer_vendor(caption, raw_ocr_text)
+    if is_generic_transfer_vendor(vendor_name) and derived_vendor:
+        vendor_name = derived_vendor
+    result["vendor_name"] = vendor_name
+    result["category"] = canonical_expense_category(
+        result.get("category"),
+        caption,
+        vendor_name,
+        raw_ocr_text,
+    )
+
     flags = result.get("flags")
-    result["flags"] = flags if isinstance(flags, list) else []
-    result["flags"] = [str(flag) for flag in [*result["flags"], *fallback_flags] if str(flag).strip()]
+    result["flags"] = actionable_receipt_flags(
+        [*(flags if isinstance(flags, list) else []), *(fallback_flags or [])],
+        vendor_name=vendor_name,
+        total_amount=result.get("total_amount"),
+        expense_date=result.get("expense_date"),
+        category=result.get("category"),
+    )
     confidence = result.get("confidence")
     if isinstance(confidence, (int, float)) and 0 < confidence <= 1:
         result["confidence"] = round(confidence * 100)
     elif confidence is None:
         result["confidence"] = 0
-    if result.get("extraction_status") not in ("succeeded", "partial", "failed"):
-        result["extraction_status"] = "succeeded" if result.get("vendor_name") or result.get("total_amount") else "failed"
+    if result.get("total_amount") is None:
+        result["extraction_status"] = "failed" if not result.get("vendor_name") else "partial"
+    elif result.get("vendor_name") and result.get("expense_date"):
+        result["extraction_status"] = "succeeded"
+    else:
+        result["extraction_status"] = "partial"
     return result
 
 
@@ -311,7 +710,11 @@ def openai_extract_receipt(api_key: str, model: str, blob_urls: list[str], capti
             "currency": {"type": ["string", "null"], "description": "ISO currency code, e.g. COP, USD."},
             "total_amount": {"type": ["number", "null"], "description": "Grand total only. No thousands separators."},
             "tax_amount": {"type": ["number", "null"]},
-            "category": {"type": ["string", "null"], "description": "Use the user caption as category only if it clearly names one."},
+            "category": {
+                "type": ["string", "null"],
+                "enum": [*CANONICAL_EXPENSE_CATEGORIES, None],
+                "description": "Choose exactly one canonical Operations category based on the transaction and user caption.",
+            },
             "confidence": {"type": "number", "minimum": 0, "maximum": 100},
             "flags": {"type": "array", "items": {"type": "string"}},
             "raw_ocr_text": {"type": ["string", "null"]},
@@ -335,6 +738,13 @@ def openai_extract_receipt(api_key: str, model: str, blob_urls: list[str], capti
         "If a field is unclear or absent, return null and add a short flag. "
         "For Colombian receipts, currency is usually COP when pesos are shown. "
         "Return the grand total, not subtotal, tax, points, or payment change. "
+        "For a bank or wallet transfer, vendor_name is the recipient/payee under Producto destino, Enviado a, "
+        "Beneficiario, or Destinatario; do not use Nequi, Bre-B, Bancolombia, or Comprobante as the vendor when a recipient is visible. "
+        "Use the user caption as trusted business-purpose context and choose one category from the provided canonical enum. "
+        "Cárnicos, groceries, markets, and food ingredients are Food & Groceries. "
+        "Gas cylinders/propane are Utilities; gasoline/diesel/taxis/tolls are Transportation & Fuel. "
+        "Salary/payroll is Payroll / Contractors. If no specific category is supported, use Other. "
+        "Do not flag missing tax, subtotal, payment method, or change; those fields are optional. "
         "Preserve raw OCR text in raw_ocr_text when possible."
     )
     content: list[dict[str, Any]] = [
@@ -363,7 +773,7 @@ def openai_extract_receipt(api_key: str, model: str, blob_urls: list[str], capti
         raise ToolError("vision_response_invalid", "OpenAI vision returned invalid JSON.", retryable=True) from exc
     if not isinstance(parsed, dict):
         raise ToolError("vision_response_invalid", "OpenAI vision returned an invalid JSON shape.", retryable=True)
-    return normalize_receipt_extraction(parsed, ["openai_vision"])
+    return normalize_receipt_extraction(parsed, caption=caption)
 
 
 def telegram_api(method: str, params: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
@@ -695,7 +1105,7 @@ def tool_vision_extract_receipt(args: dict[str, Any]) -> dict[str, Any]:
     result.setdefault("extraction_status", "succeeded")
     if result.get("confidence") is None:
         result["confidence"] = 0
-    return result
+    return normalize_receipt_extraction(result, caption=caption)
 
 
 def tool_telegram_send_message(args: dict[str, Any]) -> dict[str, Any]:
@@ -745,7 +1155,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
     "owlswatch_album_buffer_store": ("Store one album photo arrival in durable spool state.", {"type": "object", "properties": {"media_group_id": {"type": "string"}, "chat_id": {"type": ["string", "number"]}, "file_id": {"type": "string"}, "caption_if_present": {"type": ["string", "null"]}, "source_message_id": {"type": ["string", "number"]}}, "required": ["media_group_id", "chat_id", "file_id"], "additionalProperties": False}, tool_album_buffer_store),
     "owlswatch_album_buffer_check": ("Check album quiet period and atomically claim if complete.", {"type": "object", "properties": {"media_group_id": {"type": "string"}, "chat_id": {"type": ["string", "number"]}, "claim_owner": {"type": "string"}, "quiet_seconds": {"type": "number", "minimum": 0, "maximum": 30}}, "required": ["media_group_id", "chat_id"], "additionalProperties": False}, tool_album_buffer_check),
     "owlswatch_operations_upload_attachment": ("Upload spooled receipt photos to Operations intake attachment endpoint.", {"type": "object", "properties": {"local_paths": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10}}, "required": ["local_paths"], "additionalProperties": False}, tool_operations_upload_attachment),
-    "owlswatch_operations_create_expense_draft": ("Create an Operations expense draft with idempotency. The tool owns the Operations property id and normalizes common receipt field names; prefer arguments shaped exactly as { payload: { idempotencyKey, source, sourceMessageId, submittedBy, expense, attachments, agent } }.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": True}, tool_operations_create_expense_draft),
+    "owlswatch_operations_create_expense_draft": ("Create an Operations expense intake record with idempotency. Pass the complete vision result as payload.receiptExtraction plus userCaption, Telegram metadata, and attachments; the tool owns property, normalization, and the final Operations payload.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": True}, tool_operations_create_expense_draft),
     "owlswatch_vision_extract_receipt": ("Extract receipt fields from uploaded blobs using configured vision provider.", {"type": "object", "properties": {"blob_urls": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10}, "user_caption_if_present": {"type": ["string", "null"]}}, "required": ["blob_urls"], "additionalProperties": False}, tool_vision_extract_receipt),
     "owlswatch_memory_log": ("Append one intake summary line to Cuenta memory.", {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"], "additionalProperties": False}, tool_memory_log),
 }

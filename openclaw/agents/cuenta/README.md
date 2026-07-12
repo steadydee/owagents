@@ -16,7 +16,9 @@ Send one receipt photo, or a Telegram photo album, with a short note when useful
 
 ## What Happens
 
-On extraction success, Cuenta uploads the preserved receipt photo, extracts vendor/date/total/currency when clear, creates a draft, and replies with the review URL.
+On extraction success, Cuenta uploads the preserved receipt photo, extracts vendor/date/total/currency when clear, normalizes the category to Operations' canonical list, creates the expense intake record, and replies with the review URL. Complete receipts may be recorded automatically by Operations; genuine exceptions remain in the review queue.
+
+For bank and wallet transfers, Cuenta records the visible recipient/payee as the vendor whenever one is shown. The user caption is retained as business-purpose and categorization context.
 
 On extraction failure, Cuenta still uploads the preserved photo and creates a draft with null or flagged fields. Receipts are not discarded just because OCR is uncertain.
 

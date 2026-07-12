@@ -37,7 +37,7 @@ const toolSchemas = {
     parameters: { type: "object", properties: { local_paths: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 } }, required: ["local_paths"], additionalProperties: false }
   },
   owlswatch_operations_create_expense_draft: {
-    description: "Create an Operations expense draft with idempotency. The tool owns the Operations property id and normalizes common receipt field names; prefer arguments shaped exactly as { payload: { idempotencyKey, source, sourceMessageId, submittedBy, expense, attachments, agent } }.",
+    description: "Create an Operations expense intake record with idempotency. Pass the complete vision result as payload.receiptExtraction plus userCaption, Telegram metadata, and attachments; the tool owns property, normalization, and the final Operations payload.",
     parameters: { type: "object", properties: { payload: { type: "object", additionalProperties: true } }, required: ["payload"], additionalProperties: true }
   },
   owlswatch_vision_extract_receipt: {
