@@ -36,9 +36,14 @@ The Operations implementation handoff for Finca is `docs/finca-operations-contra
 
 ## Normal Deploy
 
+Live deployments are allowed only from a clean `main` checkout whose `HEAD`
+exactly matches a freshly fetched `origin/main`. The deployment scripts enforce
+this through `scripts/assert-release-ready.sh` and run the secret scan before
+copying files.
+
 ```sh
 cd /Users/agent/code/owlswatch/owlswatch-agents
-./scripts/check-no-secrets.sh
+./scripts/assert-release-ready.sh
 ./scripts/deploy-to-mac-mini.sh
 openclaw --profile owlswatch config validate
 openclaw --profile owlswatch skills check --agent main
