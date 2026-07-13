@@ -15,6 +15,18 @@ The Owl's Watch Ops group is for Owl's Watch operational work:
 
 Users should not need `/cotiza`, `/receipt`, `/cobros`, or `/registro` inside the correct topic.
 
+## OW Finca
+
+Finca tasks use a separate private Telegram group and bot under the `finca`
+OpenClaw profile. The group is not a topic inside Owl's Watch Ops.
+
+- Group name: `OW Finca`
+- Agent: `finca`
+- Mentions/slash commands: not required
+- Telegram privacy mode: disabled through BotFather
+- Authorization: every worker's numeric user ID must be present in the profile
+  allowlist; group membership alone is insufficient
+
 ## Personal Brain
 
 The Dennis Brain/private dashboard project is not part of the `owlswatch` profile. Give it its own profile, bot, and routing so Owl's Watch operational messages cannot wake up the wrong agent.

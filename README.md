@@ -12,6 +12,7 @@ This repo is source and deployment scaffolding. It is not a copy of the live `~/
 - `Correo`: operational email drafting clerk. Reads Gmail, uses Luna context, creates Email Desk draft tasks, and never sends final email.
 - `Cobros`: cuenta de cobro drafting clerk. Reads accounting requests, creates Drive Doc/PDF packets and Gmail drafts with attached PDFs, and never sends final email.
 - `Hotel`: PMS operations clerk. Reads reservation operations data and sends staff-only Telegram notifications from a separate `hotel` profile/bot.
+- `Finca`: task-tracking clerk. Creates and updates Operations finca tasks from a separate private worker group and posts the 07:00 outstanding-task report.
 
 ## Boundaries
 
@@ -31,11 +32,18 @@ This repo is source and deployment scaffolding. It is not a copy of the live `~/
 - `scripts/`: deploy, smoke-test, backup, and safety scripts.
 - `docs/`: architecture, security, Telegram routing, and runbooks. Start with `docs/agent-design-guidelines.md` before agent work.
 
+The Operations implementation handoff for Finca is `docs/finca-operations-contract.md`. Telegram/runtime activation is documented in `docs/runbooks/setup-finca.md`.
+
 ## Normal Deploy
+
+Live deployments are allowed only from a clean `main` checkout whose `HEAD`
+exactly matches a freshly fetched `origin/main`. The deployment scripts enforce
+this through `scripts/assert-release-ready.sh` and run the secret scan before
+copying files.
 
 ```sh
 cd /Users/agent/code/owlswatch/owlswatch-agents
-./scripts/check-no-secrets.sh
+./scripts/assert-release-ready.sh
 ./scripts/deploy-to-mac-mini.sh
 openclaw --profile owlswatch config validate
 openclaw --profile owlswatch skills check --agent main
@@ -55,4 +63,13 @@ Hotel/PMS operations uses a separate profile:
 ./scripts/smoke-hotel.sh
 openclaw --profile hotel config validate
 openclaw --profile hotel skills check --agent hotel
+```
+
+Finca worker tasks use a separate profile and bot:
+
+```sh
+./scripts/deploy-finca-to-mac-mini.sh
+./scripts/smoke-finca.sh
+openclaw --profile finca config validate
+openclaw --profile finca skills check --agent finca
 ```

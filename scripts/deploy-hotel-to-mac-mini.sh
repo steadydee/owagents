@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"$ROOT/scripts/assert-release-ready.sh"
 WORKSPACE="${HOTEL_WORKSPACE:-$HOME/.openclaw/workspace-hotel-ops}"
 PROFILE_DIR="${HOTEL_PROFILE_DIR:-$HOME/.openclaw-hotel}"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Backups/hotel-agents/deploy}"
@@ -55,3 +56,4 @@ fi
 
 python3 -m py_compile "$WORKSPACE/tools/hotel_pms/server.py"
 echo "Hotel deploy complete. Backup: $BACKUP_DIR"
+echo "Deployed git commit: $(git -C "$ROOT" rev-parse HEAD)"
