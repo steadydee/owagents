@@ -33,7 +33,10 @@ MOCK_FILE = Path(os.environ.get("FINCA_TASKS_MOCK_FILE", str(WORKSPACE / "mock" 
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,240}$")
 TASK_CODE_RE = re.compile(r"^F-\d{1,10}$", re.IGNORECASE)
-WORKER_REPORT_CODE_RE = re.compile(r"(?m)^F-\d{1,10}\s*[\u00b7\-:]\s*", re.IGNORECASE)
+WORKER_REPORT_CODE_RE = re.compile(
+    r"(?m)^(\s*(?:[\u2022*\-]\s*)?)F-\d{1,10}\s*[\u00b7\-:]\s*",
+    re.IGNORECASE,
+)
 ALLOWED_ACTIONS = {"start", "progress", "block", "complete", "assign", "priority", "cancel", "reopen", "note"}
 ALLOWED_STATUSES = {"open", "in_progress", "blocked", "completed", "cancelled"}
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
@@ -519,7 +522,7 @@ def report_line(task: dict[str, Any]) -> str:
 
 def worker_safe_report_message(message: str) -> str:
     """Hide internal task codes from the worker-facing Telegram report."""
-    return WORKER_REPORT_CODE_RE.sub("", message)
+    return WORKER_REPORT_CODE_RE.sub(r"\1", message)
 
 
 def split_messages(header: str, sections: list[str], max_length: int = 3800) -> list[str]:
