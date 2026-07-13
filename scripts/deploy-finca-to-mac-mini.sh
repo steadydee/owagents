@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"$ROOT/scripts/assert-release-ready.sh"
+
 WORKSPACE="${FINCA_WORKSPACE:-$HOME/.openclaw/workspace-finca-ops}"
 PROFILE_DIR="${FINCA_PROFILE_DIR:-$HOME/.openclaw-finca}"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Backups/owlswatch-agents/finca-deploy}"
@@ -53,3 +55,4 @@ python3 -m unittest discover -s "$ROOT/tools/finca_tasks/tests" >/dev/null
 
 echo "Finca source deployed. Runtime state and secrets were preserved."
 echo "Backup: $BACKUP_DIR"
+echo "Deployed git commit: $(git -C "$ROOT" rev-parse HEAD)"
