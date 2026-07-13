@@ -10,6 +10,7 @@ Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegr
 - `correo`: creates Email Desk tasks and Gmail drafts only. It does not send final emails.
 - `cobros`: creates cuenta de cobro Drive Doc/PDF packets, Gmail drafts with attached PDFs, and Email Desk review tasks only. It does not send final emails.
 - `hotel`: reads PMS reservation operations data and sends staff-only Telegram notifications. It does not write PMS data or send guest messages.
+- `finca`: creates and updates only the Operations finca-task subsystem, attaches task photos, and sends the daily worker task report from its own profile and bot.
 
 ## Main
 
@@ -119,6 +120,23 @@ Forbidden:
 - Confirm availability.
 - Access PMS direct database credentials.
 - Use PMS write, finance, admin, or restricted tools.
+
+## Finca
+
+Allowed:
+
+- List and read Operations finca tasks and safe worker display identities.
+- Create, assign, reprioritize, start, progress, block, complete, cancel, and explicitly reopen finca tasks.
+- Durably spool and upload task progress/completion photos.
+- Send the deterministic daily outstanding-task report to the private OW Finca group.
+
+Forbidden:
+
+- Access payroll, salary, employee identity/banking fields, expenses, quotes, reservations, email, or other Operations modules.
+- Create due dates or hard-delete task history.
+- Use group membership alone as authorization; every sender must be numerically allowlisted.
+- Run production with mock task storage enabled.
+- Use shell, browser, filesystem, gateway, cron, node, canvas, web, or arbitrary messaging tools.
 
 ## Tool Policy
 

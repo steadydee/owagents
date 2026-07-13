@@ -21,6 +21,9 @@ Hotel/PMS operations uses a separate `hotel` profile and bot. It is not bound
 into OWBot because PMS operations has a distinct notification surface and should
 not share the receipts/quotes/cobros Telegram routing.
 
+Finca worker tasks use a separate `finca` profile and bot. Workers interact in
+the private `OW Finca` group, while Operations remains the task source of truth.
+
 The conductor may explain where work belongs, but it does not create drafts or call business tools.
 
 ## Non-Owl's Watch Agents

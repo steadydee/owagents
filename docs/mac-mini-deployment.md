@@ -30,6 +30,27 @@ openclaw --profile owlswatch gateway restart
 
 Frontier/Lumen uses a different profile and gateway port. Do not restart it for Owl's Watch deploys.
 
+## Finca Profile
+
+- Profile: `finca`
+- Config: `~/.openclaw-finca/openclaw.json`
+- Workspace: `~/.openclaw/workspace-finca-ops`
+- Gateway port: `19501`
+
+```sh
+./scripts/check-no-secrets.sh
+./scripts/deploy-finca-to-mac-mini.sh
+./scripts/smoke-finca.sh
+openclaw --profile finca config validate
+openclaw --profile finca skills check --agent finca
+openclaw --profile finca gateway install
+./scripts/install-finca-watchdog.sh
+./scripts/install-finca-schedule.sh
+```
+
+Do not enable the daily schedule until the Operations Finca tools, private bot,
+group id, user allowlist, and production app credential are verified.
+
 ## Telegram Watchdog
 
 Install the watchdog so Telegram polling is restarted if it stops inside an otherwise healthy gateway:
