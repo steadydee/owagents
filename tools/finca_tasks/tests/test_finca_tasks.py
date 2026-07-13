@@ -124,9 +124,16 @@ class FincaTaskToolTests(unittest.TestCase):
         self.update(done["code"], "complete", "telegram--1001-22")
         report = server.tool_daily_report({"dryRun": True})
         text = "\n".join(report["messages"])
-        self.assertIn(priority["code"], text)
+        self.assertIn(priority["title"], text)
+        self.assertNotIn(priority["code"], text)
         self.assertIn("Prioridad", text)
         self.assertNotIn(done["code"], text)
+
+    def test_worker_report_hides_codes_from_operations_messages(self):
+        message = "Tareas de la finca\n\nPrioridad\nF-0042 · Reparar la puerta\nJuan · En progreso"
+        cleaned = server.worker_safe_report_message(message)
+        self.assertNotIn("F-0042", cleaned)
+        self.assertIn("Reparar la puerta", cleaned)
 
     def test_photo_is_spooled_before_mock_attachment(self):
         code = self.create()["task"]["code"]
