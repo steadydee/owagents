@@ -130,10 +130,16 @@ class FincaTaskToolTests(unittest.TestCase):
         self.assertNotIn(done["code"], text)
 
     def test_worker_report_hides_codes_from_operations_messages(self):
-        message = "Tareas de la finca\n\nPrioridad\nF-0042 · Reparar la puerta\nJuan · En progreso"
+        message = (
+            "Tareas de la finca\n\nPrioridad\n"
+            "F-0042 · Reparar la puerta\nJuan · En progreso\n"
+            "• F-0043 - Limpiar los vidrios · sin asignar · 0%"
+        )
         cleaned = server.worker_safe_report_message(message)
         self.assertNotIn("F-0042", cleaned)
+        self.assertNotIn("F-0043", cleaned)
         self.assertIn("Reparar la puerta", cleaned)
+        self.assertIn("• Limpiar los vidrios", cleaned)
 
     def test_photo_is_spooled_before_mock_attachment(self):
         code = self.create()["task"]["code"]
