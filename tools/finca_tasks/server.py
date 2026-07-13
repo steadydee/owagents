@@ -33,6 +33,7 @@ MOCK_FILE = Path(os.environ.get("FINCA_TASKS_MOCK_FILE", str(WORKSPACE / "mock" 
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,240}$")
 TASK_CODE_RE = re.compile(r"^F-\d{1,10}$", re.IGNORECASE)
+WORKER_REPORT_CODE_RE = re.compile(r"(?m)^F-\d{1,10}\s*[\u00b7\-:]\s*", re.IGNORECASE)
 ALLOWED_ACTIONS = {"start", "progress", "block", "complete", "assign", "priority", "cancel", "reopen", "note"}
 ALLOWED_STATUSES = {"open", "in_progress", "blocked", "completed", "cancelled"}
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
@@ -516,6 +517,11 @@ def report_line(task: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def worker_safe_report_message(message: str) -> str:
+    """Hide internal task codes from the worker-facing Telegram report."""
+    return WORKER_REPORT_CODE_RE.sub("", message)
+
+
 def split_messages(header: str, sections: list[str], max_length: int = 3800) -> list[str]:
     messages: list[str] = []
     current = header
@@ -870,6 +876,7 @@ def tool_daily_report(args: dict[str, Any]) -> dict[str, Any]:
     messages = report.get("messages") if isinstance(report, dict) else None
     if not isinstance(messages, list) or not messages or any(not isinstance(item, str) for item in messages):
         raise ToolError("invalid_report", "Operations returned an invalid Finca report.")
+    messages = [worker_safe_report_message(message) for message in messages]
     if safe_bool("dryRun", args.get("dryRun"), False):
         return {"ok": True, "sent": False, "messages": messages, "counts": report.get("counts", {})}
     sent = [telegram_send(config, notify_chat_id(config), message) for message in messages]
@@ -896,7 +903,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         tool_list,
     ),
     "finca_tasks_get": (
-        "Get one OW Finca task by stable F-#### code.",
+        "Get one OW Finca task using the internal stable code returned by finca_tasks_list. Never ask a worker to provide this code.",
         {"type": "object", "properties": {"taskCode": {"type": "string"}}, "required": ["taskCode"], "additionalProperties": False},
         tool_get,
     ),
@@ -919,7 +926,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         tool_create,
     ),
     "finca_tasks_update": (
-        "Apply one audited action to an OW Finca task.",
+        "Apply one audited action using the internal task code resolved from the worker's description and finca_tasks_list.",
         {
             "type": "object",
             "properties": {
@@ -941,7 +948,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         tool_update,
     ),
     "finca_tasks_attach_photos": (
-        "Durably spool Telegram progress/completion photos and attach them to an Operations Finca task.",
+        "Durably spool Telegram progress/completion photos and attach them using the internal task code resolved from the caption or reply context.",
         {
             "type": "object",
             "properties": {
