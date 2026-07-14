@@ -87,10 +87,12 @@ TRA registration-table match.
 `submitted`; submitted status is reserved for the receipt-gated submitter.
 
 `hotel_registro_daily_pickup` is the scheduled operations wrapper. It reads
-PMS `registro_list_pending`, limits the normal sweep to yesterday through two
-days ahead, extracts uploaded documents, submits TRA only when PMS says the
-record is ready, never submits SIRE, and can send one staff-safe Telegram
-summary.
+PMS `registro_list_pending`, scans a bounded lookback window for late document
+uploads, extracts uploaded documents, submits TRA only when PMS says the record
+is ready, never submits SIRE, and can send one staff-safe Telegram summary.
+Unchanged review/error alerts are suppressed after their first notification;
+changed or recurring issues alert again. The runtime state stores only hashed
+issue identifiers and fingerprints, never guest names or document data.
 
 Never expose document numbers, fetch tokens, file bytes, base64, or raw OCR in
 Telegram or agent memory.
@@ -103,6 +105,7 @@ Telegram or agent memory.
 - `HOTEL_TELEGRAM_BOT_TOKEN`
 - `HOTEL_TELEGRAM_NOTIFY_CHAT_ID`
 - `HOTEL_TELEGRAM_NOTIFY_THREAD_ID` optional
+- `HOTEL_REGISTRO_PICKUP_ALERT_STATE` optional; defaults to a private workspace state file
 - `REGISTRO_GOVERNMENT_SUBMITTER_ENABLED` optional, default `0`
 - `TRA_API_BASE_URL` optional, defaults to `https://pms.mincit.gov.co`
 - `TRA_API_ONE_URL` optional, defaults to `${TRA_API_BASE_URL}/one/`

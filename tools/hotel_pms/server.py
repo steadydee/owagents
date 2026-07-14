@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import fcntl
 import hashlib
 import hmac
 import html
@@ -34,6 +35,12 @@ WORKSPACE = Path(os.environ.get("HOTEL_PMS_WORKSPACE", "~/.openclaw/workspace-ho
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-hotel/openclaw.json")).expanduser()
 MEMORY_DIR = WORKSPACE / "memory"
 RESERVATION_DRAFT_DIR = WORKSPACE / "spool" / "reservation-drafts"
+REGISTRO_PICKUP_ALERT_STATE = Path(
+    os.environ.get(
+        "HOTEL_REGISTRO_PICKUP_ALERT_STATE",
+        str(WORKSPACE / "state" / "registro-pickup-alerts.json"),
+    )
+).expanduser()
 
 DEFAULT_PMS_BASE_URL = "https://pms.owlswatch.com"
 DEFAULT_PROPERTY_ID = "owlswatch"
@@ -4555,6 +4562,122 @@ def registro_pickup_notification_needed(summary: dict[str, Any]) -> bool:
     return bool(review or errors)
 
 
+def registro_pickup_issue_key(category: str, item: dict[str, Any]) -> str:
+    identifier = first_present(
+        item.get("registrationId"),
+        item.get("reservationId"),
+        item.get("label"),
+        "unknown",
+    )
+    material = f"{category}:{identifier}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def registro_pickup_issue_fingerprint(item: dict[str, Any]) -> str:
+    fields = {
+        "status": item.get("status"),
+        "statusBefore": item.get("statusBefore"),
+        "reason": item.get("reason"),
+        "documentCount": item.get("documentCount"),
+        "expectedGuestCount": item.get("expectedGuestCount"),
+        "guestCount": item.get("guestCount"),
+        "extractionStatus": item.get("extractionStatus"),
+        "dueSubmissionTypes": item.get("dueSubmissionTypes") if isinstance(item.get("dueSubmissionTypes"), list) else [],
+    }
+    encoded = json.dumps(fields, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def load_registro_pickup_alert_state(path: Path | None = None) -> dict[str, str]:
+    target = path or REGISTRO_PICKUP_ALERT_STATE
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    issues = payload.get("issues") if isinstance(payload, dict) else None
+    if not isinstance(issues, dict):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in issues.items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
+
+
+def write_registro_pickup_alert_state(issues: dict[str, str], path: Path | None = None) -> None:
+    target = path or REGISTRO_PICKUP_ALERT_STATE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "updatedAt": now_iso(),
+        "issues": issues,
+    }
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+        os.chmod(temporary_name, 0o600)
+        os.replace(temporary_name, target)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+
+def dedupe_registro_pickup_issues(summary: dict[str, Any], persist: bool) -> dict[str, Any]:
+    current: dict[str, str] = {}
+    categorized: list[tuple[str, str, dict[str, Any]]] = []
+    for category, field in (("needs_review", "needsReview"), ("error", "errors")):
+        rows = summary.get(field) if isinstance(summary.get(field), list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            key = registro_pickup_issue_key(category, row)
+            current[key] = registro_pickup_issue_fingerprint(row)
+            categorized.append((category, key, row))
+
+    previous: dict[str, str] = {}
+    state_persisted = False
+    state_error = False
+    target = REGISTRO_PICKUP_ALERT_STATE
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = target.with_suffix(f"{target.suffix}.lock")
+        with lock_path.open("a+", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            previous = load_registro_pickup_alert_state(target)
+            if persist:
+                write_registro_pickup_alert_state(current, target)
+                state_persisted = True
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        # Fail open: a state-file problem may repeat an alert, but never hides an issue.
+        previous = {}
+        state_error = True
+
+    new_review: list[dict[str, Any]] = []
+    new_errors: list[dict[str, Any]] = []
+    suppressed = 0
+    for category, key, row in categorized:
+        if previous.get(key) == current[key]:
+            suppressed += 1
+            continue
+        if category == "needs_review":
+            new_review.append(row)
+        else:
+            new_errors.append(row)
+
+    return {
+        "needsReview": new_review,
+        "errors": new_errors,
+        "suppressedRepeatCount": suppressed,
+        "statePersisted": state_persisted,
+        "stateError": state_error,
+    }
+
+
 def registro_pickup_in_window(item: dict[str, Any], start_date: str, end_date: str) -> bool:
     arrival = date_part(item.get("arrivalDate"))
     departure = date_part(item.get("departureDate"))
@@ -4732,11 +4855,32 @@ def tool_hotel_registro_daily_pickup(args: dict[str, Any]) -> dict[str, Any]:
 
     message = build_registro_pickup_message(summary)
     summary["message"] = message
-    notification_needed = registro_pickup_notification_needed(summary)
+    alert_state = dedupe_registro_pickup_issues(summary, persist=False)
+    alert_summary = {
+        "needsReview": alert_state["needsReview"],
+        "errors": alert_state["errors"],
+    }
+    alert_message = build_registro_pickup_message(alert_summary)
+    summary["notificationMessage"] = alert_message
+    summary["newNeedsReview"] = alert_state["needsReview"]
+    summary["newErrors"] = alert_state["errors"]
+    summary["suppressedRepeatCount"] = alert_state["suppressedRepeatCount"]
+    summary["alertStatePersisted"] = False
+    if alert_state["stateError"]:
+        summary["alertStateWarning"] = "state_unavailable"
+    notification_needed = registro_pickup_notification_needed(alert_summary)
     summary["notificationNeeded"] = notification_needed
     if notify and notification_needed:
-        summary["telegram"] = tool_hotel_telegram_send_message({"text": message})
+        summary["telegram"] = tool_hotel_telegram_send_message({"text": alert_message})
+        persisted_state = dedupe_registro_pickup_issues(summary, persist=True)
+        summary["alertStatePersisted"] = persisted_state["statePersisted"]
+        if persisted_state["stateError"]:
+            summary["alertStateWarning"] = "state_unavailable"
     elif notify:
+        persisted_state = dedupe_registro_pickup_issues(summary, persist=True)
+        summary["alertStatePersisted"] = persisted_state["statePersisted"]
+        if persisted_state["stateError"]:
+            summary["alertStateWarning"] = "state_unavailable"
         summary["telegram"] = {"ok": True, "sent": False, "reason": "no_action_required"}
     return summary
 

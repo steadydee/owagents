@@ -116,11 +116,11 @@ Allowed:
 Forbidden:
 
 - Send guest messages.
-- Create, modify, cancel, or delete reservations.
+- Modify, cancel, or delete reservations. New reservations may be created only through the PMS-signed prepare/confirm flow.
 - Toggle checklist items.
 - Confirm availability.
 - Access PMS direct database credentials.
-- Use PMS write, finance, admin, or restricted tools.
+- Use broad PMS write, finance, admin, or restricted tools.
 
 ## Finca
 

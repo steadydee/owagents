@@ -13,6 +13,15 @@ SPEC.loader.exec_module(server)
 
 
 class ReservationToolValidationTest(unittest.TestCase):
+    def setUp(self):
+        self._alert_state_temp = tempfile.TemporaryDirectory()
+        self._old_alert_state = server.REGISTRO_PICKUP_ALERT_STATE
+        server.REGISTRO_PICKUP_ALERT_STATE = pathlib.Path(self._alert_state_temp.name) / "registro-alerts.json"
+
+    def tearDown(self):
+        server.REGISTRO_PICKUP_ALERT_STATE = self._old_alert_state
+        self._alert_state_temp.cleanup()
+
     def test_prepare_payload_rejects_raw_telegram_text(self):
         with self.assertRaises(server.ToolError) as ctx:
             server.validate_prepare_payload({"rawText": "crear reserva para Camilo"})
@@ -1226,6 +1235,7 @@ class ReservationToolValidationTest(unittest.TestCase):
             }
             server.tool_hotel_telegram_send_message = lambda args: telegram.append(args["text"]) or {"ok": True, "message_id": 1}
             result = server.tool_hotel_registro_daily_pickup({"notify": True, "submitTra": False, "daysBack": 7})
+            repeated = server.tool_hotel_registro_daily_pickup({"notify": True, "submitTra": False, "daysBack": 7})
         finally:
             server.load_config = old_load
             server.pms_tool = old_pms
@@ -1242,6 +1252,54 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertTrue(result["notificationNeeded"])
         self.assertEqual(len(telegram), 1)
         self.assertIn("Brad Boyle", telegram[0])
+        self.assertFalse(repeated["notificationNeeded"])
+        self.assertEqual(repeated["suppressedRepeatCount"], 1)
+        self.assertEqual(repeated["telegram"], {"ok": True, "sent": False, "reason": "no_action_required"})
+
+    def test_registro_pickup_alerts_once_until_issue_changes(self):
+        summary = {
+            "needsReview": [{
+                "label": "Sensitive Guest",
+                "registrationId": "reg-1",
+                "reservationId": "res-1",
+                "status": "needs_review",
+                "statusBefore": "needs_info",
+                "reason": "falta documento/registro de 1 huesped",
+                "documentCount": 1,
+                "expectedGuestCount": 2,
+                "guestCount": 1,
+                "dueSubmissionTypes": [],
+            }],
+            "errors": [],
+        }
+        first = server.dedupe_registro_pickup_issues(summary, persist=True)
+        second = server.dedupe_registro_pickup_issues(summary, persist=True)
+        self.assertEqual(len(first["needsReview"]), 1)
+        self.assertEqual(first["suppressedRepeatCount"], 0)
+        self.assertEqual(second["needsReview"], [])
+        self.assertEqual(second["suppressedRepeatCount"], 1)
+
+        summary["needsReview"][0]["reason"] = "2 huespedes necesitan revision de extraccion"
+        changed = server.dedupe_registro_pickup_issues(summary, persist=True)
+        self.assertEqual(len(changed["needsReview"]), 1)
+
+        state_text = server.REGISTRO_PICKUP_ALERT_STATE.read_text(encoding="utf-8")
+        self.assertNotIn("Sensitive Guest", state_text)
+        self.assertNotIn("reg-1", state_text)
+        self.assertNotIn("res-1", state_text)
+
+    def test_registro_pickup_alerts_again_after_resolution_and_recurrence(self):
+        issue = {
+            "label": "Sensitive Guest",
+            "registrationId": "reg-2",
+            "status": "error",
+            "reason": "http_error",
+        }
+        server.dedupe_registro_pickup_issues({"needsReview": [], "errors": [issue]}, persist=True)
+        resolved = server.dedupe_registro_pickup_issues({"needsReview": [], "errors": []}, persist=True)
+        recurring = server.dedupe_registro_pickup_issues({"needsReview": [], "errors": [issue]}, persist=True)
+        self.assertEqual(resolved["suppressedRepeatCount"], 0)
+        self.assertEqual(len(recurring["errors"]), 1)
 
     def test_build_tra_form_fields_maps_required_form_values(self):
         html = """
