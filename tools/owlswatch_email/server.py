@@ -34,7 +34,6 @@ NOTIFICATION_DIR = WORKSPACE / "tasks" / "email_notifications"
 MEMORY_DIR = WORKSPACE / "memory"
 
 DEFAULT_LUNA_BASE_URL = "https://luna.owlswatch.com"
-DEFAULT_OPERATIONS_BASE_URL = "https://operations.owlswatch.com"
 DEFAULT_NOTIFY_CHAT_ID = "-1003949383737"
 DEFAULT_GMAIL_ACCOUNT = "info@owlswatch.com"
 
@@ -209,29 +208,6 @@ def luna_secret(config: dict[str, Any]) -> str:
     if not raw:
         raise ToolError("config_missing", "Luna machine-token secret is missing from tool environment/config.")
     return raw
-
-
-def operations_base_url(config: dict[str, Any]) -> str:
-    raw = cfg_env(config, "OPERATIONS_BASE_URL") or cfg_env(config, "OPERATIONS_API_BASE_URL") or DEFAULT_OPERATIONS_BASE_URL
-    parsed = urllib.parse.urlparse(raw)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ToolError("config_invalid", "Operations base URL must be an https URL.")
-    return raw.rstrip("/")
-
-
-def operations_email_token(config: dict[str, Any]) -> str:
-    token = cfg_env(config, "EMAIL_AGENT_API_TOKEN")
-    if token:
-        return token
-    token_file = cfg_env(config, "EMAIL_AGENT_API_TOKEN_FILE")
-    if token_file:
-        try:
-            token = Path(token_file).expanduser().read_text().strip()
-        except FileNotFoundError as exc:
-            raise ToolError("config_missing", "Operations Email Desk agent token file is missing from runtime storage.") from exc
-        if token:
-            return token
-    raise ToolError("config_missing", "Operations Email Desk agent token is missing from tool environment/config.")
 
 
 def telegram_token(config: dict[str, Any]) -> str:
@@ -587,24 +563,6 @@ def http_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeou
         raise ToolError("network_error", "Network request failed.", retryable=True) from exc
 
 
-def operations_post(config: dict[str, Any], path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return http_json(
-        f"{operations_base_url(config)}{path}",
-        payload,
-        {"Authorization": f"Bearer {operations_email_token(config)}"},
-        timeout=30,
-    )
-
-
-def list_from_maybe(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    text = str(value).strip()
-    return [text] if text else []
-
-
 def infer_signature_name(body: str | None) -> str | None:
     if not body:
         return None
@@ -617,192 +575,6 @@ def infer_signature_name(body: str | None) -> str | None:
             if "@" not in clean and not clean.lower().startswith(("http", "www.")):
                 return clean
     return None
-
-
-def message_to_operations_snapshot(message: dict[str, Any], account: str) -> dict[str, Any]:
-    sender = str(message.get("fromEmail") or "")
-    return {
-        "gmailMessageId": message.get("id"),
-        "rfc822MessageId": message.get("messageIdHeader"),
-        "direction": "staff" if is_staff_sender(sender, account) else "external",
-        "fromName": message.get("fromName"),
-        "fromEmail": sender,
-        "toAddresses": message.get("toEmails") or list_from_maybe(message.get("to")),
-        "ccAddresses": message.get("ccEmails") or [],
-        "bccAddresses": [],
-        "subject": message.get("subject"),
-        "snippet": (message.get("bodyText") or "")[:500],
-        "bodyText": message.get("bodyText"),
-        "sentAt": message.get("date"),
-        "hasAttachments": False,
-        "attachments": [],
-    }
-
-
-def compact_summary_from_message(message: dict[str, Any] | None) -> str | None:
-    if not message:
-        return None
-    body = re.sub(r"\s+", " ", str(message.get("bodyText") or "")).strip()
-    if not body:
-        return None
-    return body[:500]
-
-
-def is_blank(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str) and not value.strip():
-        return True
-    if isinstance(value, (list, dict)) and not value:
-        return True
-    return False
-
-
-def set_if_blank(target: dict[str, Any], key: str, value: Any) -> None:
-    if is_blank(target.get(key)) and not is_blank(value):
-        target[key] = value
-
-
-def normalize_operations_intake_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    if isinstance(payload.get("gmail"), dict) and isinstance(payload.get("thread"), dict) and isinstance(payload.get("draft"), dict):
-        return payload
-
-    draft = payload.get("draft") if isinstance(payload.get("draft"), dict) else {}
-    thread_id = payload.get("threadId") or payload.get("gmailThreadId") or payload.get("gmail_thread_id")
-    if not thread_id:
-        return payload
-
-    from_email = payload.get("clientEmail") or payload.get("from") or payload.get("fromEmail")
-    client_name = payload.get("customerName") or payload.get("clientName")
-    subject = payload.get("subject") or draft.get("subject")
-    summary = payload.get("summary") or payload.get("originalSummary")
-    status = payload.get("status") or draft.get("status") or "draft_ready"
-    body = draft.get("body") or payload.get("draftBody") or payload.get("body")
-    messages = payload.get("messages") if isinstance(payload.get("messages"), list) else []
-
-    return {
-        "propertyId": payload.get("propertyId") or "owlswatch",
-        "agentId": payload.get("agentId") or payload.get("createdBy") or "correo",
-        "sourceApp": payload.get("sourceApp") or "email_agent",
-        "gmail": {
-            "account": payload.get("gmailAccount") or DEFAULT_GMAIL_ACCOUNT,
-            "threadId": str(thread_id),
-            "sourceMessageId": payload.get("gmailSourceMessageId") or payload.get("sourceMessageId") or str(thread_id),
-            "lastMessageId": payload.get("gmailLastMessageId") or payload.get("lastMessageId") or str(thread_id),
-        },
-        "thread": {
-            "subject": subject,
-            "clientName": client_name,
-            "clientEmail": from_email,
-            "participants": payload.get("participants") or [{"name": client_name, "email": from_email, "role": "external"}],
-            "detectedLanguage": payload.get("detectedLanguage") or payload.get("language") or "en",
-            "category": payload.get("category") or "new_guest_inquiry",
-            "priority": payload.get("priority") or "normal",
-            "lastExternalMessageAt": payload.get("lastExternalMessageAt"),
-            "lastStaffMessageAt": payload.get("lastStaffMessageAt"),
-            "summary": summary,
-            "messages": messages,
-        },
-        "draft": {
-            "status": status,
-            "confidence": payload.get("confidence") or "medium",
-            "detectedLanguage": payload.get("detectedLanguage") or payload.get("language") or "en",
-            "toAddresses": list_from_maybe(draft.get("to") or draft.get("toAddresses") or from_email),
-            "ccAddresses": list_from_maybe(draft.get("cc") or draft.get("ccAddresses")),
-            "bccAddresses": list_from_maybe(draft.get("bcc") or draft.get("bccAddresses")),
-            "subject": subject,
-            "body": body,
-        },
-        "context": {
-            "originalClientQuestion": payload.get("originalClientQuestion") or summary,
-            "missingInformationFlags": payload.get("missingInformationFlags") or [],
-            "warningFlags": payload.get("warningFlags") or [],
-            "boundaries": payload.get("boundaries") or payload.get("reviewNotes") or [],
-            "lunaRequest": payload.get("lunaRequest") or {},
-            "lunaSources": payload.get("lunaSources") or {},
-            "lunaContextSummary": payload.get("lunaContextSummary"),
-            "quoteId": payload.get("quoteId"),
-            "agentNotes": payload.get("agentNotes") or "\n".join(payload.get("reviewNotes") or []),
-        },
-        "options": {
-            "createGmailDraft": False,
-            "notifyTelegram": False,
-        },
-    }
-
-
-def enrich_operations_intake_payload(config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    gmail = payload.get("gmail")
-    thread_payload = payload.get("thread")
-    draft = payload.get("draft")
-    context = payload.get("context")
-    if not isinstance(gmail, dict) or not isinstance(thread_payload, dict) or not isinstance(draft, dict):
-        return payload
-    if not isinstance(context, dict):
-        context = {}
-        payload["context"] = context
-
-    thread_id = gmail.get("threadId") or gmail.get("thread_id")
-    if not thread_id:
-        return payload
-
-    try:
-        account = gmail_account(config)
-        service = google_build_service(config, ["https://www.googleapis.com/auth/gmail.readonly"])
-        thread = get_thread(service, str(thread_id))
-        messages = thread_messages(thread)
-    except Exception:
-        return payload
-
-    if not messages:
-        return payload
-
-    latest = messages[-1]
-    latest_external = latest_external_message(messages, account) or latest
-    snapshots = [message_to_operations_snapshot(message, account) for message in messages if message.get("id")]
-
-    gmail.setdefault("account", account)
-    gmail.setdefault("sourceMessageId", latest_external.get("id") or latest.get("id"))
-    gmail.setdefault("lastMessageId", latest.get("id"))
-
-    set_if_blank(thread_payload, "subject", latest.get("subject") or latest_external.get("subject"))
-    set_if_blank(thread_payload, "clientEmail", latest_external.get("fromEmail"))
-    set_if_blank(
-        thread_payload,
-        "clientName",
-        latest_external.get("fromName") or infer_signature_name(latest_external.get("bodyText")),
-    )
-    existing_participants = thread_payload.get("participants")
-    has_real_participant = any((item.get("email") or item.get("name")) for item in existing_participants) if isinstance(existing_participants, list) else False
-    if not has_real_participant:
-        participants: list[dict[str, Any]] = []
-        client_email = thread_payload.get("clientEmail")
-        if client_email:
-            participants.append({"name": thread_payload.get("clientName"), "email": client_email, "role": "external"})
-        participants.append({"name": "Owl's Watch", "email": account, "role": "staff"})
-        thread_payload["participants"] = participants
-    set_if_blank(thread_payload, "lastExternalMessageAt", latest_external.get("date"))
-    staff_dates = [m.get("date") for m in messages if is_staff_sender(str(m.get("fromEmail") or ""), account) and m.get("date")]
-    if "lastStaffMessageAt" not in thread_payload or thread_payload.get("lastStaffMessageAt") is None:
-        thread_payload["lastStaffMessageAt"] = staff_dates[-1] if staff_dates else None
-    set_if_blank(thread_payload, "summary", context.get("originalSummary") or compact_summary_from_message(latest_external))
-    if not isinstance(thread_payload.get("messages"), list) or not thread_payload.get("messages"):
-        thread_payload["messages"] = snapshots
-
-    set_if_blank(draft, "toAddresses", list_from_maybe(thread_payload.get("clientEmail")))
-    if "ccAddresses" not in draft:
-        draft["ccAddresses"] = []
-    if "bccAddresses" not in draft:
-        draft["bccAddresses"] = []
-    set_if_blank(draft, "subject", f"Re: {thread_payload.get('subject')}" if thread_payload.get("subject") else None)
-
-    set_if_blank(context, "originalClientQuestion", latest_external.get("bodyText"))
-    if "lunaSources" not in context:
-        context["lunaSources"] = {}
-    if not context.get("originalSummary") and thread_payload.get("summary"):
-        context["originalSummary"] = thread_payload.get("summary")
-
-    return payload
 
 
 def tool_gmail_search_recent_threads(args: dict[str, Any]) -> dict[str, Any]:
@@ -1013,40 +785,6 @@ def tool_email_list_open_tasks(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "tasks": tasks}
 
 
-def tool_operations_email_intake(args: dict[str, Any]) -> dict[str, Any]:
-    payload = args.get("payload")
-    if not isinstance(payload, dict):
-        raise ToolError("invalid_input", "payload must be an object.")
-    config = load_config()
-    payload = normalize_operations_intake_payload(payload)
-    payload = enrich_operations_intake_payload(config, payload)
-    data = operations_post(config, "/api/emails/intake", payload)
-    if data.get("success") is False or data.get("ok") is False:
-        raise ToolError("operations_error", "Operations Email Desk intake returned an error.", retryable=False)
-    result = data.get("data") if isinstance(data.get("data"), dict) else data
-    return {
-        "ok": True,
-        "taskId": result.get("taskId") or result.get("id"),
-        "threadId": result.get("threadId"),
-        "status": result.get("status"),
-        "taskUrl": result.get("taskUrl") or result.get("reviewUrl"),
-        "gmailDraftId": result.get("gmailDraftId"),
-        "gmailThreadId": result.get("gmailThreadId"),
-    }
-
-
-def tool_operations_scan_run(args: dict[str, Any]) -> dict[str, Any]:
-    payload = args.get("payload")
-    if not isinstance(payload, dict):
-        raise ToolError("invalid_input", "payload must be an object.")
-    config = load_config()
-    data = operations_post(config, "/api/emails/scan-runs", payload)
-    if data.get("success") is False or data.get("ok") is False:
-        raise ToolError("operations_error", "Operations Email Desk scan-run endpoint returned an error.", retryable=False)
-    result = data.get("data") if isinstance(data.get("data"), dict) else data
-    return {"ok": True, "scanRunId": result.get("scanRunId") or result.get("id"), "status": result.get("status")}
-
-
 def tool_gmail_create_draft(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     if not gmail_drafts_enabled(config):
@@ -1138,8 +876,6 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
     "owlswatch_luna_get_email_response_context": ("Fetch approved guest-shareable Luna context for an email response.", {"type": "object", "properties": {"clientQuestion": {"type": "string"}, "language": {"type": ["string", "null"]}, "topics": {"type": "array", "items": {"type": "string"}}, "factLimit": {"type": "integer"}, "blockLimit": {"type": "integer"}, "mediaLimit": {"type": "integer"}}, "required": ["clientQuestion"], "additionalProperties": False}, tool_luna_get_email_response_context),
     "owlswatch_email_upsert_task": ("Create or update a durable local email draft/review task.", {"type": "object", "properties": {"task": {"type": "object", "additionalProperties": True}}, "required": ["task"], "additionalProperties": False}, tool_email_upsert_task),
     "owlswatch_email_list_open_tasks": ("List durable local email tasks needing review or summary.", {"type": "object", "properties": {"statuses": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}, "maxAgeHours": {"type": "integer", "minimum": 1, "maximum": 720}, "requireRecentExternal": {"type": "boolean"}}, "additionalProperties": False}, tool_email_list_open_tasks),
-    "owlswatch_email_submit_operations_intake": ("Submit an email draft task to Operations Email Desk. Requires EMAIL_AGENT_API_TOKEN. Does not send email.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": False}, tool_operations_email_intake),
-    "owlswatch_email_submit_scan_run": ("Submit a daily/recent/unanswered email scan summary to Operations Email Desk. Requires EMAIL_AGENT_API_TOKEN.", {"type": "object", "properties": {"payload": {"type": "object", "additionalProperties": True}}, "required": ["payload"], "additionalProperties": False}, tool_operations_scan_run),
     "owlswatch_email_create_gmail_draft": ("Create a Gmail draft in the original thread when compose scope is explicitly enabled. Never sends.", {"type": "object", "properties": {"threadId": {"type": "string"}, "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "inReplyTo": {"type": ["string", "null"]}}, "required": ["threadId", "to", "subject", "body"], "additionalProperties": False}, tool_gmail_create_draft),
     "owlswatch_email_send_telegram_message": ("Send an email-agent Telegram notification to the configured Owl's Watch ops chat/topic. Gmail-thread links are automatically deduped for 24 hours unless force=true.", {"type": "object", "properties": {"text": {"type": "string"}, "chat_id": {"type": ["string", "number", "null"]}, "message_thread_id": {"type": ["string", "number", "null"]}, "dedupeKey": {"type": ["string", "null"]}, "dedupeHours": {"type": "integer", "minimum": 1, "maximum": 168}, "force": {"type": "boolean"}}, "required": ["text"], "additionalProperties": False}, tool_email_send_telegram_message),
     "owlswatch_email_memory_log": ("Append one concise Correo memory line.", {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"], "additionalProperties": False}, tool_email_memory_log),

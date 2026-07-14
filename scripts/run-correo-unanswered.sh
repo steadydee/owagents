@@ -7,6 +7,7 @@ ENABLED_FILE="${ENABLED_FILE:-$HOME/.openclaw-owlswatch/email-agent.enabled}"
 LOG_DIR="${LOG_DIR:-/tmp/openclaw}"
 LOG_FILE="${LOG_FILE:-$LOG_DIR/owlswatch-email-unanswered.log}"
 FORCE="${1:-}"
+SESSION_ID="${SESSION_ID:-correo-unanswered-$(date '+%Y%m%d-%H%M%S')}"
 STAMP_DIR="${STAMP_DIR:-$HOME/.openclaw-owlswatch/schedule-stamps}"
 STAMP_FILE="$STAMP_DIR/correo-unanswered-$(date '+%Y-%m-%d').stamp"
 SCHEDULED_MINUTES=$((8 * 60 + 15))
@@ -35,7 +36,7 @@ fi
   printf '\n%s unanswered scan start\n' "$(date '+%Y-%m-%d %H:%M:%S')"
   "$OPENCLAW_BIN" --profile "$PROFILE" agent \
     --agent correo \
-    --session-id correo-unanswered \
+    --session-id "$SESSION_ID" \
     --thinking medium \
     --timeout 1200 \
     --message "Scheduled run: unanswered_7d. Scan Owl's Watch Gmail for important threads from the last 7 days where the latest meaningful message appears external and unanswered. Create/update Email Desk tasks, submit a scan summary when Operations is ready, and send a concise Telegram summary only for important unresolved items."

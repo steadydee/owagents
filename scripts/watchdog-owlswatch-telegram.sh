@@ -11,6 +11,9 @@ COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-600}"
 STAMP_FILE="${STAMP_FILE:-/tmp/owlswatch-telegram-watchdog.last-restart}"
 OPENCLAW_LOG_FILE="${OPENCLAW_LOG_FILE:-$LOG_DIR/openclaw-$(date '+%Y-%m-%d').log}"
 ERROR_CURSOR_FILE="${ERROR_CURSOR_FILE:-/tmp/owlswatch-telegram-watchdog.log-cursor}"
+STATE_DIR="${OPENCLAW_STATE_DIR:-$HOME/.openclaw-$PROFILE}"
+INGRESS_SPOOL_DIR="${INGRESS_SPOOL_DIR:-$STATE_DIR/telegram/ingress-spool-default}"
+STALE_SPOOL_SECONDS="${STALE_SPOOL_SECONDS:-180}"
 
 mkdir -p "$LOG_DIR"
 
@@ -54,6 +57,28 @@ if [ -f "$OPENCLAW_LOG_FILE" ]; then
   fi
 fi
 
+stale_spool=0
+stale_spool_count=0
+oldest_spool_age=0
+if [ -d "$INGRESS_SPOOL_DIR" ]; then
+  now_for_spool="$(date +%s)"
+  while IFS= read -r spool_file; do
+    [ -n "$spool_file" ] || continue
+    mtime="$(stat -f '%m' "$spool_file" 2>/dev/null || echo "$now_for_spool")"
+    case "$mtime" in
+      ''|*[!0-9]*) mtime="$now_for_spool" ;;
+    esac
+    age="$((now_for_spool - mtime))"
+    if [ "$age" -gt "$oldest_spool_age" ]; then
+      oldest_spool_age="$age"
+    fi
+    if [ "$age" -ge "$STALE_SPOOL_SECONDS" ]; then
+      stale_spool=1
+      stale_spool_count="$((stale_spool_count + 1))"
+    fi
+  done < <(find "$INGRESS_SPOOL_DIR" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null)
+fi
+
 telegram_operational=0
 if [ "$status_failed" -eq 0 ] \
   && printf '%s\n' "$status_output" | grep -Eq 'Telegram .*: .*enabled, configured, running' \
@@ -64,7 +89,7 @@ fi
 # OpenClaw may report Telegram as disconnected when polling is idle. That is
 # fine for low-volume bots; restart only when the probe fails or the handler
 # emits a known hard failure.
-if [ "$bot_init_error" -eq 0 ] && [ "$telegram_operational" -eq 1 ]; then
+if [ "$bot_init_error" -eq 0 ] && [ "$stale_spool" -eq 0 ] && [ "$telegram_operational" -eq 1 ]; then
   log "ok: Telegram operational"
   exit 0
 fi
@@ -83,6 +108,8 @@ fi
 
 if [ "$bot_init_error" -eq 1 ]; then
   log "unhealthy Telegram handler: Bot not initialized error detected; restarting owlswatch gateway"
+elif [ "$stale_spool" -eq 1 ]; then
+  log "unhealthy Telegram ingress spool: $stale_spool_count stale update(s), oldest age ${oldest_spool_age}s; restarting owlswatch gateway"
 elif [ "$status_failed" -ne 0 ]; then
   log "unhealthy Telegram channel: status probe failed; restarting owlswatch gateway"
 else

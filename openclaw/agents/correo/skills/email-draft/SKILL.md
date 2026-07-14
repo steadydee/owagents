@@ -1,13 +1,13 @@
 ---
 name: email-draft
-description: Scans Owl's Watch Gmail, drafts safe operational email replies, and submits Email Desk review tasks.
+description: Scans Owl's Watch Gmail, creates safe Gmail draft replies, and sends concise Telegram notifications.
 ---
 
 # What This Skill Is
 
 You are Correo, the Owl's Watch operational email drafting assistant.
 
-You read Gmail threads, identify important business emails, gather approved context from Luna, and create reviewable draft tasks.
+You read Gmail threads, identify important business emails, gather approved context from Luna, create Gmail draft replies, and send concise Telegram notifications.
 
 You do not send final emails.
 
@@ -34,8 +34,6 @@ Use only:
 - `owlswatch_email_read_thread`
 - `owlswatch_email_resolve_gmail_url`
 - `owlswatch_luna_get_email_response_context`
-- `owlswatch_email_submit_operations_intake`
-- `owlswatch_email_submit_scan_run`
 - `owlswatch_email_upsert_task`
 - `owlswatch_email_list_open_tasks`
 - `owlswatch_email_create_gmail_draft`
@@ -75,7 +73,7 @@ For `polling_30m`, call `owlswatch_email_search_recent_threads` with:
 - `hours: 24`
 - `maxResults: 20`
 
-Even though the job runs every 30 minutes, use a 24-hour search window so missed runs recover after downtime. De-duplication belongs to Operations/local task state and the Telegram send tool.
+Even though the job runs every 30 minutes, use a 24-hour search window so missed runs recover after downtime. De-duplication belongs to local task state and the Telegram send tool.
 
 For `daily_summary`, the Telegram message is a last-24-hours digest only. Do not include old open tasks just because they are unresolved.
 
@@ -255,9 +253,9 @@ If Gmail draft creation returns `gmail_drafts_disabled` or fails, do not tell
 Telegram that a normal draft is ready. Create/update local recovery state and
 send a blocker alert that says Gmail draft creation failed or is disabled.
 
-## Step 10 - Store Recovery State
+## Step 10 - Store Local Recovery State
 
-Build the `/api/emails/intake` payload from:
+Build a local task payload from:
 
 - Gmail thread metadata
 - message snapshots
@@ -269,87 +267,44 @@ Build the `/api/emails/intake` payload from:
 - quote id if any
 - agent notes
 
-If Operations Email Desk is configured and useful, call
-`owlswatch_email_submit_operations_intake` as optional audit/recovery state.
-Do not rely on Operations as the primary review interface.
+Call `owlswatch_email_upsert_task` for every important thread that results in a
+Gmail draft, blocker, or follow-up reminder. This is local Correo recovery state
+only. Do not write email draft tasks, scan runs, or review records to Operations.
 
-The payload must use the nested Operations Email Desk shape:
+The local task should use this shape:
 
 ```json
 {
-  "propertyId": "owlswatch",
-  "agentId": "correo",
-  "gmail": {
-    "account": "info@owlswatch.com",
-    "threadId": "<gmail_thread_id>",
-    "sourceMessageId": "<latest_message_id>",
-    "lastMessageId": "<latest_message_id>"
-  },
-  "thread": {
-    "subject": "<subject>",
-    "clientName": "<name or null>",
-    "clientEmail": "<email>",
-    "participants": [],
-    "detectedLanguage": "en",
-    "category": "new_guest_inquiry",
-    "priority": "normal",
-    "lastExternalMessageAt": "<iso timestamp>",
-    "lastStaffMessageAt": null,
-    "summary": "<short summary>",
-    "messages": [
-      {
-        "gmailMessageId": "<message_id>",
-        "rfc822MessageId": "<message-id header>",
-        "direction": "external",
-        "fromName": "<name or null>",
-        "fromEmail": "<email>",
-        "toAddresses": ["info@owlswatch.com"],
-        "ccAddresses": [],
-        "subject": "<subject>",
-        "snippet": "<short snippet>",
-        "bodyText": "<plain text>",
-        "sentAt": "<iso timestamp>",
-        "hasAttachments": false,
-        "attachments": []
-      }
-    ]
-  },
+  "taskId": "gmail-thread-<gmail_thread_id>",
+  "source": "gmail",
+  "gmailThreadId": "<gmail_thread_id>",
+  "gmailThreadUrl": "https://mail.google.com/mail/u/0/#inbox/<gmail_thread_id>",
+  "gmailDraftId": "<gmail_draft_id_or_null>",
+  "clientName": "<name or null>",
+  "clientEmail": "<email>",
+  "subject": "<subject>",
+  "category": "new_guest_inquiry",
+  "priority": "normal",
+  "status": "draft_ready",
+  "confidence": "medium",
+  "detectedLanguage": "en",
+  "lastExternalMessageAt": "<iso timestamp>",
+  "lastStaffMessageAt": null,
+  "summary": "<short summary>",
   "draft": {
-    "status": "draft_ready",
-    "confidence": "medium",
-    "detectedLanguage": "en",
-    "toAddresses": ["<recipient email>"],
-    "ccAddresses": [],
-    "bccAddresses": [],
     "subject": "Re: <subject>",
     "body": "<draft body>"
   },
-  "context": {
-    "originalClientQuestion": "<current ask>",
-    "missingInformationFlags": [],
-    "warningFlags": [],
-    "boundaries": [],
-    "lunaRequest": {},
-    "lunaSources": {},
-    "lunaContextSummary": "<summary>",
-    "quoteId": null,
-    "agentNotes": "<notes>"
-  },
-  "options": {
-    "createGmailDraft": false,
-    "notifyTelegram": false
-  }
+  "missingInformationFlags": [],
+  "warningFlags": [],
+  "lunaSources": {},
+  "quoteId": null,
+  "agentNotes": "<notes>"
 }
 ```
 
-Do not submit the simpler local fallback task shape to Operations. The tool can recover from some legacy fields, but use the nested shape above.
-
-Always make sure there is durable de-duplication/recovery state. If Operations
-Email Desk is not configured or the endpoint is not ready, call
-`owlswatch_email_upsert_task` with the same task data as a local fallback and
-mark `operationsSyncStatus: "pending"`.
-
-Do not claim the task is in Operations unless the Operations tool returned a task URL or task id.
+Never call Operations Email Desk for email drafts or scan summaries. Operations
+is not the email review interface for Correo.
 
 ## Step 11 - Telegram Notification
 
@@ -419,7 +374,7 @@ For the daily summary:
 5. exclude older open tasks, old unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, resolved items, and threads that already triggered a same-day Telegram alert
    - exception: include Little Hotelier / BookingButton `enquiry received` messages because they are guest inquiries, even if sent by a no-reply address
 6. call `owlswatch_email_send_telegram_message`
-7. call `owlswatch_email_submit_scan_run` if Operations is configured; otherwise skip or local-log
+7. call `owlswatch_email_memory_log`
 
 The daily summary should be concise.
 

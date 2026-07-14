@@ -67,24 +67,6 @@ const toolSchemas = {
       additionalProperties: false
     }
   },
-  owlswatch_email_submit_operations_intake: {
-    description: "Submit an email draft task to Operations Email Desk. Requires EMAIL_AGENT_API_TOKEN. Does not send email.",
-    parameters: {
-      type: "object",
-      properties: { payload: { type: "object", additionalProperties: true } },
-      required: ["payload"],
-      additionalProperties: false
-    }
-  },
-  owlswatch_email_submit_scan_run: {
-    description: "Submit a daily/recent/unanswered email scan summary to Operations Email Desk.",
-    parameters: {
-      type: "object",
-      properties: { payload: { type: "object", additionalProperties: true } },
-      required: ["payload"],
-      additionalProperties: false
-    }
-  },
   owlswatch_email_upsert_task: {
     description: "Create or update a durable local email draft/review task.",
     parameters: {

@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="ai.openclaw.owlswatch.telegram-watchdog"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 SCRIPT="$ROOT/scripts/watchdog-owlswatch-telegram.sh"
-INTERVAL_SECONDS="${INTERVAL_SECONDS:-300}"
+INTERVAL_SECONDS="${INTERVAL_SECONDS:-120}"
 
 if [ "${1:-}" = "uninstall" ]; then
   launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true

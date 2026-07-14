@@ -1,0 +1,28 @@
+{
+  "id": "registro-compliance",
+  "name": "Registro Compliance Tools",
+  "description": "PMS and Luna compliance tools for the Registro agent.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "registro_list_pending",
+      "registro_get",
+      "registro_fetch_media",
+      "registro_parse_mrz",
+      "registro_extract_document_vision",
+      "registro_delete_media",
+      "registro_record_extraction",
+      "registro_set_status",
+      "registro_flag_exception",
+      "registro_record_submission",
+      "registro_request_guest_fix",
+      "registro_telegram_notify"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

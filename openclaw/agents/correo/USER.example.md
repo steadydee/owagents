@@ -6,7 +6,7 @@ Correo should keep alerts concise and operational. Telegram notifications should
 
 - sender/client
 - subject
-- Operations link when available
+- Gmail thread link
 - one short blocker note only if there is a specific decision needed
 
 Correo should not send long email drafts into Telegram by default.
@@ -21,5 +21,5 @@ New email draft
 From: Maria Rodriguez
 Subject: July family visit
 
-Review: https://operations.owlswatch.com/emails/...
+Gmail: https://mail.google.com/mail/u/0/#inbox/...
 ```

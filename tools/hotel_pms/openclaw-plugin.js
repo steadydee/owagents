@@ -51,6 +51,21 @@ const toolSchemas = {
       additionalProperties: false,
     },
   },
+  hotel_pms_list_reservations: {
+    description: "Search/list PMS reservations with staff-safe operational fields and no finance amounts.",
+    parameters: {
+      type: "object",
+      properties: {
+        search: { type: ["string", "null"] },
+        source: { type: ["string", "null"] },
+        status: { type: ["string", "null"] },
+        dateFrom: { type: ["string", "null"] },
+        dateTo: { type: ["string", "null"] },
+        limit: { type: ["integer", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
   hotel_pms_find_reservation: {
     description: "Search PMS reservations by guest, email, reference, or status.",
     parameters: {
@@ -65,7 +80,7 @@ const toolSchemas = {
     },
   },
   hotel_pms_get_reservation_context: {
-    description: "Get read-only PMS reservation context, finance summary, checklist, and invoice metadata.",
+    description: "Get read-only staff-safe PMS reservation context, checklist, and operational metadata.",
     parameters: {
       type: "object",
       properties: { reservationId: { type: "string" } },
@@ -80,6 +95,229 @@ const toolSchemas = {
   hotel_pms_get_lifecycle_snapshot: {
     description: "Get the PMS guest lifecycle snapshot.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  hotel_pms_list_booking_revisions: {
+    description: "List PMS booking/channel revision inbox rows.",
+    parameters: {
+      type: "object",
+      properties: {
+        processingStatus: { type: ["string", "null"] },
+        ackStatus: { type: ["string", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_list_sync_events: {
+    description: "List PMS sync/channel events with optional status, direction, or resource type filters.",
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: ["string", "null"] },
+        direction: { type: ["string", "null"] },
+        resourceType: { type: ["string", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_get_mapping_status: {
+    description: "Get PMS channel/entity mapping status.",
+    parameters: {
+      type: "object",
+      properties: { entityType: { type: ["string", "null"] } },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_get_ari_outbox_health: {
+    description: "Get PMS channel manager outbound queue health.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  hotel_pms_prepare_reservation: {
+    description: "Prepare and validate a PMS reservation from normalized staff intent. No PMS reservation is created.",
+    parameters: {
+      type: "object",
+      properties: {
+        bookingType: { type: ["string", "null"] },
+        guestName: { type: ["string", "null"] },
+        guestEmail: { type: ["string", "null"] },
+        guestPhone: { type: ["string", "null"] },
+        operatorName: { type: ["string", "null"] },
+        sourceText: { type: ["string", "null"] },
+        source: { type: ["string", "null"] },
+        commercialTrack: { type: ["string", "null"] },
+        payerResponsibility: { type: ["string", "null"] },
+        sourceReference: { type: ["string", "null"] },
+        arrivalDate: { type: ["string", "null"] },
+        departureDate: { type: ["string", "null"] },
+        visitDate: { type: ["string", "null"] },
+        adultsCount: { type: ["integer", "null"] },
+        childrenCount: { type: ["integer", "null"] },
+        infantsCount: { type: ["integer", "null"] },
+        unitAllocations: {
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              unitCode: { type: ["string", "null"] },
+              quantity: { type: ["integer", "null"] },
+              label: { type: ["string", "null"] },
+            },
+            additionalProperties: false,
+          },
+        },
+        expectedArrivalTime: { type: ["string", "null"] },
+        transportRequested: { type: ["boolean", "null"] },
+        dietaryNotes: { type: ["string", "null"] },
+        specialRequests: { type: ["string", "null"] },
+        internalNotes: { type: ["string", "null"] },
+        linkedActivities: {
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              bookingType: { type: ["string", "null"] },
+              date: { type: ["string", "null"] },
+              participants: { type: ["integer", "null"] },
+              notes: { type: ["string", "null"] },
+            },
+            additionalProperties: false,
+          },
+        },
+        sourceMetadata: { type: ["object", "null"], additionalProperties: true },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_pms_create_reservation: {
+    description: "Create a PMS reservation from a pending PMS-prepared draft after staff replies si, or from a legacy confirmation code.",
+    parameters: {
+      type: "object",
+      properties: {
+        pendingId: { type: ["string", "null"] },
+        confirmationText: { type: ["string", "null"] },
+        confirmationCode: { type: ["string", "null"] },
+        idempotencyKey: { type: ["string", "null"] },
+        sourceMetadata: { type: ["object", "null"], additionalProperties: true },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_get_by_reservation: {
+    description: "Read the Registro record for a PMS reservation without exposing document bytes or fetch tokens.",
+    parameters: {
+      type: "object",
+      properties: { reservationId: { type: "string" } },
+      required: ["reservationId"],
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_list_guests: {
+    description: "List structured Registro guests for a registration.",
+    parameters: {
+      type: "object",
+      properties: { registrationId: { type: "string" } },
+      required: ["registrationId"],
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_list_documents: {
+    description: "List Registro document metadata for a registration or guest without exposing document bytes or fetch tokens.",
+    parameters: {
+      type: "object",
+      properties: {
+        registrationId: { type: "string" },
+        registrationGuestId: { type: ["string", "null"] },
+      },
+      required: ["registrationId"],
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_extract_reservation: {
+    description: "Fetch each guest document through scoped PMS Registro tokens, extract identity fields with vision, and record guest-level extraction results in PMS.",
+    parameters: {
+      type: "object",
+      properties: {
+        reservationId: { type: "string" },
+        record: { type: ["boolean", "null"] },
+      },
+      required: ["reservationId"],
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_prepare_submissions: {
+    description: "Check whether a PMS Registro record is ready for TRA/SIRE submission and return a staff-safe staged plan. Does not submit to government systems.",
+    parameters: {
+      type: "object",
+      properties: {
+        reservationId: { type: "string" },
+        submissionTypes: {
+          type: ["array", "null"],
+          items: { type: "string" },
+        },
+      },
+      required: ["reservationId"],
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_prepare_government_submission: {
+    description: "Ask PMS to prepare official TRA/SIRE payloads and return only safe readiness metadata. Does not expose government payloads or submit them.",
+    parameters: {
+      type: "object",
+      properties: {
+        reservationId: { type: ["string", "null"] },
+        registrationId: { type: ["string", "null"] },
+        submissionTypes: {
+          type: ["array", "null"],
+          items: { type: "string" },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_submit_government: {
+    description: "Dry-run or receipt-gated submit PMS-prepared Registro payloads to configured government adapters. Returns no identity payloads.",
+    parameters: {
+      type: "object",
+      properties: {
+        reservationId: { type: ["string", "null"] },
+        registrationId: { type: ["string", "null"] },
+        submissionTypes: {
+          type: ["array", "null"],
+          items: { type: "string" },
+        },
+        mode: { type: ["string", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_daily_pickup: {
+    description: "Process pending PMS Registro records: extract uploaded documents, submit TRA when ready, and optionally send a staff-safe Telegram summary.",
+    parameters: {
+      type: "object",
+      properties: {
+        submitTra: { type: ["boolean", "null"] },
+        notify: { type: ["boolean", "null"] },
+        maxRecords: { type: ["integer", "null"] },
+        daysBack: { type: ["integer", "null"] },
+        daysAhead: { type: ["integer", "null"] },
+      },
+      additionalProperties: false,
+    },
+  },
+  hotel_registro_record_submission_status: {
+    description: "Record a pending, failed, or needs-info TRA/SIRE submission attempt in PMS. This tool cannot mark government submissions as submitted.",
+    parameters: {
+      type: "object",
+      properties: {
+        registrationId: { type: "string" },
+        submissionType: { type: "string" },
+        state: { type: "string" },
+        note: { type: ["string", "null"] },
+        errorCode: { type: ["string", "null"] },
+        errorMessage: { type: ["string", "null"] },
+      },
+      required: ["registrationId", "submissionType", "state"],
+      additionalProperties: false,
+    },
   },
   hotel_telegram_send_message: {
     description: "Send a staff-facing Telegram message through the Hotel bot. Never sends guest messages.",
@@ -136,7 +374,7 @@ function callPythonTool(name, args) {
 export default definePluginEntry({
   id: "hotel-pms",
   name: "Hotel PMS Tools",
-  description: "Read-only PMS tools and staff notifications for the Hotel operations agent.",
+  description: "PMS read tools, guarded reservation creation, and staff notifications for the Hotel operations agent.",
   register(api) {
     for (const [name, spec] of Object.entries(toolSchemas)) {
       api.registerTool(
