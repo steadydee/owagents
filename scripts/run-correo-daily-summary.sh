@@ -7,6 +7,7 @@ ENABLED_FILE="${ENABLED_FILE:-$HOME/.openclaw-owlswatch/email-agent.enabled}"
 LOG_DIR="${LOG_DIR:-/tmp/openclaw}"
 LOG_FILE="${LOG_FILE:-$LOG_DIR/owlswatch-email-daily-summary.log}"
 FORCE="${1:-}"
+SESSION_ID="${SESSION_ID:-correo-daily-summary-$(date '+%Y%m%d-%H%M%S')}"
 STAMP_DIR="${STAMP_DIR:-$HOME/.openclaw-owlswatch/schedule-stamps}"
 STAMP_FILE="$STAMP_DIR/correo-daily-summary-$(date '+%Y-%m-%d').stamp"
 SCHEDULED_MINUTES=$((8 * 60))
@@ -35,7 +36,7 @@ fi
   printf '\n%s daily summary start\n' "$(date '+%Y-%m-%d %H:%M:%S')"
   "$OPENCLAW_BIN" --profile "$PROFILE" agent \
     --agent correo \
-    --session-id correo-daily-summary \
+    --session-id "$SESSION_ID" \
     --thinking medium \
     --timeout 1200 \
     --message "Scheduled run: daily_summary. Send one concise Telegram summary of only important Owl's Watch email whose latest external Gmail message is from the last 24 hours only. Do not include older open tasks, weekly unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, or resolved items. Exception: include Little Hotelier / BookingButton enquiry-received emails because they are guest inquiries, even if sent from a no-reply address. If there are no important emails from the last 24 hours, say exactly that."

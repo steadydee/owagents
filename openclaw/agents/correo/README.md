@@ -21,7 +21,6 @@ Configured values live in `~/.openclaw-owlswatch/openclaw.json` under `mcp.serve
 Required when live:
 
 - `OW_AGENT_TOKEN_SECRET`
-- `EMAIL_AGENT_API_TOKEN_FILE=~/.openclaw-owlswatch/secrets/email-agent-token.tmp`
 - `LUNA_BASE_URL=https://luna.owlswatch.com`
 - `GOOGLE_APPLICATION_CREDENTIALS`
 - `OWLSWATCH_GMAIL_ACCOUNT=info@owlswatch.com`
@@ -29,7 +28,6 @@ Required when live:
 
 Optional:
 
-- `OPERATIONS_BASE_URL=https://operations.owlswatch.com`
 - `OWLSWATCH_EMAIL_NOTIFY_CHAT_ID`
 - `OWLSWATCH_EMAIL_NOTIFY_THREAD_ID`
 
@@ -39,6 +37,9 @@ Gmail draft creation requires the Gmail compose scope. If Gmail draft creation i
 
 ## Boundaries
 
-Gmail is the review and send system. Operations remains the source of truth for quotes, expenses, and cuentas de cobro, but not the primary email inbox UI. Luna is only a context provider.
+Gmail is the review and send system for email drafts. Correo does not write
+email tasks or scan runs to Operations. Quote drafts live in Google Drive, and
+Operations remains the source of truth for expenses and cuentas de cobro. Luna is
+only a context provider.
 
 Correo never auto-sends.

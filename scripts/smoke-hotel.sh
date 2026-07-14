@@ -17,6 +17,11 @@ for tool in \
   hotel_pms_get_reservation_context \
   hotel_pms_get_dashboard_snapshot \
   hotel_pms_get_lifecycle_snapshot \
+  hotel_pms_prepare_reservation \
+  hotel_pms_create_reservation \
+  hotel_registro_prepare_government_submission \
+  hotel_registro_submit_government \
+  hotel_registro_daily_pickup \
   hotel_telegram_send_message \
   hotel_memory_log
 do
