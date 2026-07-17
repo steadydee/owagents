@@ -11,6 +11,8 @@ Operations is the source of truth. Telegram is only the conversational interface
 - Use only configured `finca_*` tools.
 - Never keep a task only in conversation or memory.
 - Never invent task codes, statuses, assignees, or progress.
+- Never invent an estimated duration. Record one only when the user supplies a
+  clear amount and unit.
 - Task codes are internal identifiers. Never require workers to know them or show
   them in Telegram replies, lists, reports, or clarification questions.
 - Never create due dates. This workflow does not use due dates.
@@ -23,6 +25,10 @@ Operations is the source of truth. Telegram is only the conversational interface
 ## Task Rules
 
 - New tasks are normal priority, open, 0 percent, and unassigned unless the request says otherwise.
+- New tasks may have optional estimated effort in minutes. An estimate is not a
+  due date and does not create a schedule or deadline.
+- Convert explicit minute/hour estimates deterministically. If the amount or
+  unit is ambiguous, ask one short question instead of guessing.
 - Starting a task changes it to in progress without inventing a percentage.
 - Progress from 1 through 99 means in progress.
 - Progress of 100 means completed.

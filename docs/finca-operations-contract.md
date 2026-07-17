@@ -36,6 +36,7 @@ Add `FincaTask` with:
 - UUID id and global autoincrement sequence used to display `F-####`
 - propertyId
 - title and optional details
+- optional estimatedMinutes integer from 1 through 10,080
 - priority boolean, default false
 - status, default open
 - progressPercent integer, default 0, constrained 0 through 100
@@ -122,7 +123,9 @@ Input:
 }
 ```
 
-Return safe task summaries with code, title, details, priority, status, progressPercent, blockedReason, assignee safe fields, latest event, attachment count, and timestamps.
+Return safe task summaries with code, title, details, estimatedMinutes,
+priority, status, progressPercent, blockedReason, assignee safe fields, latest
+event, attachment count, and timestamps.
 
 When `telegramUserId` is supplied for `mis tareas`, resolve the matching active worker. Return an empty list rather than unrelated tasks if the sender is not linked.
 
@@ -148,6 +151,7 @@ Input:
 {
   "title": "Reparar la puerta de la bodega",
   "details": null,
+  "estimatedMinutes": 180,
   "priority": false,
   "assigneeWorkerId": null,
   "assigneeName": null,
@@ -166,6 +170,10 @@ Input:
 Agent calls require idempotencyKey. Repeated keys return the original task with `duplicate: true`. Auto-upsert the Telegram sender as a FincaWorker for future assignment and `mis tareas` resolution.
 
 The local Finca tool derives the key from inbound Telegram chat/message metadata and overwrites a conflicting model-supplied key before calling Operations.
+
+`estimatedMinutes` is optional estimated effort, not a due date. Accept only a
+whole integer from 1 through 10,080. Preserve it in task summaries, details,
+the creation audit event snapshot/metadata, and duplicate-idempotency results.
 
 ### `operations.finca.update_task`
 
@@ -227,15 +235,27 @@ Create attachment and event records. Repeated per-file idempotency keys must ret
 
 Add sidebar section `Operations` with `Finca Tasks` linking to `/finca`.
 
-`/finca` is a dense work queue with code, description, priority, status, progress, assignee, latest update, and updated time. Include filters for Active, Open, In progress, Blocked, Completed, Cancelled, Priority, and assignee. Include a manual create form.
+`/finca` is a dense work queue with code, description, optional estimated
+effort, priority, status, progress, assignee, latest update, and updated time.
+Include filters for Active, Open, In progress, Blocked, Completed, Cancelled,
+Priority, and assignee. Include optional estimated minutes/hours in the manual
+create form.
 
-`/finca/[id]` shows task fields, progress controls, assignment, priority, block reason, notes, photo gallery, and chronological audit history. Humans may perform the same audited actions as Telegram. Do not provide hard delete.
+`/finca/[id]` shows task fields, estimated effort, progress controls,
+assignment, priority, block reason, notes, photo gallery, and chronological
+audit history. Format estimates compactly, for example `45 min`, `1 h 30 min`,
+or `3 h`. Humans may perform the same audited actions as Telegram. Do not
+provide hard delete.
 
 ## Tests And Acceptance
 
 Use property `owlswatch-test` for deployed UAT even if test and production share a database.
 
-Test create idempotency, update idempotency, assignment resolution, progress invariants, block/unblock, complete/reopen, cancellation, optimistic conflicts, audit snapshots, attachment limits, duplicate attachment retry, and exact tool denial for payroll/quotes/expenses/email.
+Test create idempotency, estimatedMinutes validation/persistence/return values,
+update idempotency, assignment resolution, progress invariants, block/unblock,
+complete/reopen, cancellation, optimistic conflicts, audit snapshots,
+attachment limits, duplicate attachment retry, and exact tool denial for
+payroll/quotes/expenses/email.
 
 Run local lint, tests, build, and `git diff --check`. Deploy the exact candidate to the stable Operations test alias and exercise every tool with a test-scoped Finca token before production.
 

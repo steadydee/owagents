@@ -72,6 +72,22 @@ class FincaTaskToolTests(unittest.TestCase):
         self.assertEqual(first["task"]["status"], "open")
         self.assertEqual(first["task"]["progressPercent"], 0)
         self.assertFalse(first["task"]["priority"])
+        self.assertIsNone(first["task"]["estimatedMinutes"])
+
+    def test_create_accepts_optional_estimated_minutes(self):
+        created = self.create("Limpiar ventanas", "telegram--1001-9", estimatedMinutes=180)["task"]
+        self.assertEqual(created["estimatedMinutes"], 180)
+
+    def test_create_rejects_invalid_estimated_minutes(self):
+        for invalid in (0, -1, 10081, 1.5, True, "180"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(server.ToolError) as raised:
+                    self.create(
+                        "Limpiar ventanas",
+                        f"telegram--1001-est-{invalid}",
+                        estimatedMinutes=invalid,
+                    )
+                self.assertEqual(raised.exception.code, "invalid_input")
 
     def test_telegram_metadata_overrides_conflicting_model_idempotency(self):
         actor = self.actor(message_id="77")

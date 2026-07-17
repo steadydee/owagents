@@ -42,6 +42,7 @@ ALLOWED_STATUSES = {"open", "in_progress", "blocked", "completed", "cancelled"}
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_FILES = 10
+MAX_ESTIMATED_MINUTES = 7 * 24 * 60
 DEFAULT_OPERATIONS_URL = "https://operations.owlswatch.com"
 OPERATIONS_TOOLS = [
     "operations.finca.list_tasks",
@@ -184,6 +185,16 @@ def safe_bool(name: str, value: Any, default: bool = False) -> bool:
     if value in (0, "0", "false", "no"):
         return False
     raise ToolError("invalid_input", f"{name} must be true or false.")
+
+
+def safe_optional_int(name: str, value: Any, minimum: int, maximum: int) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ToolError("invalid_input", f"{name} must be a whole number.")
+    if value < minimum or value > maximum:
+        raise ToolError("invalid_input", f"{name} must be from {minimum} to {maximum}.")
+    return value
 
 
 def safe_task_code(value: Any) -> str:
@@ -421,6 +432,12 @@ def mock_tool(name: str, payload: dict[str, Any]) -> Any:
                 "code": f"F-{sequence:04d}",
                 "title": title,
                 "details": safe_text("details", payload.get("details"), 4000),
+                "estimatedMinutes": safe_optional_int(
+                    "estimatedMinutes",
+                    payload.get("estimatedMinutes"),
+                    1,
+                    MAX_ESTIMATED_MINUTES,
+                ),
                 "priority": safe_bool("priority", payload.get("priority"), False),
                 "status": "open",
                 "progressPercent": 0,
@@ -599,6 +616,12 @@ def tool_create(args: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "title": safe_text("title", args.get("title"), 240, required=True),
         "details": safe_text("details", args.get("details"), 4000),
+        "estimatedMinutes": safe_optional_int(
+            "estimatedMinutes",
+            args.get("estimatedMinutes"),
+            1,
+            MAX_ESTIMATED_MINUTES,
+        ),
         "priority": safe_bool("priority", args.get("priority"), False),
         "assigneeWorkerId": safe_id("assigneeWorkerId", args.get("assigneeWorkerId"), required=False),
         "assigneeName": safe_text("assigneeName", args.get("assigneeName"), 160),
@@ -930,6 +953,12 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
             "properties": {
                 "title": {"type": "string", "maxLength": 240},
                 "details": {"type": ["string", "null"], "maxLength": 4000},
+                "estimatedMinutes": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": MAX_ESTIMATED_MINUTES,
+                    "description": "Optional estimated effort in whole minutes. This is not a due date.",
+                },
                 "priority": {"type": "boolean"},
                 "assigneeWorkerId": {"type": ["string", "null"]},
                 "assigneeName": {"type": ["string", "null"]},

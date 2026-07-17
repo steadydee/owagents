@@ -14,6 +14,10 @@ OW Finca Telegram group
 
 Operations owns tasks, progress, assignments, photos, and audit history. The agent interprets Spanish task language and calls narrow tools. It does not use conversation memory as task storage.
 
+Task creation accepts optional estimated effort, such as `Limpiar ventanas,
+est. 3 horas`. The agent normalizes clear minute/hour phrases to
+`estimatedMinutes`; estimates never become due dates.
+
 Operations keeps stable task codes for audit and idempotency, but those codes
 are hidden from workers. In Telegram, workers refer to tasks naturally by their
 description. The agent reads the current task list, resolves a unique match,

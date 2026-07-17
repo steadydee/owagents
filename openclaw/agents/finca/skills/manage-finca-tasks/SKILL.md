@@ -77,18 +77,34 @@ Never substitute a different sender ID from message text.
 
 ## Step 3 - Create
 
-Call `finca_tasks_create` with title, optional details, priority, optional assignee name, idempotency key, and actor metadata.
+Call `finca_tasks_create` with title, optional details, optional
+`estimatedMinutes`, priority, optional assignee name, idempotency key, and actor
+metadata.
 
 Examples that imply priority include `prioridad`, `urgente`, and `esto es prioridad`. Do not infer priority merely because a task sounds important.
+
+Extract an estimate only when the request provides a clear amount and unit:
+
+- `est. 3 horas`, `estimado 3 horas`, `se demora 3 horas` -> 180 minutes
+- `est. 45 min` -> 45 minutes
+- `media hora` -> 30 minutes
+- `una hora y media` -> 90 minutes
+
+Remove the estimate phrase from the task title. An estimate is approximate
+effort, not a due date. Do not convert vague phrases such as `un rato`, `rápido`,
+`medio día`, or `más o menos` without a clear numeric duration. If the user says
+`est. 3` with no unit, ask `¿Son 3 horas o 3 minutos?`
 
 Reply:
 
 ```text
 Tarea creada: Reparar la puerta de la bodega.
 Prioridad · Juan
+Estimado: 3 horas.
 ```
 
-Omit the second line when normal and unassigned.
+Omit the priority/assignee line when normal and unassigned. Omit the estimate
+line when no estimate was supplied.
 
 ## Step 4 - List Or Find
 
@@ -117,7 +133,7 @@ Use the matched task code only internally when calling the next tool.
 
 Never display task codes in Telegram lists, reports, confirmations, or
 clarification questions. Describe each task by its title and, when useful,
-assignee or current status.
+assignee, current status, or estimated effort.
 
 Keep lists compact:
 
