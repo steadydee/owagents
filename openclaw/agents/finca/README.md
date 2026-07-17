@@ -25,7 +25,18 @@ and asks about the competing descriptions only when the reference is ambiguous.
 - Agent: `finca`
 - Workspace: `~/.openclaw/workspace-finca-ops`
 - Gateway port: `19501`
-- Daily report: 07:00 America/Bogota through launchd
+- Daily check-in: 16:00 America/Bogota through launchd
+
+The scheduled message is fixed and sent directly through the narrow Telegram
+tool:
+
+```text
+Buenas tardes. ¿En qué tareas avanzamos hoy?
+```
+
+Workers answer naturally. The agent resolves their descriptions against current
+Operations tasks and asks only when more than one task remains plausible.
+Outstanding-task lists remain available on demand.
 
 Production requires `FINCA_TASKS_MOCKS=0`. Mock mode exists only for deterministic local tests and must never be enabled in the live profile.
 
@@ -41,4 +52,5 @@ The Telegram group and every worker use numeric allowlists. The Operations crede
 4. Identity: dedicated `finca` Operations credential with Telegram actor metadata on every write.
 5. Idempotency: `telegram-{chatId}-{messageId}` for creates and `telegram-{chatId}-{messageId}-{taskCode}` for updates/uploads, enforced by Operations.
 6. Untrusted input: Telegram text and photos. Blast radius is limited to the Finca task subsystem.
-7. Schedule: launchd with an enable-file kill switch; smoke tests verify the tool catalog, mock behavior, and denied broad tools.
+7. Schedule: launchd sends the fixed 4:00 PM check-in through the Telegram tool
+   without an LLM dependency; an enable-file kill switch controls delivery.

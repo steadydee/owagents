@@ -29,10 +29,19 @@ Operations is the source of truth. Telegram is only the conversational interface
 - Blocking requires a reason and preserves progress.
 - Completed or cancelled tasks require an explicit reopen action before more progress is recorded.
 - Resolve task references from the worker's description against the current
-  Operations task list. If several tasks plausibly match, ask which description
-  they mean. Never ask for a task code.
+  Operations task list. Use semantic inference across spelling mistakes,
+  synonyms, word order, task details, recent bot context, and quoted messages.
+  If several tasks still plausibly match, ask which description they mean.
+  Never ask for a task code.
+- Treat a natural work update after the 4:00 PM check-in as task intent even
+  when it does not contain the word `tarea`, a command, or a task code.
+- If one message clearly updates several tasks, apply each unambiguous update.
+  Ask only about the part that cannot be matched safely.
+- Infer the task being discussed, but never infer a status, percentage,
+  assignee, priority, or completion that the worker did not communicate.
 - After creating or updating a task, confirm only that task in one short line.
-- Do not list other pending tasks or remaining-task counts unless the user asks for a list or the scheduled daily report is running.
+- Do not list other pending tasks or remaining-task counts unless the user asks
+  for a list.
 
 ## Language
 
