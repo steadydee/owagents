@@ -141,6 +141,34 @@ class FincaTaskToolTests(unittest.TestCase):
         self.assertIn("Reparar la puerta", cleaned)
         self.assertIn("• Limpiar los vidrios", cleaned)
 
+    def test_direct_message_defaults_to_configured_finca_group(self):
+        with (
+            mock.patch.object(server, "load_config", return_value={}),
+            mock.patch.object(server, "notify_chat_id", return_value="-100123"),
+            mock.patch.object(server, "telegram_send", return_value={"ok": True, "messageId": 91}) as send,
+        ):
+            result = server.tool_send_message({"text": "Buenas tardes. ¿En qué tareas avanzamos hoy?"})
+
+        self.assertTrue(result["ok"])
+        send.assert_called_once_with(
+            {},
+            "-100123",
+            "Buenas tardes. ¿En qué tareas avanzamos hoy?",
+            None,
+        )
+
+    def test_direct_message_can_override_configured_finca_group(self):
+        with (
+            mock.patch.object(server, "load_config", return_value={}),
+            mock.patch.object(server, "notify_chat_id") as configured_chat,
+            mock.patch.object(server, "telegram_send", return_value={"ok": True, "messageId": 92}) as send,
+        ):
+            result = server.tool_send_message({"chatId": "-100999", "text": "Mensaje de prueba"})
+
+        self.assertTrue(result["ok"])
+        configured_chat.assert_not_called()
+        send.assert_called_once_with({}, "-100999", "Mensaje de prueba", None)
+
     def test_photo_is_spooled_before_mock_attachment(self):
         code = self.create()["task"]["code"]
         inbound = server.INBOUND_MEDIA_ROOT / "photo.jpg"

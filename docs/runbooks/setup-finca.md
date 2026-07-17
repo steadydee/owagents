@@ -49,9 +49,9 @@ Test with an allowlisted user:
 ```text
 Tarea: prueba OW Finca. Es prioridad.
 Lista de tareas
-Empiezo F-####
-F-#### va en 50%
-F-#### terminado
+Empiezo la prueba de OW Finca
+La prueba de OW Finca va en 50%
+Terminamos la prueba de OW Finca
 ```
 
 Test that a non-allowlisted account receives no agent response and cannot change Operations.
@@ -61,5 +61,9 @@ After the end-to-end test passes:
 ```sh
 ./scripts/install-finca-watchdog.sh
 ./scripts/install-finca-schedule.sh
-./scripts/run-finca-daily-report.sh --force
+./scripts/run-finca-daily-checkin.sh --force
 ```
+
+The launchd schedule sends `Buenas tardes. ¿En qué tareas avanzamos hoy?` at
+16:00 America/Bogota. The fixed message bypasses the LLM. Do not run the forced
+command in production unless an immediate test message is intended.

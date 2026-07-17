@@ -18,7 +18,7 @@ Run for clear task intents in the private OW Finca group, including:
 - starting, blocking, completing, cancelling, reopening, or reprioritizing a task
 - reporting a progress percentage
 - attaching a progress or completion photo
-- the scheduled daily task report
+- replying naturally to the scheduled 4:00 PM work check-in
 
 Ignore greetings, stickers, thanks, and ordinary conversation with no task intent.
 
@@ -46,10 +46,12 @@ Classify the current message as one of:
 - `reopen`
 - `note`
 - `attach_photos`
-- `scheduled_daily_report`
 - `ignore`
 
-If the message is a scheduled instruction such as `finca_daily_report`, call `finca_tasks_send_daily_report` and do not compose the report yourself.
+The scheduled check-in is sent directly by a deterministic tool and does not
+arrive here as an agent instruction. A worker's answer to `Buenas tardes. ¿En
+qué tareas avanzamos hoy?` is task-update input, even if it is phrased as an
+ordinary sentence without a command, task number, or the word `tarea`.
 
 ## Step 2 - Build Source Metadata
 
@@ -100,6 +102,13 @@ with the current titles, details, assignee, status, and quoted-message context.
 Use the matched task code only internally when calling the next tool.
 
 - If exactly one task clearly matches, use it.
+- Match semantically rather than requiring exact words. Tolerate spelling
+  mistakes, singular/plural differences, synonyms, omitted articles, and
+  changed word order.
+- Use the recent 4:00 PM check-in and reply context as evidence that a work
+  statement is an update, but never use context as the task database.
+- If one message clearly describes several tasks, resolve and update each one.
+  Ask only about an ambiguous fragment instead of discarding the clear updates.
 - For `reopen`, include completed and cancelled tasks in the search.
 - If several tasks plausibly match, ask which one by repeating their short
   descriptions, not their codes.
@@ -119,6 +128,13 @@ Examples:
 - `Terminada` as a reply to the bot's task message -> use the replied-to task
   description to resolve the task.
 - `Terminada` with no useful reply context -> ask which task was completed.
+- `Hoy lijamos las sillas` -> match the chair-sanding task and start it if it
+  is open; if it is already in progress, add the worker's statement as a note.
+- `La puerta quedó lista` -> match the door task and complete it.
+- `Hicimos como la mitad del sendero` -> match the path task and record 50
+  percent.
+- `No pudimos seguir con la tubería porque falta cemento` -> match the pipe
+  task and block it with `Falta cemento`.
 
 ## Step 5 - Update
 
@@ -144,8 +160,20 @@ Do not convert `empecé` into an invented percentage.
 
 Confirm only the task that changed. Never append the remaining task list, task
 counts, or a summary of other work after a create or update. Show outstanding
-tasks only when someone explicitly asks for a list or during the scheduled
-daily report.
+tasks only when someone explicitly asks for a list.
+
+Inference applies to task matching and ordinary phrasing, not to invented
+facts. Examples:
+
+- `avanzamos`, `trabajamos` or `hicimos algo en` an open task -> `start`
+- the same wording for an in-progress task with no numeric progress -> `note`
+- `terminamos`, `listo`, `quedó listo` -> `complete`
+- a clearly stated fraction such as `la mitad` -> `progress` at 50
+- `no pudimos` plus a stated reason -> `block` with that reason
+
+Do not translate vague words such as `bastante`, `casi`, or `un poco` into a
+percentage. Record a note or ask one short question only when a concrete
+transition cannot be determined.
 
 ## Step 6 - Photos
 
@@ -159,12 +187,6 @@ Match a photo to a task from its caption, the quoted message, and the current
 task list. If one task clearly matches, use its code internally. If the photo
 has no usable context, ask `¿A qué tarea corresponde la foto?` If several tasks
 match, ask which description they mean. Never ask for a task code.
-
-## Step 7 - Daily Report
-
-For the scheduled run, call `finca_tasks_send_daily_report` with no user-composed text. The tool queries Operations, formats all outstanding tasks in Spanish, splits Telegram-safe messages, and sends them directly through the Bot API.
-
-Reply only with a one-line internal confirmation after the tool succeeds. Do not send a second Telegram report.
 
 # Failure Modes
 
@@ -183,4 +205,5 @@ Reply only with a one-line internal confirmation after the tool succeeds. Do not
 - Do not use chat memory as task state.
 - Do not access payroll, finance, expenses, quotes, reservations, email, or employee private data.
 - Do not answer ordinary group conversation.
-- Do not use OpenClaw `--announce`; scheduled delivery uses `finca_tasks_send_daily_report`.
+- Do not use OpenClaw `--announce`; the 4:00 PM check-in is delivered outside
+  the model through `finca_telegram_send_message`.

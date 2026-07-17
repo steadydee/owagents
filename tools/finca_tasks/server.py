@@ -865,9 +865,10 @@ def telegram_send(config: dict[str, Any], chat_id: str, text: str, reply_to: str
 
 def tool_send_message(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
+    chat_id = safe_id("chatId", args.get("chatId"), required=False) or notify_chat_id(config)
     return telegram_send(
         config,
-        safe_id("chatId", args.get("chatId")),
+        chat_id,
         safe_text("text", args.get("text"), 4096, required=True),
         safe_id("replyToMessageId", args.get("replyToMessageId"), required=False),
     )
@@ -978,7 +979,7 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
     ),
     "finca_telegram_send_message": (
         "Send one direct Bot API message to the configured or supplied OW Finca chat.",
-        {"type": "object", "properties": {"chatId": {"type": ["string", "number"]}, "text": {"type": "string", "maxLength": 4096}, "replyToMessageId": {"type": ["string", "number", "null"]}}, "required": ["chatId", "text"], "additionalProperties": False},
+        {"type": "object", "properties": {"chatId": {"type": ["string", "number"]}, "text": {"type": "string", "maxLength": 4096}, "replyToMessageId": {"type": ["string", "number", "null"]}}, "required": ["text"], "additionalProperties": False},
         tool_send_message,
     ),
 }
