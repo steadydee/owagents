@@ -57,6 +57,7 @@ Install the watchdog so Telegram polling is restarted if it stops inside an othe
 
 ```sh
 ./scripts/install-telegram-watchdog.sh
+./scripts/install-hotel-watchdog.sh
 ```
 
 See `docs/runbooks/telegram-watchdog.md`.
