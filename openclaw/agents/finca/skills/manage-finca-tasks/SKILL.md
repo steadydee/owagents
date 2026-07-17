@@ -119,6 +119,14 @@ Never display task codes in Telegram lists, reports, confirmations, or
 clarification questions. Describe each task by its title and, when useful,
 assignee or current status.
 
+Keep lists compact:
+
+- If a task is unassigned, omit the assignee instead of saying `sin asignar` or
+  `sin responsable`.
+- If progress is 0 percent, omit the percentage.
+- Show an assignee only when one exists, and show progress only when it is
+  greater than 0.
+
 Examples:
 
 - `Ya terminamos de lijar y pintar las sillas` -> match the open task whose

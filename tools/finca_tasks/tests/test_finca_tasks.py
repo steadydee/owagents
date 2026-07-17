@@ -141,6 +141,22 @@ class FincaTaskToolTests(unittest.TestCase):
         self.assertIn("Reparar la puerta", cleaned)
         self.assertIn("• Limpiar los vidrios", cleaned)
 
+    def test_worker_report_omits_unassigned_and_zero_progress(self):
+        message = (
+            "Pendientes\n"
+            "• F-0042 - clean the glass · asignada a Dennis · 0%\n"
+            "• F-0043 - Lijar y pintar las sillas grandes · sin asignar · 0%\n"
+            "F-0044 · Limpiar el sendero\n"
+            "Sin responsable · Pendiente"
+        )
+        cleaned = server.worker_safe_report_message(message)
+        self.assertIn("• clean the glass · asignada a Dennis", cleaned)
+        self.assertIn("• Lijar y pintar las sillas grandes", cleaned)
+        self.assertIn("Limpiar el sendero\nPendiente", cleaned)
+        self.assertNotIn("sin asignar", cleaned.casefold())
+        self.assertNotIn("sin responsable", cleaned.casefold())
+        self.assertNotIn("0%", cleaned)
+
     def test_direct_message_defaults_to_configured_finca_group(self):
         with (
             mock.patch.object(server, "load_config", return_value={}),

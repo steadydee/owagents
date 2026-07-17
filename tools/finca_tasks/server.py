@@ -521,8 +521,20 @@ def report_line(task: dict[str, Any]) -> str:
 
 
 def worker_safe_report_message(message: str) -> str:
-    """Hide internal task codes from the worker-facing Telegram report."""
-    return WORKER_REPORT_CODE_RE.sub(r"\1", message)
+    """Hide internal codes and empty/default fields from worker reports."""
+    scrubbed = WORKER_REPORT_CODE_RE.sub(r"\1", message)
+    cleaned_lines: list[str] = []
+    hidden_parts = {"sin asignar", "sin responsable", "0%"}
+    for line in scrubbed.splitlines():
+        if "\u00b7" not in line:
+            if line.strip().casefold() not in hidden_parts:
+                cleaned_lines.append(line)
+            continue
+        parts = [part.strip() for part in line.split("\u00b7")]
+        visible = [part for part in parts if part.casefold() not in hidden_parts]
+        if visible:
+            cleaned_lines.append(" \u00b7 ".join(visible))
+    return "\n".join(cleaned_lines)
 
 
 def split_messages(header: str, sections: list[str], max_length: int = 3800) -> list[str]:
