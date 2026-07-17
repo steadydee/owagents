@@ -5,13 +5,14 @@ PROFILE="${OPENCLAW_PROFILE:-owlswatch}"
 OPENCLAW_BIN="${OPENCLAW_BIN:-/Users/agent/.npm-global/bin/openclaw}"
 export PATH="/opt/homebrew/opt/node/bin:/opt/homebrew/bin:/usr/local/bin:/Users/agent/.npm-global/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 LOG_DIR="${LOG_DIR:-/tmp/openclaw}"
-LOG_FILE="${LOG_FILE:-$LOG_DIR/owlswatch-telegram-watchdog.log}"
-LOCK_DIR="${LOCK_DIR:-/tmp/owlswatch-telegram-watchdog.lock}"
+LOG_FILE="${LOG_FILE:-$LOG_DIR/${PROFILE}-telegram-watchdog.log}"
+LOCK_DIR="${LOCK_DIR:-/tmp/${PROFILE}-telegram-watchdog.lock}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-600}"
-STAMP_FILE="${STAMP_FILE:-/tmp/owlswatch-telegram-watchdog.last-restart}"
-OPENCLAW_LOG_FILE="${OPENCLAW_LOG_FILE:-$LOG_DIR/openclaw-$(date '+%Y-%m-%d').log}"
-ERROR_CURSOR_FILE="${ERROR_CURSOR_FILE:-/tmp/owlswatch-telegram-watchdog.log-cursor}"
+RESTART_SETTLE_SECONDS="${RESTART_SETTLE_SECONDS:-8}"
+STAMP_FILE="${STAMP_FILE:-/tmp/${PROFILE}-telegram-watchdog.last-restart}"
 STATE_DIR="${OPENCLAW_STATE_DIR:-$HOME/.openclaw-$PROFILE}"
+OPENCLAW_LOG_FILE="${OPENCLAW_LOG_FILE:-$STATE_DIR/logs/gateway.log}"
+ERROR_CURSOR_FILE="${ERROR_CURSOR_FILE:-/tmp/${PROFILE}-telegram-watchdog.log-cursor}"
 INGRESS_SPOOL_DIR="${INGRESS_SPOOL_DIR:-$STATE_DIR/telegram/ingress-spool-default}"
 STALE_SPOOL_SECONDS="${STALE_SPOOL_SECONDS:-180}"
 
@@ -107,19 +108,19 @@ if [ "$((now - last_restart))" -lt "$COOLDOWN_SECONDS" ]; then
 fi
 
 if [ "$bot_init_error" -eq 1 ]; then
-  log "unhealthy Telegram handler: Bot not initialized error detected; restarting owlswatch gateway"
+  log "unhealthy Telegram handler: Bot not initialized error detected; restarting $PROFILE gateway"
 elif [ "$stale_spool" -eq 1 ]; then
-  log "unhealthy Telegram ingress spool: $stale_spool_count stale update(s), oldest age ${oldest_spool_age}s; restarting owlswatch gateway"
+  log "unhealthy Telegram ingress spool: $stale_spool_count stale update(s), oldest age ${oldest_spool_age}s; restarting $PROFILE gateway"
 elif [ "$status_failed" -ne 0 ]; then
-  log "unhealthy Telegram channel: status probe failed; restarting owlswatch gateway"
+  log "unhealthy Telegram channel: status probe failed; restarting $PROFILE gateway"
 else
-  log "unhealthy Telegram channel; restarting owlswatch gateway"
+  log "unhealthy Telegram channel; restarting $PROFILE gateway"
 fi
 printf '%s\n' "$status_output" | sed 's/^/  /' >> "$LOG_FILE"
 
 if "$OPENCLAW_BIN" --profile "$PROFILE" gateway restart >> "$LOG_FILE" 2>&1; then
   date +%s > "$STAMP_FILE"
-  sleep 8
+  sleep "$RESTART_SETTLE_SECONDS"
   after_output="$("$OPENCLAW_BIN" --profile "$PROFILE" channels status --probe 2>&1 || true)"
   if printf '%s\n' "$after_output" | grep -Eq 'Telegram .*: .*enabled, configured, running' \
     && printf '%s\n' "$after_output" | grep -Eq 'works, audit ok'; then
