@@ -19,6 +19,8 @@ Run for clear task intents in the private OW Finca group, including:
 - reporting a progress percentage
 - attaching a progress or completion photo
 - replying naturally to the scheduled 4:00 PM work check-in
+- asking for help with `comando`, `comandos`, `ayuda`, `¿qué puedes hacer?`,
+  or `help`
 
 Ignore greetings, stickers, thanks, and ordinary conversation with no task intent.
 
@@ -46,7 +48,31 @@ Classify the current message as one of:
 - `reopen`
 - `note`
 - `attach_photos`
+- `help`
 - `ignore`
+
+For `help`, do not call a tool. Reply in Spanish with this compact guide:
+
+```text
+Puedes pedirme:
+
+• Crear: Tarea: limpiar los vidrios
+• Crear con responsable y tiempo: Tarea: cerrar los senderos, asignar a Juan, estimado 2 horas
+• Prioridad: Prioridad: reparar la puerta
+• Asignar: Asignar limpiar los vidrios a Juan
+• Empezar: Empezamos a limpiar los vidrios
+• Avance: Limpiar los vidrios va en 50%
+• Bloquear: Limpiar los vidrios bloqueada: falta material
+• Terminar: Limpiar los vidrios terminada
+• Cancelar: Cancelar limpiar los vidrios
+• Reabrir: Volver a abrir limpiar los vidrios
+• Listar: Lista de tareas
+• Ver personales: Mis tareas
+• Ver por persona: Tareas de Juan
+• Foto: envía la foto con la descripción de la tarea
+
+No necesitas usar números de tarea, comandos con / ni mencionarme.
+```
 
 The scheduled check-in is sent directly by a deterministic tool and does not
 arrive here as an agent instruction. A worker's answer to `Buenas tardes. ¿En

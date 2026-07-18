@@ -339,6 +339,26 @@ class FincaTaskToolTests(unittest.TestCase):
         self.assertEqual(catalog_names - schedule_only, allowed)
         self.assertTrue(schedule_only.isdisjoint(allowed))
 
+    def test_skill_has_spanish_command_help_without_task_codes(self):
+        root = SERVER_PATH.parents[2]
+        skill = (
+            root
+            / "openclaw"
+            / "agents"
+            / "finca"
+            / "skills"
+            / "manage-finca-tasks"
+            / "SKILL.md"
+        ).read_text()
+
+        self.assertIn("- `help`", skill)
+        self.assertIn("• Crear: Tarea: limpiar los vidrios", skill)
+        self.assertIn("• Avance: Limpiar los vidrios va en 50%", skill)
+        self.assertIn("• Listar: Lista de tareas", skill)
+        self.assertIn("No necesitas usar números de tarea", skill)
+        help_guide = skill.split("For `help`", 1)[1].split("```", 2)[1]
+        self.assertNotRegex(help_guide, r"F-\d+")
+
 
 if __name__ == "__main__":
     unittest.main()
