@@ -14,9 +14,10 @@ Operations is the source of truth. Every task creation or update must finish thr
 Run for clear task intents in the private OW Finca group, including:
 
 - creating or assigning work
-- asking for the outstanding list or one's own tasks
+- asking for the outstanding list, one's own tasks, or another worker's tasks
 - starting, blocking, completing, cancelling, reopening, or reprioritizing a task
 - reporting a progress percentage
+- renaming a task or changing its details or estimated effort
 - attaching a progress or completion photo
 - replying naturally to the scheduled 4:00 PM work check-in
 
@@ -35,6 +36,7 @@ Classify the current message as one of:
 - `create`
 - `list_all`
 - `list_mine`
+- `list_person`
 - `get`
 - `start`
 - `progress`
@@ -45,8 +47,31 @@ Classify the current message as one of:
 - `cancel`
 - `reopen`
 - `note`
+- `rename`
+- `details`
+- `estimate`
 - `attach_photos`
+- `unsupported`
 - `ignore`
+
+Understand Spanish, English, and mixed-language requests. Examples:
+
+- `task is finished`, `terminamos`, `done` -> `complete`
+- `rename it to cerrar los senderos` -> `rename`
+- `assign it to Juan`, `asignar a Juan` -> `assign`
+- `unassign it`, `quitar responsable` -> `assign` with `clearAssignee`
+- `delete it`, `remove this task`, `eliminarla` -> `cancel`
+- `change it to 50%`, `va en la mitad` -> `progress`
+- `make it priority`, `quitar prioridad` -> `priority`
+- `change the estimate to 3 hours` -> `estimate` with 180 minutes
+- `remove the estimate` -> `estimate` with `clearEstimatedMinutes`
+- `change the details to ...` -> `details`
+- `remove the details` -> `details` with `clearDetails`
+- `resume it`, `ya podemos seguir` -> `start`
+
+Map only to supported actions. If the requested action is unsupported, use
+`unsupported` and say briefly that you cannot perform it. Do not improvise a
+different write.
 
 The scheduled check-in is sent directly by a deterministic tool and does not
 arrive here as an agent instruction. A worker's answer to `Buenas tardes. ¿En
@@ -112,6 +137,10 @@ Call `finca_tasks_list` for every list request.
 
 For `mis tareas`, pass the current Telegram user ID.
 
+For a request such as `tareas de Juan` or `show Juan's tasks`, pass the worker's
+display name as `assigneeName`. If the worker is not found or several workers
+match, ask one short question.
+
 Workers identify tasks with ordinary descriptions, not task numbers. For every
 get or update request, call `finca_tasks_list` and compare the worker's wording
 with the current titles, details, assignee, status, and quoted-message context.
@@ -130,6 +159,11 @@ Use the matched task code only internally when calling the next tool.
   descriptions, not their codes.
 - If none matches, ask how the task was described. Never guess and never ask a
   worker for an `F-####` code.
+- A vague update such as `task is finished`, `done`, `terminada`, or `rename it
+  to ...` may use quoted-message context or the immediately active task context.
+  Still compare that reference with the current Operations list. If exactly one
+  active task fits, act. If several fit, ask which short description. If none
+  fits, say you could not identify the task.
 
 Never display task codes in Telegram lists, reports, confirmations, or
 clarification questions. Describe each task by its title and, when useful,
@@ -159,6 +193,12 @@ Examples:
   percent.
 - `No pudimos seguir con la tubería porque falta cemento` -> match the pipe
   task and block it with `Falta cemento`.
+- `Task is finished` as a reply to `Clean the glass` -> match the live glass
+  task and complete it.
+- `Rename it to cerrar los senderos` as a reply to the longer task title ->
+  match the live task and rename it.
+- `Show Juan's tasks` -> resolve Juan through `assigneeName` and list only his
+  active tasks.
 
 ## Step 5 - Update
 
@@ -173,6 +213,13 @@ Call `finca_tasks_update` with the task code and exactly one action:
 - `cancel`
 - `reopen`
 - `note` plus note
+- `rename` plus the new `title`
+- `details` plus `details`, or `clearDetails: true`
+- `estimate` plus integer `estimatedMinutes`, or
+  `clearEstimatedMinutes: true`
+
+Use `cancel` when the user says delete/remove/eliminar. Reply that the task was
+cancelled, not deleted.
 
 Use the tool's returned task as truth. Reply in one short line, for example:
 
@@ -199,6 +246,23 @@ Do not translate vague words such as `bastante`, `casi`, or `un poco` into a
 percentage. Record a note or ask one short question only when a concrete
 transition cannot be determined.
 
+## Step 5A - Unsupported Actions
+
+If the user asks for something outside the supported task actions, do not call
+a mutation tool. Reply briefly in the request language:
+
+```text
+No puedo hacer esa acción con las tareas.
+```
+
+When the action is supported but the task cannot be identified, reply:
+
+```text
+No pude identificar la tarea. ¿Cómo está descrita?
+```
+
+Never report success unless the tool returns the changed task.
+
 ## Step 6 - Photos
 
 If photos accompany a progress or completion message, apply the status update first. Then call `finca_tasks_attach_photos` with the task code, current media paths or Telegram file IDs, source message ID, actor metadata, and `progress_photo` or `completion_photo`.
@@ -218,6 +282,8 @@ match, ask which description they mean. Never ask for a task code.
 - Duplicate idempotency: use the existing task returned by the tool.
 - Ambiguous task: ask one concise question using task descriptions, never codes.
 - Ambiguous assignee: ask one concise question.
+- Unsupported action: say it is not available; do not substitute another action.
+- No matching task: say the task could not be identified; do not invent one.
 - Completed/cancelled update without reopen: ask the user to explicitly reopen it.
 - Photo upload failure: confirm the status result separately and mention local photo preservation.
 - Missing config/token: report a short configuration blocker without naming or exposing secret values.

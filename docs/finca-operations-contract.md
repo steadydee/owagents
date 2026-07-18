@@ -192,6 +192,11 @@ Allowed actions:
 - `cancel`
 - `reopen`
 - `note` with note
+- `rename` with non-empty `title`
+- `details` with exactly one of non-empty `details` or
+  `clearDetails: true`
+- `estimate` with exactly one of integer `estimatedMinutes` or
+  `clearEstimatedMinutes: true`
 
 Rules:
 
@@ -200,8 +205,28 @@ Rules:
 - Blocking requires a reason and preserves progress.
 - Completed/cancelled tasks reject start/progress/block until explicit reopen.
 - Reopen resets status to open and progress to 0.
+- Rename, details, and estimate are corrections to task metadata. Permit them on
+  active or closed tasks without implicitly reopening the task.
+- Estimate values use the same whole-minute range as creation: 1 through
+  10,080. Clearing an estimate stores null.
+- Cancellation is the agent meaning of delete/remove. Never hard-delete a task.
 - Every mutation uses optimistic locking and creates an event.
 - Repeated update idempotency keys return the existing result.
+
+Extend `FincaTaskAction` and `UpdateFincaTaskInput` with:
+
+```text
+title?: string | null
+details?: string | null
+clearDetails?: boolean
+estimatedMinutes?: number | null
+clearEstimatedMinutes?: boolean
+```
+
+The tool runtime must accept and forward only fields relevant to the selected
+action. Include title, details, and estimatedMinutes in previous/new audit state
+snapshots so every edit is reviewable. No schema migration is required because
+all three values already exist on `FincaTask`.
 
 ### `operations.finca.daily_report`
 
@@ -243,9 +268,10 @@ create form.
 
 `/finca/[id]` shows task fields, estimated effort, progress controls,
 assignment, priority, block reason, notes, photo gallery, and chronological
-audit history. Format estimates compactly, for example `45 min`, `1 h 30 min`,
-or `3 h`. Humans may perform the same audited actions as Telegram. Do not
-provide hard delete.
+audit history. Add compact manual controls to rename the task, edit/clear
+details, and set/change/clear estimated effort. Format estimates compactly, for
+example `45 min`, `1 h 30 min`, or `3 h`. Humans may perform the same audited
+actions as Telegram. Do not provide hard delete.
 
 ## Tests And Acceptance
 
@@ -256,6 +282,15 @@ update idempotency, assignment resolution, progress invariants, block/unblock,
 complete/reopen, cancellation, optimistic conflicts, audit snapshots,
 attachment limits, duplicate attachment retry, and exact tool denial for
 payroll/quotes/expenses/email.
+
+Also test:
+
+- rename validation, persistence, duplicate idempotency, and previous/new title
+  audit values
+- details set and clear, including mutually exclusive input validation
+- estimate set/change/clear with the 1 through 10,080 range
+- metadata edits on completed/cancelled tasks do not reopen them
+- unrelated fields supplied for an action are rejected or ignored safely
 
 Run local lint, tests, build, and `git diff --check`. Deploy the exact candidate to the stable Operations test alias and exercise every tool with a test-scoped Finca token before production.
 

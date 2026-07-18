@@ -41,7 +41,20 @@ WORKER_REPORT_CODE_RE = re.compile(
     r"(?m)^(\s*(?:[\u2022*\-]\s*)?)F-\d{1,10}\s*[\u00b7\-:]\s*",
     re.IGNORECASE,
 )
-ALLOWED_ACTIONS = {"start", "progress", "block", "complete", "assign", "priority", "cancel", "reopen", "note"}
+ALLOWED_ACTIONS = {
+    "start",
+    "progress",
+    "block",
+    "complete",
+    "assign",
+    "priority",
+    "cancel",
+    "reopen",
+    "note",
+    "rename",
+    "details",
+    "estimate",
+}
 ALLOWED_STATUSES = {"open", "in_progress", "blocked", "completed", "cancelled"}
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -398,6 +411,8 @@ def mock_tool(name: str, payload: dict[str, Any]) -> Any:
                     continue
                 if payload.get("priority") is not None and bool(payload["priority"]) != task["priority"]:
                     continue
+                if payload.get("assigneeWorkerId") and payload["assigneeWorkerId"] != task.get("assignedWorkerId"):
+                    continue
                 if query and query not in f"{task['code']} {task['title']} {task.get('details') or ''}".lower():
                     continue
                 if telegram_user and (not assigned_worker or task.get("assignedWorkerId") != assigned_worker["id"]):
@@ -503,6 +518,25 @@ def mock_tool(name: str, payload: dict[str, Any]) -> Any:
                 task["assignedWorkerId"] = None if payload.get("clearAssignee") else mock_resolve_worker(state, payload)["id"]
             elif action == "priority":
                 task["priority"] = safe_bool("priority", payload.get("priority"))
+            elif action == "rename":
+                task["title"] = safe_text("title", payload.get("title"), 240, required=True)
+            elif action == "details":
+                task["details"] = (
+                    None
+                    if payload.get("clearDetails")
+                    else safe_text("details", payload.get("details"), 4000, required=True)
+                )
+            elif action == "estimate":
+                task["estimatedMinutes"] = (
+                    None
+                    if payload.get("clearEstimatedMinutes")
+                    else safe_optional_int(
+                        "estimatedMinutes",
+                        payload.get("estimatedMinutes"),
+                        1,
+                        MAX_ESTIMATED_MINUTES,
+                    )
+                )
             actor = normalize_actor(payload.get("actor"))
             mock_actor_worker(state, actor)
             task["version"] += 1
@@ -595,10 +629,25 @@ def build_mock_report() -> dict[str, Any]:
 
 def tool_list(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
+    assignee_worker_id = safe_id("assigneeWorkerId", args.get("assigneeWorkerId"), required=False)
+    assignee_name = safe_text("assigneeName", args.get("assigneeName"), 160)
+    if assignee_worker_id and assignee_name:
+        raise ToolError("invalid_input", "Use either assigneeWorkerId or assigneeName, not both.")
+    if assignee_name:
+        workers = operations_tool(
+            config,
+            "operations.finca.list_workers",
+            {"query": assignee_name},
+        )
+        if not isinstance(workers, list) or not workers:
+            raise ToolError("worker_not_found", "No active Finca worker matches that name.")
+        if len(workers) != 1:
+            raise ToolError("worker_ambiguous", "More than one active Finca worker matches that name.")
+        assignee_worker_id = safe_id("assigneeWorkerId", workers[0].get("id"))
     payload = {
         "statuses": args.get("statuses"),
         "priority": args.get("priority"),
-        "assigneeWorkerId": safe_id("assigneeWorkerId", args.get("assigneeWorkerId"), required=False),
+        "assigneeWorkerId": assignee_worker_id,
         "telegramUserId": safe_id("telegramUserId", args.get("telegramUserId"), required=False),
         "query": safe_text("query", args.get("query"), 240),
         "includeCompleted": safe_bool("includeCompleted", args.get("includeCompleted"), False),
@@ -656,21 +705,87 @@ def tool_update(args: dict[str, Any]) -> dict[str, Any]:
     if progress is not None:
         if not isinstance(progress, int) or not 0 <= progress <= 100:
             raise ToolError("invalid_input", "progressPercent must be an integer from 0 to 100.")
+    title = safe_text("title", args.get("title"), 240)
+    details = safe_text("details", args.get("details"), 4000)
+    clear_details = safe_bool("clearDetails", args.get("clearDetails"), False)
+    estimated_minutes = safe_optional_int(
+        "estimatedMinutes",
+        args.get("estimatedMinutes"),
+        1,
+        MAX_ESTIMATED_MINUTES,
+    )
+    clear_estimated_minutes = safe_bool(
+        "clearEstimatedMinutes",
+        args.get("clearEstimatedMinutes"),
+        False,
+    )
+    if action == "rename" and not title:
+        raise ToolError("invalid_input", "rename requires a new title.")
+    if action == "details" and bool(details) == clear_details:
+        raise ToolError("invalid_input", "details requires new details or clearDetails.")
+    if action == "estimate" and bool(estimated_minutes) == clear_estimated_minutes:
+        raise ToolError(
+            "invalid_input",
+            "estimate requires estimatedMinutes or clearEstimatedMinutes.",
+        )
+    blocked_reason = safe_text("blockedReason", args.get("blockedReason"), 1000)
+    assignee_worker_id = safe_id(
+        "assigneeWorkerId",
+        args.get("assigneeWorkerId"),
+        required=False,
+    )
+    assignee_name = safe_text("assigneeName", args.get("assigneeName"), 160)
+    clear_assignee = safe_bool("clearAssignee", args.get("clearAssignee"), False)
+    note = safe_text("note", args.get("note"), 2000)
+    if action == "progress" and progress is None:
+        raise ToolError("invalid_input", "progress requires progressPercent.")
+    if action == "block" and not blocked_reason:
+        raise ToolError("invalid_input", "block requires blockedReason.")
+    if action == "assign":
+        assignment_values = sum(
+            bool(value)
+            for value in (assignee_worker_id, assignee_name, clear_assignee)
+        )
+        if assignment_values != 1:
+            raise ToolError(
+                "invalid_input",
+                "assign requires one worker or clearAssignee.",
+            )
+    if action == "priority" and args.get("priority") is None:
+        raise ToolError("invalid_input", "priority requires true or false.")
+    if action == "note" and not note:
+        raise ToolError("invalid_input", "note requires note text.")
     task_code = safe_task_code(args.get("taskCode"))
     actor = normalize_actor(args.get("actor"))
     payload = {
         "taskCode": task_code,
         "action": action,
-        "progressPercent": progress,
-        "blockedReason": safe_text("blockedReason", args.get("blockedReason"), 1000),
-        "priority": args.get("priority"),
-        "assigneeWorkerId": safe_id("assigneeWorkerId", args.get("assigneeWorkerId"), required=False),
-        "assigneeName": safe_text("assigneeName", args.get("assigneeName"), 160),
-        "clearAssignee": safe_bool("clearAssignee", args.get("clearAssignee"), False),
-        "note": safe_text("note", args.get("note"), 2000),
         "idempotencyKey": mutation_idempotency(args, actor, task_code),
         "actor": actor,
     }
+    action_fields = {
+        "progress": {"progressPercent": progress},
+        "block": {"blockedReason": blocked_reason},
+        "assign": {
+            "assigneeWorkerId": assignee_worker_id,
+            "assigneeName": assignee_name,
+            "clearAssignee": clear_assignee,
+        },
+        "priority": {
+            "priority": safe_bool("priority", args.get("priority")),
+        },
+        "note": {"note": note},
+        "rename": {"title": title},
+        "details": {
+            "details": details,
+            "clearDetails": clear_details,
+        },
+        "estimate": {
+            "estimatedMinutes": estimated_minutes,
+            "clearEstimatedMinutes": clear_estimated_minutes,
+        },
+    }
+    payload.update(action_fields.get(action, {}))
     return {"ok": True, **operations_tool(load_config(), "operations.finca.update_task", payload)}
 
 
@@ -954,7 +1069,7 @@ ACTOR_SCHEMA = {
 TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str, Any]]]] = {
     "finca_tasks_list": (
         "List current OW Finca tasks from Operations. Supports all tasks, filters, and the current worker's assignments.",
-        {"type": "object", "properties": {"statuses": {"type": "array", "items": {"type": "string", "enum": sorted(ALLOWED_STATUSES)}}, "priority": {"type": ["boolean", "null"]}, "assigneeWorkerId": {"type": ["string", "null"]}, "telegramUserId": {"type": ["string", "number", "null"]}, "query": {"type": ["string", "null"]}, "includeCompleted": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, "additionalProperties": False},
+        {"type": "object", "properties": {"statuses": {"type": "array", "items": {"type": "string", "enum": sorted(ALLOWED_STATUSES)}}, "priority": {"type": ["boolean", "null"]}, "assigneeWorkerId": {"type": ["string", "null"]}, "assigneeName": {"type": ["string", "null"]}, "telegramUserId": {"type": ["string", "number", "null"]}, "query": {"type": ["string", "null"]}, "includeCompleted": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, "additionalProperties": False},
         tool_list,
     ),
     "finca_tasks_get": (
@@ -996,6 +1111,15 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
                 "progressPercent": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
                 "blockedReason": {"type": ["string", "null"], "maxLength": 1000},
                 "priority": {"type": ["boolean", "null"]},
+                "title": {"type": ["string", "null"], "maxLength": 240},
+                "details": {"type": ["string", "null"], "maxLength": 4000},
+                "clearDetails": {"type": "boolean"},
+                "estimatedMinutes": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": MAX_ESTIMATED_MINUTES,
+                },
+                "clearEstimatedMinutes": {"type": "boolean"},
                 "assigneeWorkerId": {"type": ["string", "null"]},
                 "assigneeName": {"type": ["string", "null"]},
                 "clearAssignee": {"type": "boolean"},

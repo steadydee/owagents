@@ -139,6 +139,102 @@ class FincaTaskToolTests(unittest.TestCase):
         mine = server.tool_list({"telegramUserId": "202"})["tasks"]
         self.assertEqual([item["code"] for item in mine], [assigned["code"]])
 
+    def test_list_tasks_by_worker_name(self):
+        self.create("Presentarse", "telegram--1001-12", actor=self.actor("202", "Juan Santos", "12"))
+        assigned = self.create(
+            "Cerrar los senderos",
+            "telegram--1001-13",
+            assigneeName="Juan Santos",
+            actor=self.actor("101", "Dennis", "13"),
+        )["task"]
+        self.create("Limpiar ventanas", "telegram--1001-14")
+
+        tasks = server.tool_list({"assigneeName": "Juan Santos"})["tasks"]
+
+        self.assertEqual([item["code"] for item in tasks], [assigned["code"]])
+
+    def test_rename_details_and_estimate_are_audited_updates(self):
+        task = self.create("Cerrar los senderos para Juan Santos", "telegram--1001-15")["task"]
+
+        renamed = self.update(
+            task["code"],
+            "rename",
+            "telegram--1001-16",
+            title="Cerrar los senderos",
+        )["task"]
+        detailed = self.update(
+            task["code"],
+            "details",
+            "telegram--1001-17",
+            details="Cerrar los senderos del mirador.",
+        )["task"]
+        estimated = self.update(
+            task["code"],
+            "estimate",
+            "telegram--1001-18",
+            estimatedMinutes=120,
+        )["task"]
+        cleared = self.update(
+            task["code"],
+            "estimate",
+            "telegram--1001-19",
+            clearEstimatedMinutes=True,
+        )["task"]
+
+        self.assertEqual(renamed["title"], "Cerrar los senderos")
+        self.assertEqual(detailed["details"], "Cerrar los senderos del mirador.")
+        self.assertEqual(estimated["estimatedMinutes"], 120)
+        self.assertIsNone(cleared["estimatedMinutes"])
+        self.assertEqual(
+            [event["eventType"] for event in cleared["events"][-4:]],
+            ["rename", "details", "estimate", "estimate"],
+        )
+
+    def test_edit_actions_require_exact_fields(self):
+        task = self.create()["task"]
+        cases = (
+            ("rename", {}, "invalid_input"),
+            ("details", {}, "invalid_input"),
+            ("details", {"details": "Nueva", "clearDetails": True}, "invalid_input"),
+            ("estimate", {}, "invalid_input"),
+            (
+                "estimate",
+                {"estimatedMinutes": 30, "clearEstimatedMinutes": True},
+                "invalid_input",
+            ),
+        )
+        for index, (action, extra, code) in enumerate(cases, start=20):
+            with self.subTest(action=action, extra=extra):
+                with self.assertRaises(server.ToolError) as raised:
+                    self.update(
+                        task["code"],
+                        action,
+                        f"telegram--1001-{index}",
+                        **extra,
+                    )
+                self.assertEqual(raised.exception.code, code)
+
+    def test_existing_actions_require_their_exact_fields(self):
+        task = self.create()["task"]
+        cases = (
+            ("progress", {}),
+            ("block", {}),
+            ("assign", {}),
+            ("assign", {"assigneeName": "Juan", "clearAssignee": True}),
+            ("priority", {}),
+            ("note", {}),
+        )
+        for index, (action, extra) in enumerate(cases, start=30):
+            with self.subTest(action=action, extra=extra):
+                with self.assertRaises(server.ToolError) as raised:
+                    self.update(
+                        task["code"],
+                        action,
+                        f"telegram--1001-{index}",
+                        **extra,
+                    )
+                self.assertEqual(raised.exception.code, "invalid_input")
+
     def test_daily_report_excludes_completed_and_groups_priority(self):
         priority = self.create("Arreglar cerca", "telegram--1001-20", priority=True)["task"]
         done = self.create("Guardar herramientas", "telegram--1001-21")["task"]

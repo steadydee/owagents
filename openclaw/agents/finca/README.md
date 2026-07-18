@@ -12,7 +12,12 @@ OW Finca Telegram group
   -> Operations /finca review surface
 ```
 
-Operations owns tasks, progress, assignments, photos, and audit history. The agent interprets Spanish task language and calls narrow tools. It does not use conversation memory as task storage.
+Operations owns tasks, progress, assignments, photos, and audit history. The
+agent interprets Spanish, English, and mixed task language and calls narrow
+tools. Before every update, it compares the request with the current Operations
+task list. If it cannot resolve a unique task or supported action, it asks one
+short question or says it cannot perform the action. It does not use
+conversation memory as task storage.
 
 Task creation accepts optional estimated effort, such as `Limpiar ventanas,
 est. 3 horas`. The agent normalizes clear minute/hour phrases to
@@ -41,6 +46,11 @@ Buenas tardes. ¿En qué tareas avanzamos hoy?
 Workers answer naturally. The agent resolves their descriptions against current
 Operations tasks and asks only when more than one task remains plausible.
 Outstanding-task lists remain available on demand.
+
+Supported management includes create, list, assign or unassign, start, progress,
+block, complete, reopen, reprioritize, rename, edit details, edit estimated
+effort, add notes, attach photos, and cancel. `Delete` or `remove` means audited
+cancellation; task history is never hard-deleted.
 
 Production requires `FINCA_TASKS_MOCKS=0`. Mock mode exists only for deterministic local tests and must never be enabled in the live profile.
 
