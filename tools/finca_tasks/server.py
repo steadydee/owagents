@@ -33,6 +33,10 @@ MOCK_FILE = Path(os.environ.get("FINCA_TASKS_MOCK_FILE", str(WORKSPACE / "mock" 
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,240}$")
 TASK_CODE_RE = re.compile(r"^F-\d{1,10}$", re.IGNORECASE)
+DANGLING_ESTIMATE_RE = re.compile(
+    r"(?:^|[\s,;([])(?:est\.?|estimad[oa]|estimated)\s*[:=-]?\s*\d+(?:[.,]\d+)?[.)]?\s*$",
+    re.IGNORECASE,
+)
 WORKER_REPORT_CODE_RE = re.compile(
     r"(?m)^(\s*(?:[\u2022*\-]\s*)?)F-\d{1,10}\s*[\u00b7\-:]\s*",
     re.IGNORECASE,
@@ -613,15 +617,27 @@ def tool_get(args: dict[str, Any]) -> dict[str, Any]:
 
 def tool_create(args: dict[str, Any]) -> dict[str, Any]:
     actor = normalize_actor(args.get("actor"))
+    title = safe_text("title", args.get("title"), 240, required=True)
+    details = safe_text("details", args.get("details"), 4000)
+    estimated_minutes = safe_optional_int(
+        "estimatedMinutes",
+        args.get("estimatedMinutes"),
+        1,
+        MAX_ESTIMATED_MINUTES,
+    )
+    if estimated_minutes is None and any(
+        DANGLING_ESTIMATE_RE.search(value)
+        for value in (title, details)
+        if value
+    ):
+        raise ToolError(
+            "estimate_unit_required",
+            "The estimated effort needs a unit such as minutes or hours. Ask one short question and do not create the task.",
+        )
     payload = {
-        "title": safe_text("title", args.get("title"), 240, required=True),
-        "details": safe_text("details", args.get("details"), 4000),
-        "estimatedMinutes": safe_optional_int(
-            "estimatedMinutes",
-            args.get("estimatedMinutes"),
-            1,
-            MAX_ESTIMATED_MINUTES,
-        ),
+        "title": title,
+        "details": details,
+        "estimatedMinutes": estimated_minutes,
         "priority": safe_bool("priority", args.get("priority"), False),
         "assigneeWorkerId": safe_id("assigneeWorkerId", args.get("assigneeWorkerId"), required=False),
         "assigneeName": safe_text("assigneeName", args.get("assigneeName"), 160),

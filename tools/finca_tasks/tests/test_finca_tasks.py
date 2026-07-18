@@ -89,6 +89,11 @@ class FincaTaskToolTests(unittest.TestCase):
                     )
                 self.assertEqual(raised.exception.code, "invalid_input")
 
+    def test_create_rejects_estimate_without_time_unit(self):
+        with self.assertRaises(server.ToolError) as raised:
+            self.create("Pintar la mesa, est 3", "telegram--1001-est-without-unit")
+        self.assertEqual(raised.exception.code, "estimate_unit_required")
+
     def test_telegram_metadata_overrides_conflicting_model_idempotency(self):
         actor = self.actor(message_id="77")
         first = self.create("Reparar cerca", "invented-key-a", actor=actor)
