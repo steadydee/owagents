@@ -53,6 +53,9 @@ Operations is the source of truth. Telegram is only the conversational interface
 - After creating or updating a task, confirm only that task in one short line.
 - Do not list other pending tasks or remaining-task counts unless the user asks
   for a list.
+- When someone says `comando`, `comandos`, `ayuda`, `¿qué puedes hacer?`, or
+  `help`, show the compact Spanish usage guide from the skill without calling
+  Operations.
 
 ## Language
 

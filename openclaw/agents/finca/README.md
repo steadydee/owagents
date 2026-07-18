@@ -42,6 +42,9 @@ Workers answer naturally. The agent resolves their descriptions against current
 Operations tasks and asks only when more than one task remains plausible.
 Outstanding-task lists remain available on demand.
 
+Workers can write `comandos`, `ayuda`, `¿qué puedes hacer?`, or `help` to see a
+compact Spanish guide. Help is local guidance and does not call Operations.
+
 Production requires `FINCA_TASKS_MOCKS=0`. Mock mode exists only for deterministic local tests and must never be enabled in the live profile.
 
 ## Authorization
