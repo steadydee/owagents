@@ -9,12 +9,15 @@ The watchdog checks:
 ```sh
 openclaw --profile owlswatch channels status --probe
 openclaw --profile hotel channels status --probe
+openclaw --profile finca channels status --probe
 ```
 
 It also checks the durable Telegram ingress spool:
 
 ```sh
 ~/.openclaw-owlswatch/telegram/ingress-spool-default
+~/.openclaw-hotel/telegram/ingress-spool-default
+~/.openclaw-finca/telegram/ingress-spool-default
 ```
 
 If the probe fails, a known Telegram handler failure such as `Bot not
@@ -27,6 +30,7 @@ Install:
 ```sh
 ./scripts/install-telegram-watchdog.sh
 ./scripts/install-hotel-watchdog.sh
+./scripts/install-finca-watchdog.sh
 ```
 
 Uninstall:
@@ -34,6 +38,7 @@ Uninstall:
 ```sh
 ./scripts/install-telegram-watchdog.sh uninstall
 ./scripts/install-hotel-watchdog.sh uninstall
+./scripts/install-finca-watchdog.sh uninstall
 ```
 
 Logs:
@@ -41,6 +46,7 @@ Logs:
 ```sh
 tail -f /tmp/openclaw/owlswatch-telegram-watchdog.log
 tail -f /tmp/openclaw/hotel-telegram-watchdog.log
+tail -f /tmp/openclaw/finca-telegram-watchdog.log
 ```
 
 The restart cooldown defaults to 10 minutes so a temporary internet outage does not create a restart loop.

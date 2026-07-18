@@ -43,6 +43,7 @@ run_watchdog() {
   ERROR_CURSOR_FILE="$TMP_DIR/error.cursor" \
   COOLDOWN_SECONDS=0 \
   RESTART_SETTLE_SECONDS=0 \
+  STALE_SPOOL_SECONDS="${STALE_SPOOL_SECONDS:-180}" \
     "$ROOT/scripts/watchdog-owlswatch-telegram.sh"
 }
 
@@ -52,6 +53,20 @@ grep -q 'recovered: Telegram operational after restart' "$TMP_DIR/watchdog.log"
 
 : > "$FAKE_STATE_DIR/calls"
 : > "$TMP_DIR/watchdog.log"
+rm -f "$FAKE_STATE_DIR/restarted"
+mkdir -p "$TMP_DIR/profile/telegram/ingress-spool-default"
+printf '{}\n' > "$TMP_DIR/profile/telegram/ingress-spool-default/123.json"
+touch "$FAKE_STATE_DIR/force-healthy"
+sed -i '' '/if \[ -f "$FAKE_STATE_DIR\/restarted" \]; then/i\
+  if [ -f "$FAKE_STATE_DIR/force-healthy" ]; then echo "Telegram default: enabled, configured, running, connected, works, audit ok"; exit 0; fi
+' "$FAKE_BIN"
+STALE_SPOOL_SECONDS=0 run_watchdog
+grep -q -- '--profile hotel gateway restart' "$FAKE_STATE_DIR/calls"
+grep -q 'stale update' "$TMP_DIR/watchdog.log"
+
+: > "$FAKE_STATE_DIR/calls"
+: > "$TMP_DIR/watchdog.log"
+rm -f "$TMP_DIR/profile/telegram/ingress-spool-default/123.json"
 run_watchdog
 if grep -q 'gateway restart' "$FAKE_STATE_DIR/calls"; then
   echo "Healthy watchdog run unexpectedly restarted the gateway" >&2

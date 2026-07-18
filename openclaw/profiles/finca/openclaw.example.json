@@ -70,24 +70,16 @@
       "telegram:<dennis_telegram_user_id>"
     ]
   },
-  "mcp": {
-    "servers": {
-      "finca_tasks": {
-        "command": "node",
-        "args": [
-          "~/.openclaw/workspace-finca-ops/tools/finca_tasks/openclaw-plugin.js"
-        ],
-        "env": {
-          "OPENCLAW_CONFIG_PATH": "~/.openclaw-finca/openclaw.json",
-          "OPENCLAW_STATE_DIR": "~/.openclaw-finca",
-          "FINCA_WORKSPACE": "~/.openclaw/workspace-finca-ops",
-          "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
-          "OPERATIONS_PROPERTY_ID": "owlswatch",
-          "OW_AGENT_TOKEN_SECRET_FILE": "~/.openclaw-finca/secrets/operations-agent-secret",
-          "FINCA_TELEGRAM_NOTIFY_CHAT_ID": "<ow_finca_group_chat_id>",
-          "FINCA_TASKS_MOCKS": "0"
-        }
-      }
+  "env": {
+    "vars": {
+      "OPENCLAW_CONFIG_PATH": "~/.openclaw-finca/openclaw.json",
+      "OPENCLAW_STATE_DIR": "~/.openclaw-finca",
+      "FINCA_WORKSPACE": "~/.openclaw/workspace-finca-ops",
+      "OPERATIONS_BASE_URL": "https://operations.owlswatch.com",
+      "OPERATIONS_PROPERTY_ID": "owlswatch",
+      "OW_AGENT_TOKEN_SECRET_FILE": "~/.openclaw-finca/secrets/operations-agent-secret",
+      "FINCA_TELEGRAM_NOTIFY_CHAT_ID": "<ow_finca_group_chat_id>",
+      "FINCA_TASKS_MOCKS": "0"
     }
   },
   "plugins": {
