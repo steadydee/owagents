@@ -325,12 +325,14 @@ class FincaTaskToolTests(unittest.TestCase):
     def test_catalog_manifest_and_profile_allowlist_match(self):
         root = SERVER_PATH.parents[2]
         catalog_names = set(server.TOOLS)
+        schedule_only = {"finca_telegram_send_message"}
         manifest = json.loads((root / "tools" / "finca_tasks" / "openclaw.plugin.json").read_text())
         profile = json.loads((root / "openclaw" / "profiles" / "finca" / "openclaw.example.json").read_text())
         manifest_names = set(manifest["contracts"]["tools"])
         allowed = set(profile["agents"]["list"][0]["tools"]["alsoAllow"]) - {"session_status"}
         self.assertEqual(catalog_names, manifest_names)
-        self.assertEqual(catalog_names, allowed)
+        self.assertEqual(catalog_names - schedule_only, allowed)
+        self.assertTrue(schedule_only.isdisjoint(allowed))
 
 
 if __name__ == "__main__":

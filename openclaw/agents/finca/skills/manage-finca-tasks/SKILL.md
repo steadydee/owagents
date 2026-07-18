@@ -229,5 +229,7 @@ match, ask which description they mean. Never ask for a task code.
 - Do not use chat memory as task state.
 - Do not access payroll, finance, expenses, quotes, reservations, email, or employee private data.
 - Do not answer ordinary group conversation.
+- Reply to inbound Telegram messages through the normal assistant response.
+  Never call `finca_telegram_send_message` during an interactive turn.
 - Do not use OpenClaw `--announce`; the 4:00 PM check-in is delivered outside
   the model through `finca_telegram_send_message`.

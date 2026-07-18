@@ -8,8 +8,11 @@ Use only:
 - `finca_tasks_update`
 - `finca_tasks_attach_photos`
 - `finca_tasks_send_daily_report`
-- `finca_telegram_send_message`
 
-The tools own the Operations property, app credential, Telegram bot token, durable spool paths, idempotency, and direct Telegram delivery for scheduled reports.
+The tools own the Operations property, app credential, durable spool paths,
+idempotency, and deterministic report delivery.
+
+`finca_telegram_send_message` exists only for external schedule scripts. It is
+not exposed to the model and must never be used for an inbound Telegram reply.
 
 Broad shell, browser, web, filesystem, gateway, node, canvas, cron, finance, and payroll tools are forbidden.

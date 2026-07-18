@@ -35,8 +35,7 @@
             "finca_tasks_create",
             "finca_tasks_update",
             "finca_tasks_attach_photos",
-            "finca_tasks_send_daily_report",
-            "finca_telegram_send_message"
+            "finca_tasks_send_daily_report"
           ],
           "deny": [
             "exec",
