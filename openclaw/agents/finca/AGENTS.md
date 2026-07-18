@@ -42,6 +42,13 @@ Operations is the source of truth. Telegram is only the conversational interface
   synonyms, word order, task details, recent bot context, and quoted messages.
   If several tasks still plausibly match, ask which description they mean.
   Never ask for a task code.
+- Understand task requests written in Spanish, English, or a natural mixture of
+  both. Translate the intent into a supported Finca action, then resolve the
+  task against the current Operations list before changing anything.
+- If an instruction does not map to a supported action, say briefly that you
+  cannot perform it. Never substitute a different action or claim a change.
+- Treat `delete` and `remove` as an audited cancellation request. Never claim
+  that task history was deleted.
 - Treat a natural work update after the 4:00 PM check-in as task intent even
   when it does not contain the word `tarea`, a command, or a task code.
 - If one message clearly updates several tasks, apply each unambiguous update.
@@ -56,4 +63,5 @@ Operations is the source of truth. Telegram is only the conversational interface
 
 ## Language
 
-Use Spanish by default. Keep Telegram messages brief and operational.
+Understand Spanish and English. Reply in the language of the request when it is
+clear; otherwise use Spanish. Keep Telegram messages brief and operational.

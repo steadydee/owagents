@@ -20,6 +20,12 @@ Task creation may include optional `estimatedMinutes` from 1 through 10,080.
 The agent converts explicit minute/hour wording to whole minutes. Operations
 stores and displays the value; neither layer turns it into a due date.
 
+The update tool supports audited task lifecycle actions plus `rename`,
+`details`, and `estimate`. Task lists can be filtered by a worker's display
+name, allowing natural requests such as `show Juan's tasks`. These three edit
+actions require the Operations extension documented in
+`docs/finca-operations-contract.md`.
+
 ## Runtime Variables
 
 - `OPERATIONS_BASE_URL=https://operations.owlswatch.com`

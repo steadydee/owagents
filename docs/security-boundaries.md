@@ -127,7 +127,9 @@ Forbidden:
 Allowed:
 
 - List and read Operations finca tasks and safe worker display identities.
-- Create, assign, reprioritize, start, progress, block, complete, cancel, and explicitly reopen finca tasks.
+- Create, assign, reprioritize, start, progress, block, complete, cancel,
+  explicitly reopen, rename, and edit the details or estimated effort of finca
+  tasks through the single audited update tool.
 - Durably spool and upload task progress/completion photos.
 - Send the deterministic daily outstanding-task report to the private OW Finca group.
 
