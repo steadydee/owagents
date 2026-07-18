@@ -139,6 +139,94 @@ class FincaTaskToolTests(unittest.TestCase):
         mine = server.tool_list({"telegramUserId": "202"})["tasks"]
         self.assertEqual([item["code"] for item in mine], [assigned["code"]])
 
+    def test_ambiguous_first_name_blocks_create_without_guessing(self):
+        self.create(
+            "Registro Juan Carlos",
+            "telegram--1001-amb-1",
+            actor=self.actor("201", "Juan Carlos", "amb-1"),
+        )
+        self.create(
+            "Registro Juan Santo",
+            "telegram--1001-amb-2",
+            actor=self.actor("202", "Juan Santo", "amb-2"),
+        )
+
+        with self.assertRaises(server.ToolError) as raised:
+            self.create(
+                "Arreglo de la silla del salon",
+                "telegram--1001-amb-3",
+                assigneeName="Juan",
+                actor=self.actor("101", "Dennis", "amb-3"),
+            )
+
+        self.assertEqual(raised.exception.code, "worker_ambiguous")
+        self.assertIn("Juan Carlos", raised.exception.message)
+        self.assertIn("Juan Santo", raised.exception.message)
+        self.assertEqual(server.tool_list({"query": "Arreglo de la silla"})["tasks"], [])
+
+    def test_full_or_unique_worker_name_assigns_the_intended_person(self):
+        self.create(
+            "Registro Juan Carlos",
+            "telegram--1001-name-1",
+            actor=self.actor("201", "Juan Carlos", "name-1"),
+        )
+        self.create(
+            "Registro Juan Santo",
+            "telegram--1001-name-2",
+            actor=self.actor("202", "Juan Santo", "name-2"),
+        )
+
+        exact = self.create(
+            "Arreglar silla",
+            "telegram--1001-name-3",
+            assigneeName="Juan Santo",
+            actor=self.actor("101", "Dennis", "name-3"),
+        )["task"]
+        partial = self.create(
+            "Cerrar sendero",
+            "telegram--1001-name-4",
+            assigneeName="Juan C",
+            actor=self.actor("101", "Dennis", "name-4"),
+        )["task"]
+
+        self.assertEqual(exact["assignee"]["displayName"], "Juan Santo")
+        self.assertEqual(partial["assignee"]["displayName"], "Juan Carlos")
+
+    def test_ambiguous_first_name_blocks_reassignment(self):
+        self.create(
+            "Registro Juan Carlos",
+            "telegram--1001-reassign-1",
+            actor=self.actor("201", "Juan Carlos", "reassign-1"),
+        )
+        self.create(
+            "Registro Juan Santo",
+            "telegram--1001-reassign-2",
+            actor=self.actor("202", "Juan Santo", "reassign-2"),
+        )
+        task = self.create(
+            "Arreglar silla",
+            "telegram--1001-reassign-3",
+            actor=self.actor("101", "Dennis", "reassign-3"),
+        )["task"]
+
+        with self.assertRaises(server.ToolError) as raised:
+            self.update(
+                task["code"],
+                "assign",
+                "telegram--1001-reassign-4",
+                assigneeName="Juan",
+            )
+        self.assertEqual(raised.exception.code, "worker_ambiguous")
+        self.assertIsNone(server.tool_get({"taskCode": task["code"]})["task"]["assignee"])
+
+        reassigned = self.update(
+            task["code"],
+            "assign",
+            "telegram--1001-reassign-5",
+            assigneeName="Juan Carlos",
+        )["task"]
+        self.assertEqual(reassigned["assignee"]["displayName"], "Juan Carlos")
+
     def test_daily_report_excludes_completed_and_groups_priority(self):
         priority = self.create("Arreglar cerca", "telegram--1001-20", priority=True)["task"]
         done = self.create("Guardar herramientas", "telegram--1001-21")["task"]

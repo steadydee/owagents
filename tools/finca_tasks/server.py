@@ -615,7 +615,57 @@ def tool_get(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "task": operations_tool(load_config(), "operations.finca.get_task", {"taskCode": safe_task_code(args.get("taskCode"))})}
 
 
+def resolve_assignee_reference(
+    config: dict[str, Any],
+    worker_id: str | None,
+    worker_name: str | None,
+) -> tuple[str | None, str | None]:
+    if worker_id or not worker_name:
+        return worker_id, worker_name
+
+    workers = operations_tool(
+        config,
+        "operations.finca.list_workers",
+        {"query": worker_name},
+    )
+    if not isinstance(workers, list):
+        raise ToolError(
+            "worker_lookup_failed",
+            "The Finca worker list returned an invalid response.",
+            retryable=True,
+        )
+
+    exact_matches = [
+        worker
+        for worker in workers
+        if isinstance(worker, dict)
+        and worker.get("active", True) is not False
+        and isinstance(worker.get("displayName"), str)
+        and worker["displayName"].strip().casefold() == worker_name.casefold()
+    ]
+    candidates = exact_matches or [
+        worker
+        for worker in workers
+        if isinstance(worker, dict)
+        and worker.get("active", True) is not False
+        and isinstance(worker.get("displayName"), str)
+        and worker.get("id")
+    ]
+    if len(candidates) > 1:
+        names = [worker["displayName"].strip() for worker in candidates[:5]]
+        raise ToolError(
+            "worker_ambiguous",
+            f'El nombre "{worker_name}" puede ser: {" o ".join(names)}. Pregunta cuál antes de hacer cambios.',
+        )
+    if len(candidates) == 1:
+        return safe_id("assigneeWorkerId", candidates[0].get("id")), None
+
+    # Operations may create a new worker when a genuinely new full name is used.
+    return None, worker_name
+
+
 def tool_create(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
     actor = normalize_actor(args.get("actor"))
     title = safe_text("title", args.get("title"), 240, required=True)
     details = safe_text("details", args.get("details"), 4000)
@@ -634,21 +684,27 @@ def tool_create(args: dict[str, Any]) -> dict[str, Any]:
             "estimate_unit_required",
             "The estimated effort needs a unit such as minutes or hours. Ask one short question and do not create the task.",
         )
+    assignee_worker_id, assignee_name = resolve_assignee_reference(
+        config,
+        safe_id("assigneeWorkerId", args.get("assigneeWorkerId"), required=False),
+        safe_text("assigneeName", args.get("assigneeName"), 160),
+    )
     payload = {
         "title": title,
         "details": details,
         "estimatedMinutes": estimated_minutes,
         "priority": safe_bool("priority", args.get("priority"), False),
-        "assigneeWorkerId": safe_id("assigneeWorkerId", args.get("assigneeWorkerId"), required=False),
-        "assigneeName": safe_text("assigneeName", args.get("assigneeName"), 160),
+        "assigneeWorkerId": assignee_worker_id,
+        "assigneeName": assignee_name,
         "source": "telegram",
         "idempotencyKey": mutation_idempotency(args, actor),
         "actor": actor,
     }
-    return {"ok": True, **operations_tool(load_config(), "operations.finca.create_task", payload)}
+    return {"ok": True, **operations_tool(config, "operations.finca.create_task", payload)}
 
 
 def tool_update(args: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
     action = safe_text("action", args.get("action"), 40, required=True)
     if action not in ALLOWED_ACTIONS:
         raise ToolError("invalid_input", "action is not supported.")
@@ -658,20 +714,33 @@ def tool_update(args: dict[str, Any]) -> dict[str, Any]:
             raise ToolError("invalid_input", "progressPercent must be an integer from 0 to 100.")
     task_code = safe_task_code(args.get("taskCode"))
     actor = normalize_actor(args.get("actor"))
+    clear_assignee = safe_bool("clearAssignee", args.get("clearAssignee"), False)
+    assignee_worker_id = safe_id(
+        "assigneeWorkerId",
+        args.get("assigneeWorkerId"),
+        required=False,
+    )
+    assignee_name = safe_text("assigneeName", args.get("assigneeName"), 160)
+    if action == "assign" and not clear_assignee:
+        assignee_worker_id, assignee_name = resolve_assignee_reference(
+            config,
+            assignee_worker_id,
+            assignee_name,
+        )
     payload = {
         "taskCode": task_code,
         "action": action,
         "progressPercent": progress,
         "blockedReason": safe_text("blockedReason", args.get("blockedReason"), 1000),
         "priority": args.get("priority"),
-        "assigneeWorkerId": safe_id("assigneeWorkerId", args.get("assigneeWorkerId"), required=False),
-        "assigneeName": safe_text("assigneeName", args.get("assigneeName"), 160),
-        "clearAssignee": safe_bool("clearAssignee", args.get("clearAssignee"), False),
+        "assigneeWorkerId": assignee_worker_id,
+        "assigneeName": assignee_name,
+        "clearAssignee": clear_assignee,
         "note": safe_text("note", args.get("note"), 2000),
         "idempotencyKey": mutation_idempotency(args, actor, task_code),
         "actor": actor,
     }
-    return {"ok": True, **operations_tool(load_config(), "operations.finca.update_task", payload)}
+    return {"ok": True, **operations_tool(config, "operations.finca.update_task", payload)}
 
 
 def contained_media_path(value: Any) -> Path:
@@ -977,7 +1046,10 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
                 },
                 "priority": {"type": "boolean"},
                 "assigneeWorkerId": {"type": ["string", "null"]},
-                "assigneeName": {"type": ["string", "null"]},
+                "assigneeName": {
+                    "type": ["string", "null"],
+                    "description": "Copy the worker name exactly as the user wrote it. Never add or infer a surname.",
+                },
                 "idempotencyKey": {"type": "string"},
                 "actor": ACTOR_SCHEMA,
             },
@@ -997,7 +1069,10 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
                 "blockedReason": {"type": ["string", "null"], "maxLength": 1000},
                 "priority": {"type": ["boolean", "null"]},
                 "assigneeWorkerId": {"type": ["string", "null"]},
-                "assigneeName": {"type": ["string", "null"]},
+                "assigneeName": {
+                    "type": ["string", "null"],
+                    "description": "Copy the worker name exactly as the user wrote it. Never add or infer a surname.",
+                },
                 "clearAssignee": {"type": "boolean"},
                 "note": {"type": ["string", "null"], "maxLength": 2000},
                 "idempotencyKey": {"type": "string"},

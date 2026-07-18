@@ -48,6 +48,9 @@ Operations is the source of truth. Telegram is only the conversational interface
   Ask only about the part that cannot be matched safely.
 - Infer the task being discussed, but never infer a status, percentage,
   assignee, priority, or completion that the worker did not communicate.
+- Preserve assignee names exactly as the user writes them. Never add or infer a
+  surname. If a first name matches multiple workers, ask which full name they
+  mean and make no task change.
 - In worker-facing lists, omit the assignee when a task is unassigned and omit
   progress when it is 0 percent. Show only meaningful values.
 - After creating or updating a task, confirm only that task in one short line.
