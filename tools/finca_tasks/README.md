@@ -20,6 +20,11 @@ Task creation may include optional `estimatedMinutes` from 1 through 10,080.
 The agent converts explicit minute/hour wording to whole minutes. Operations
 stores and displays the value; neither layer turns it into a due date.
 
+Before create or assignment writes, the tool checks the safe Operations worker
+list. An exact full name wins. A single unique partial match is accepted.
+Multiple matches return `worker_ambiguous` with the safe display-name options
+and make no task change.
+
 ## Runtime Variables
 
 - `OPERATIONS_BASE_URL=https://operations.owlswatch.com`
