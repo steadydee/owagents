@@ -28,5 +28,8 @@ grep -q '"cron"' "$ROOT/openclaw/profiles/finca/openclaw.example.json"
 grep -q '<key>StartCalendarInterval</key>' "$ROOT/scripts/install-finca-schedule.sh"
 grep -q '<key>StartInterval</key><integer>\$RETRY_INTERVAL_SECONDS</integer>' "$ROOT/scripts/install-finca-schedule.sh"
 grep -q 'SCHEDULED_MINUTES=\$((16 \* 60))' "$ROOT/scripts/run-finca-daily-checkin.sh"
+grep -q '<key>Hour</key><integer>7</integer>' "$ROOT/scripts/install-finca-schedule.sh"
+grep -q 'SCHEDULED_MINUTES=\$((7 \* 60))' "$ROOT/scripts/run-finca-daily-report.sh"
+grep -q 'finca_tasks_send_daily_report' "$ROOT/scripts/run-finca-daily-report.sh"
 
 echo "Finca smoke passed."

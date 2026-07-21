@@ -29,11 +29,16 @@ and asks about the competing descriptions only when the reference is ambiguous.
 - Agent: `finca`
 - Workspace: `~/.openclaw/workspace-finca-ops`
 - Gateway port: `19501`
+- Daily task report: 07:00 America/Bogota through launchd, with quiet 15-minute
+  retries after 07:00 until the daily delivery stamp exists
 - Daily check-in: 16:00 America/Bogota through launchd, with quiet 15-minute
   retries after 16:00 until the daily delivery stamp exists
 
-The scheduled message is fixed and sent directly through the narrow Telegram
-tool:
+The morning report is generated deterministically by Operations from all current
+outstanding tasks and sent through the narrow Telegram tool. It does not depend
+on the LLM or conversation memory.
+
+The afternoon message is fixed and sent directly through the narrow Telegram tool:
 
 ```text
 Buenas tardes. ¿En qué tareas avanzamos hoy?
@@ -60,5 +65,6 @@ The Telegram group and every worker use numeric allowlists. The Operations crede
 4. Identity: dedicated `finca` Operations credential with Telegram actor metadata on every write.
 5. Idempotency: `telegram-{chatId}-{messageId}` for creates and `telegram-{chatId}-{messageId}-{taskCode}` for updates/uploads, enforced by Operations.
 6. Untrusted input: Telegram text and photos. Blast radius is limited to the Finca task subsystem.
-7. Schedule: launchd sends the fixed 4:00 PM check-in through the Telegram tool
-   without an LLM dependency; an enable-file kill switch controls delivery.
+7. Schedule: launchd sends the Operations-backed task list at 7:00 AM and the
+   fixed check-in at 4:00 PM without an LLM dependency; enable-file kill switches
+   control delivery.

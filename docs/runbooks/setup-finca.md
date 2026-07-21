@@ -44,10 +44,12 @@ openclaw --profile finca security audit --deep
 openclaw --profile finca gateway restart
 ```
 
-The schedule has an exact 16:00 calendar trigger and a 15-minute retry trigger.
-The runner exits quietly before 16:00 and after a successful daily stamp, so it
-sends at most once per Bogotá calendar day. If the Mac wakes or Telegram
-recovers after 16:00, the next retry sends the missed check-in.
+The morning report has an exact 07:00 calendar trigger, and the afternoon
+check-in has an exact 16:00 trigger. Both have a 15-minute retry trigger. Each
+runner exits quietly before its scheduled time and after its own successful
+daily stamp, so each message sends at most once per Bogotá calendar day. If the
+Mac wakes or Telegram recovers after either scheduled time, the next retry sends
+the missed message.
 
 Test with an allowlisted user:
 
@@ -66,9 +68,11 @@ After the end-to-end test passes:
 ```sh
 ./scripts/install-finca-watchdog.sh
 ./scripts/install-finca-schedule.sh
+./scripts/run-finca-daily-report.sh --force
 ./scripts/run-finca-daily-checkin.sh --force
 ```
 
-The launchd schedule sends `Buenas tardes. ¿En qué tareas avanzamos hoy?` at
-16:00 America/Bogota. The fixed message bypasses the LLM. Do not run the forced
-command in production unless an immediate test message is intended.
+The launchd schedule sends the current outstanding-task list at 07:00 and
+`Buenas tardes. ¿En qué tareas avanzamos hoy?` at 16:00 America/Bogota. Both
+paths bypass the LLM. Do not run either forced command in production unless an
+immediate test message is intended.

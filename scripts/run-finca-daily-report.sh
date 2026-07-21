@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROFILE_DIR="${FINCA_PROFILE_DIR:-$HOME/.openclaw-finca}"
+WORKSPACE="${FINCA_WORKSPACE:-$HOME/.openclaw/workspace-finca-ops}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+SERVER="${FINCA_TOOL_SERVER:-$WORKSPACE/tools/finca_tasks/server.py}"
+ENABLED_FILE="${ENABLED_FILE:-$PROFILE_DIR/daily-report.enabled}"
+LOG_DIR="${LOG_DIR:-/tmp/openclaw}"
+LOG_FILE="${LOG_FILE:-$LOG_DIR/finca-daily-report.log}"
+FORCE="${1:-}"
+STAMP_DIR="${STAMP_DIR:-$PROFILE_DIR/schedule-stamps}"
+STAMP_FILE="$STAMP_DIR/finca-daily-report-$(TZ=America/Bogota date '+%Y-%m-%d').stamp"
+SCHEDULED_MINUTES=$((7 * 60))
+
+export PATH="/opt/homebrew/opt/python@3.13/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+export TZ="America/Bogota"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$PROFILE_DIR/openclaw.json}"
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$PROFILE_DIR}"
+export FINCA_WORKSPACE="$WORKSPACE"
+mkdir -p "$LOG_DIR"
+
+if [ ! -f "$ENABLED_FILE" ] && [ "$FORCE" != "--force" ]; then
+  exit 0
+fi
+
+if [ "$FORCE" != "--force" ]; then
+  now_minutes=$((10#$(date '+%H') * 60 + 10#$(date '+%M')))
+  if [ "$now_minutes" -lt "$SCHEDULED_MINUTES" ]; then
+    exit 0
+  fi
+  if [ -f "$STAMP_FILE" ]; then
+    exit 0
+  fi
+fi
+
+if [ ! -f "$SERVER" ]; then
+  printf '%s failed: Finca tool server is missing\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
+  exit 1
+fi
+
+{
+  printf '\n%s Finca daily report start\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+  printf '{}' | "$PYTHON_BIN" "$SERVER" call finca_tasks_send_daily_report
+  printf '\n%s Finca daily report end\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+} >> "$LOG_FILE" 2>&1
+
+if [ "$FORCE" != "--force" ]; then
+  mkdir -p "$STAMP_DIR"
+  date '+%Y-%m-%d %H:%M:%S' > "$STAMP_FILE"
+fi
