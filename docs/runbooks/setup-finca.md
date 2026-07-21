@@ -44,6 +44,11 @@ openclaw --profile finca security audit --deep
 openclaw --profile finca gateway restart
 ```
 
+The schedule has an exact 16:00 calendar trigger and a 15-minute retry trigger.
+The runner exits quietly before 16:00 and after a successful daily stamp, so it
+sends at most once per Bogotá calendar day. If the Mac wakes or Telegram
+recovers after 16:00, the next retry sends the missed check-in.
+
 Test with an allowlisted user:
 
 ```text

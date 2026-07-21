@@ -29,7 +29,8 @@ and asks about the competing descriptions only when the reference is ambiguous.
 - Agent: `finca`
 - Workspace: `~/.openclaw/workspace-finca-ops`
 - Gateway port: `19501`
-- Daily check-in: 16:00 America/Bogota through launchd
+- Daily check-in: 16:00 America/Bogota through launchd, with quiet 15-minute
+  retries after 16:00 until the daily delivery stamp exists
 
 The scheduled message is fixed and sent directly through the narrow Telegram
 tool:
