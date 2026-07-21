@@ -12,6 +12,7 @@ LEGACY_RUNNER="$HOME/.openclaw-finca/bin/run-finca-daily-report.sh"
 ENABLED_FILE="$HOME/.openclaw-finca/daily-checkin.enabled"
 BIN_DIR="$HOME/.openclaw-finca/bin"
 RUNNER="$BIN_DIR/run-finca-daily-checkin.sh"
+RETRY_INTERVAL_SECONDS="${FINCA_DAILY_RETRY_INTERVAL_SECONDS:-900}"
 
 if [ "$ACTION" = "uninstall" ]; then
   launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
@@ -45,6 +46,7 @@ cat > "$PLIST" <<PLIST
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key><array><string>$RUNNER</string></array>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StartInterval</key><integer>$RETRY_INTERVAL_SECONDS</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/openclaw/finca-daily-checkin.stdout.log</string>
   <key>StandardErrorPath</key><string>/tmp/openclaw/finca-daily-checkin.stderr.log</string>
@@ -58,4 +60,4 @@ launchctl bootout "gui/$(id -u)" "$LEGACY_PLIST" 2>/dev/null || true
 rm -f "$LEGACY_PLIST" "$LEGACY_ENABLED_FILE" "$LEGACY_RUNNER"
 launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "Installed Finca daily check-in for 16:00 America/Bogota"
+echo "Installed Finca daily check-in for 16:00 America/Bogota with ${RETRY_INTERVAL_SECONDS}s retry checks"

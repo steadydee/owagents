@@ -22,18 +22,15 @@ export FINCA_WORKSPACE="$WORKSPACE"
 mkdir -p "$LOG_DIR"
 
 if [ ! -f "$ENABLED_FILE" ] && [ "$FORCE" != "--force" ]; then
-  printf '%s disabled: Finca daily-checkin enable file missing\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
   exit 0
 fi
 
 if [ "$FORCE" != "--force" ]; then
   now_minutes=$((10#$(date '+%H') * 60 + 10#$(date '+%M')))
   if [ "$now_minutes" -lt "$SCHEDULED_MINUTES" ]; then
-    printf '%s skipped: before 16:00 catch-up window\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
     exit 0
   fi
   if [ -f "$STAMP_FILE" ]; then
-    printf '%s skipped: Finca check-in already ran today\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
     exit 0
   fi
 fi

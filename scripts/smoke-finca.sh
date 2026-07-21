@@ -25,5 +25,8 @@ done
 
 grep -q '"FINCA_TASKS_MOCKS": "0"' "$ROOT/openclaw/profiles/finca/openclaw.example.json"
 grep -q '"cron"' "$ROOT/openclaw/profiles/finca/openclaw.example.json"
+grep -q '<key>StartCalendarInterval</key>' "$ROOT/scripts/install-finca-schedule.sh"
+grep -q '<key>StartInterval</key><integer>\$RETRY_INTERVAL_SECONDS</integer>' "$ROOT/scripts/install-finca-schedule.sh"
+grep -q 'SCHEDULED_MINUTES=\$((16 \* 60))' "$ROOT/scripts/run-finca-daily-checkin.sh"
 
 echo "Finca smoke passed."
