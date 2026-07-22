@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT/scripts/assert-release-ready.sh"
+"$ROOT/scripts/remove-external-telegram-watchdogs.sh"
 WORKSPACE="${HOTEL_WORKSPACE:-$HOME/.openclaw/workspace-hotel-ops}"
 PROFILE_DIR="${HOTEL_PROFILE_DIR:-$HOME/.openclaw-hotel}"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Backups/hotel-agents/deploy}"

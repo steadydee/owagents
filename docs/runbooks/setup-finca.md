@@ -66,7 +66,6 @@ Test that a non-allowlisted account receives no agent response and cannot change
 After the end-to-end test passes:
 
 ```sh
-./scripts/install-finca-watchdog.sh
 ./scripts/install-finca-schedule.sh
 ./scripts/run-finca-daily-report.sh --force
 ./scripts/run-finca-daily-checkin.sh --force

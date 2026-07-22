@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT/scripts/assert-release-ready.sh"
+"$ROOT/scripts/remove-external-telegram-watchdogs.sh"
 
 WORKSPACE="${FINCA_WORKSPACE:-$HOME/.openclaw/workspace-finca-ops}"
 PROFILE_DIR="${FINCA_PROFILE_DIR:-$HOME/.openclaw-finca}"
