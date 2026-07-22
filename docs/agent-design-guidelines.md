@@ -81,7 +81,10 @@ Plus two standing rules in every skill that ingests external content:
 ## 7. Scheduling And Operations
 
 - Schedulers live outside agents. launchd invokes `openclaw agent` with a task message; the `cron` tool stays denied. Every schedule has a kill switch (enable file or env flag) and logs to a durable location.
-- Each profile runs a watchdog with a lock, a restart cooldown, and post-restart verification.
+- Each gateway runs as a `KeepAlive`/`RunAtLoad` LaunchAgent and uses OpenClaw's
+  built-in channel health monitor. Do not add an external script that restarts
+  a healthy gateway based on a single probe timeout, handler log line, or
+  durable-spool age; it can interrupt replay and lose the user-facing reply.
 - Deploys follow the gate order: `check-no-secrets.sh` → deploy script (backup, rsync, dependency check, compile) → `config validate` → `skills check` per agent → smoke tests → gateway restart. Deploys never touch runtime state.
 - Every credential an agent depends on has a rotation runbook — app tokens, bot tokens, and service-account keys alike.
 - Google access uses the narrowest scope per call (`gmail.readonly` for reads; `gmail.compose` only behind an explicit enable flag), and read surfaces are scoped (a dedicated label, not `*`) wherever the provider allows.

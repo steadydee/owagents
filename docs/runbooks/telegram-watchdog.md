@@ -1,10 +1,10 @@
-# Telegram Watchdogs
+# Telegram Recovery
 
-An OpenClaw gateway can be running while Telegram updates are not being
-dispatched to agents. Each Telegram profile therefore has its own watchdog,
-lock, restart cooldown, and logs. A watchdog only restarts its own profile.
+OpenClaw owns Telegram long-poll recovery and channel-health restarts. Each
+gateway also runs under a macOS LaunchAgent with `KeepAlive` and `RunAtLoad`, so
+launchd restores a process that exits. Do not install a second restart loop.
 
-The watchdog checks:
+Check the live profiles with:
 
 ```sh
 openclaw --profile owlswatch channels status --probe
@@ -12,7 +12,7 @@ openclaw --profile hotel channels status --probe
 openclaw --profile finca channels status --probe
 ```
 
-It also checks the durable Telegram ingress spool:
+OpenClaw durably spools accepted Telegram updates under:
 
 ```sh
 ~/.openclaw-owlswatch/telegram/ingress-spool-default
@@ -20,40 +20,33 @@ It also checks the durable Telegram ingress spool:
 ~/.openclaw-finca/telegram/ingress-spool-default
 ```
 
-If the probe fails, a known Telegram handler failure such as `Bot not
-initialized` appears in the OpenClaw log, or a Telegram update remains spooled
-longer than `STALE_SPOOL_SECONDS` (default: 180), it restarts only the affected
-gateway. It never touches the `frontier` profile.
+Do not restart a gateway merely because a spooled update is old. A startup
+handler can leave an update retryable; restarting during that replay can
+advance the offset without delivering a response.
 
-Install:
-
-```sh
-./scripts/install-telegram-watchdog.sh
-./scripts/install-hotel-watchdog.sh
-./scripts/install-finca-watchdog.sh
-```
-
-Uninstall:
+Remove the retired external watchdog LaunchAgents:
 
 ```sh
-./scripts/install-telegram-watchdog.sh uninstall
-./scripts/install-hotel-watchdog.sh uninstall
-./scripts/install-finca-watchdog.sh uninstall
+./scripts/remove-external-telegram-watchdogs.sh
 ```
 
-Logs:
+Diagnose a real failure with OpenClaw's own probes and logs:
 
 ```sh
-tail -f /tmp/openclaw/owlswatch-telegram-watchdog.log
-tail -f /tmp/openclaw/hotel-telegram-watchdog.log
-tail -f /tmp/openclaw/finca-telegram-watchdog.log
+openclaw --profile finca status --deep
+openclaw --profile finca channels status --probe
+openclaw --profile finca logs --follow
 ```
 
-The restart cooldown defaults to 10 minutes so a temporary internet outage does not create a restart loop.
+If OpenClaw reports false polling stalls during otherwise healthy long-running
+work, tune `channels.telegram.pollingStallThresholdMs` within OpenClaw rather
+than adding a second watchdog. Export diagnostics before manual restarts when
+the failure is repeatable. See the official [Telegram channel guide](https://docs.openclaw.ai/channels/telegram)
+and [health checks guide](https://docs.openclaw.ai/health).
 
-These are user LaunchAgents. After a reboot they start when the `agent` macOS
-account logs in. Keep automatic login enabled on the dedicated Mac mini and
-verify it after password changes:
+The gateway services are user LaunchAgents. After a reboot they start when the
+`agent` macOS account logs in. Keep automatic login enabled on the dedicated
+Mac mini and verify it after password changes:
 
 ```sh
 sysadminctl -autologin status

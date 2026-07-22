@@ -44,21 +44,26 @@ Frontier/Lumen uses a different profile and gateway port. Do not restart it for 
 openclaw --profile finca config validate
 openclaw --profile finca skills check --agent finca
 openclaw --profile finca gateway install
-./scripts/install-finca-watchdog.sh
 ./scripts/install-finca-schedule.sh
 ```
 
 Do not enable the daily schedule until the Operations Finca tools, private bot,
 group id, user allowlist, and production app credential are verified.
 
-## Telegram Watchdog
+## Telegram Recovery
 
-Install the watchdog so Telegram polling is restarted if it stops inside an otherwise healthy gateway:
+Do not install an external Telegram watchdog. OpenClaw owns long-poll recovery
+and channel-health restarts, while each gateway LaunchAgent uses `KeepAlive` and
+`RunAtLoad` for process recovery. External scripts that restart a gateway while
+it is replaying a durable update can lose the reply.
+
+Remove any legacy watchdogs after restoring an older Mac backup:
 
 ```sh
-./scripts/install-telegram-watchdog.sh
-./scripts/install-hotel-watchdog.sh
-./scripts/install-finca-watchdog.sh
+./scripts/remove-external-telegram-watchdogs.sh
+openclaw --profile owlswatch channels status --probe
+openclaw --profile hotel channels status --probe
+openclaw --profile finca channels status --probe
 ```
 
 See `docs/runbooks/telegram-watchdog.md`.
