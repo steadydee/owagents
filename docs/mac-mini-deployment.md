@@ -52,10 +52,20 @@ group id, user allowlist, and production app credential are verified.
 
 ## Telegram Recovery
 
-Do not install an external Telegram watchdog. OpenClaw owns long-poll recovery
+Keep OpenClaw on the current stable release; Hotel requires at least
+`2026.7.1-2` for the polling-liveness and durable-ingress fixes. Do not install
+an external Telegram restart watchdog. OpenClaw owns long-poll recovery
 and channel-health restarts, while each gateway LaunchAgent uses `KeepAlive` and
 `RunAtLoad` for process recovery. External scripts that restart a gateway while
 it is replaying a durable update can lose the reply.
+
+Hotel has a separate read-only observer. It records channel health and accepted
+message metadata, preserves gateway stderr, and alerts on failure/recovery. It
+does not poll Telegram and does not restart OpenClaw.
+
+```sh
+./scripts/install-hotel-telegram-observer.sh install
+```
 
 Remove any legacy watchdogs after restoring an older Mac backup:
 

@@ -61,6 +61,7 @@ Hotel/PMS operations uses a separate profile:
 ```sh
 ./scripts/deploy-hotel-to-mac-mini.sh
 ./scripts/smoke-hotel.sh
+./scripts/install-hotel-telegram-observer.sh install
 openclaw --profile hotel config validate
 openclaw --profile hotel skills check --agent hotel
 ```

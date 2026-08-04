@@ -89,6 +89,9 @@
     "mode": "local",
     "port": 19201,
     "bind": "loopback",
+    "channelHealthCheckMinutes": 1,
+    "channelStaleEventThresholdMinutes": 5,
+    "channelMaxRestartsPerHour": 6,
     "auth": {
       "mode": "token",
       "token": "<generate with openclaw doctor --generate-gateway-token>"
@@ -154,6 +157,9 @@
     "telegram": {
       "enabled": false,
       "botToken": "<set locally only>",
+      "healthMonitor": {
+        "enabled": true
+      },
       "dmPolicy": "allowlist",
       "allowFrom": [
         "<dennis_telegram_user_id>"

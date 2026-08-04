@@ -56,5 +56,6 @@ if [ ! -f "$PROFILE_DIR/openclaw.json" ]; then
 fi
 
 python3 -m py_compile "$WORKSPACE/tools/hotel_pms/server.py"
+"$ROOT/scripts/install-hotel-telegram-observer.sh" install
 echo "Hotel deploy complete. Backup: $BACKUP_DIR"
 echo "Deployed git commit: $(git -C "$ROOT" rev-parse HEAD)"

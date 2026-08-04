@@ -4,6 +4,13 @@ OpenClaw owns Telegram long-poll recovery and channel-health restarts. Each
 gateway also runs under a macOS LaunchAgent with `KeepAlive` and `RunAtLoad`, so
 launchd restores a process that exits. Do not install a second restart loop.
 
+Hotel also has a read-only observer installed as
+`ai.openclaw.hotel.telegram-observer`. It runs every two minutes, calls only
+OpenClaw's channel-status probe, journals accepted-message metadata without
+message bodies, and sends transition-only Telegram alerts. It never calls
+Telegram `getUpdates` and never restarts the gateway. OpenClaw remains the only
+poller and recovery owner.
+
 Check the live profiles with:
 
 ```sh
@@ -18,6 +25,23 @@ OpenClaw durably spools accepted Telegram updates under:
 ~/.openclaw-owlswatch/telegram/ingress-spool-default
 ~/.openclaw-hotel/telegram/ingress-spool-default
 ~/.openclaw-finca/telegram/ingress-spool-default
+```
+
+Hotel monitoring records are stored locally under:
+
+```sh
+~/.openclaw-hotel/logs/gateway.error.log
+~/.openclaw-hotel/logs/telegram-health.jsonl
+~/.openclaw-hotel/logs/telegram-ingress-journal.jsonl
+```
+
+The ingress journal contains only message ID, chat ID, sender ID, and timestamp.
+It intentionally excludes message text and media.
+
+Install or refresh the observer after gateway service regeneration:
+
+```sh
+./scripts/install-hotel-telegram-observer.sh install
 ```
 
 Do not restart a gateway merely because a spooled update is old. A startup
@@ -39,9 +63,9 @@ openclaw --profile finca logs --follow
 ```
 
 If OpenClaw reports false polling stalls during otherwise healthy long-running
-work, tune `channels.telegram.pollingStallThresholdMs` within OpenClaw rather
-than adding a second watchdog. Export diagnostics before manual restarts when
-the failure is repeatable. See the official [Telegram channel guide](https://docs.openclaw.ai/channels/telegram)
+work, upgrade OpenClaw first, then tune `channels.telegram.pollingStallThresholdMs`
+within OpenClaw rather than adding a second watchdog. Export diagnostics before
+manual restarts when the failure is repeatable. See the official [Telegram channel guide](https://docs.openclaw.ai/channels/telegram)
 and [health checks guide](https://docs.openclaw.ai/health).
 
 The gateway services are user LaunchAgents. After a reboot they start when the

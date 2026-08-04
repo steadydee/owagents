@@ -8,6 +8,8 @@ CORREO_WORKSPACE="${CORREO_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-correo
 COBROS_WORKSPACE="${COBROS_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-cobros}"
 FINCA_PROFILE_DIR="${FINCA_PROFILE_DIR:-$HOME/.openclaw-finca}"
 FINCA_WORKSPACE="${FINCA_WORKSPACE:-$HOME/.openclaw/workspace-finca-ops}"
+HOTEL_PROFILE_DIR="${HOTEL_PROFILE_DIR:-$HOME/.openclaw-hotel}"
+HOTEL_WORKSPACE="${HOTEL_WORKSPACE:-$HOME/.openclaw/workspace-hotel-ops}"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Backups/owlswatch-agents/runtime}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$BACKUP_ROOT/$STAMP"
@@ -41,13 +43,24 @@ fi
 if [ -f "$FINCA_PROFILE_DIR/openclaw.json" ]; then
   redact_json "$FINCA_PROFILE_DIR/openclaw.json" "$OUT/finca-openclaw.redacted.json"
 fi
+if [ -f "$HOTEL_PROFILE_DIR/openclaw.json" ]; then
+  redact_json "$HOTEL_PROFILE_DIR/openclaw.json" "$OUT/hotel-openclaw.redacted.json"
+fi
 
-mkdir -p "$OUT/cuenta" "$OUT/cotiza" "$OUT/correo" "$OUT/cobros" "$OUT/finca"
+mkdir -p "$OUT/cuenta" "$OUT/cotiza" "$OUT/correo" "$OUT/cobros" "$OUT/finca" "$OUT/hotel" "$OUT/launch-agents"
 rsync -a --exclude 'memory' --exclude 'spool' --exclude '.openclaw' --exclude '.git' "$CUENTA_WORKSPACE/" "$OUT/cuenta/"
 rsync -a --exclude 'memory' --exclude 'spool' --exclude 'mock' --exclude '.openclaw' "$COTIZA_WORKSPACE/" "$OUT/cotiza/"
 rsync -a --exclude 'memory' --exclude 'tasks' --exclude '.openclaw' "$CORREO_WORKSPACE/" "$OUT/correo/" 2>/dev/null || true
 rsync -a --exclude 'memory' --exclude '.openclaw' "$COBROS_WORKSPACE/" "$OUT/cobros/" 2>/dev/null || true
 rsync -a --exclude 'memory' --exclude 'spool' --exclude 'mock' --exclude '.openclaw' "$FINCA_WORKSPACE/" "$OUT/finca/" 2>/dev/null || true
+rsync -a --exclude 'memory' --exclude 'spool' --exclude 'mock' --exclude '.openclaw' "$HOTEL_WORKSPACE/" "$OUT/hotel/" 2>/dev/null || true
+
+for label in ai.openclaw.hotel ai.openclaw.hotel.telegram-observer ai.openclaw.hotel.daily-summary ai.openclaw.hotel.registro-pickup; do
+  plist="$HOME/Library/LaunchAgents/$label.plist"
+  if [ -f "$plist" ]; then
+    cp "$plist" "$OUT/launch-agents/"
+  fi
+done
 
 tar -C "$BACKUP_ROOT" -czf "$BACKUP_ROOT/$STAMP.tar.gz" "$STAMP"
 rm -rf "$OUT"

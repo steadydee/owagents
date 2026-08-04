@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$ROOT/tools/hotel_pms/server.py"
 
 python3 -m py_compile "$SERVER"
+python3 -m py_compile "$ROOT/scripts/observe-telegram-channel.py"
+"$ROOT/scripts/test-telegram-observer.sh"
 
 tools_json="$(python3 "$SERVER" list)"
 for tool in \
