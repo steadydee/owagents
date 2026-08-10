@@ -57,5 +57,9 @@ fi
 
 python3 -m py_compile "$WORKSPACE/tools/hotel_pms/server.py"
 "$ROOT/scripts/install-hotel-telegram-observer.sh" install
+if launchctl print system/ai.openclaw.hotel >/dev/null 2>&1; then
+  echo "Hotel uses boot-level LaunchDaemons. Refresh them after this deploy with:"
+  echo "  sudo $ROOT/scripts/install-headless-hotel-services.sh install"
+fi
 echo "Hotel deploy complete. Backup: $BACKUP_DIR"
 echo "Deployed git commit: $(git -C "$ROOT" rev-parse HEAD)"

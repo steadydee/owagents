@@ -68,9 +68,26 @@ within OpenClaw rather than adding a second watchdog. Export diagnostics before
 manual restarts when the failure is repeatable. See the official [Telegram channel guide](https://docs.openclaw.ai/channels/telegram)
 and [health checks guide](https://docs.openclaw.ai/health).
 
-The gateway services are user LaunchAgents. After a reboot they start when the
-`agent` macOS account logs in. Keep automatic login enabled on the dedicated
-Mac mini and verify it after password changes:
+OpenClaw's standard macOS installer creates user LaunchAgents, which start only
+after the `agent` account logs in. OpenClaw's own headless guidance recommends a
+custom LaunchDaemon when the gateway must run before login. Install the Hotel
+gateway, observer, daily summary, and Registro pickup as boot-level services on
+the dedicated Mac mini with:
+
+```sh
+sudo ./scripts/install-headless-hotel-services.sh install
+./scripts/install-headless-hotel-services.sh status
+```
+
+The installer runs every process as the unprivileged `agent` account. It
+disables the duplicate user LaunchAgents while the system services are active.
+Uninstalling restores the user LaunchAgents:
+
+```sh
+sudo ./scripts/install-headless-hotel-services.sh uninstall
+```
+
+Automatic login remains a useful fallback and can be checked with:
 
 ```sh
 sysadminctl -autologin status

@@ -6,6 +6,8 @@ ACTION="${1:-install}"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 ENABLED_FILE="$HOME/.openclaw-hotel/hotel-summary.enabled"
 DAILY_LABEL="ai.openclaw.hotel.daily-summary"
+BIN_DIR="$HOME/.openclaw-hotel/bin"
+RUNNER="$BIN_DIR/run-hotel-daily-summary.sh"
 
 unload_one() {
   local label="$1"
@@ -32,8 +34,8 @@ if [ "$ACTION" != "install" ]; then
   exit 2
 fi
 
-mkdir -p "$PLIST_DIR" "$(dirname "$ENABLED_FILE")" /tmp/openclaw
-chmod +x "$ROOT/scripts/run-hotel-daily-summary.sh"
+mkdir -p "$PLIST_DIR" "$(dirname "$ENABLED_FILE")" "$BIN_DIR" /tmp/openclaw
+install -m 700 "$ROOT/scripts/run-hotel-daily-summary.sh" "$RUNNER"
 touch "$ENABLED_FILE"
 
 cat > "$PLIST_DIR/$DAILY_LABEL.plist" <<PLIST
@@ -42,7 +44,7 @@ cat > "$PLIST_DIR/$DAILY_LABEL.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$DAILY_LABEL</string>
-  <key>ProgramArguments</key><array><string>$ROOT/scripts/run-hotel-daily-summary.sh</string></array>
+  <key>ProgramArguments</key><array><string>$RUNNER</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
   <key>RunAtLoad</key><true/>
