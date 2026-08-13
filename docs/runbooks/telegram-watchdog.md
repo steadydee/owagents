@@ -7,7 +7,10 @@ launchd restores a process that exits. Do not install a second restart loop.
 Hotel also has a read-only observer installed as
 `ai.openclaw.hotel.telegram-observer`. It runs every two minutes, calls only
 OpenClaw's channel-status probe, journals accepted-message metadata without
-message bodies, and sends transition-only Telegram alerts. It never calls
+message bodies, and sends transition-only Telegram alerts after an outage has
+remained unhealthy for at least ten minutes. Brief network interruptions
+recover silently. A recovery message is sent only if the matching outage alert
+was successfully delivered. It never calls
 Telegram `getUpdates` and never restarts the gateway. OpenClaw remains the only
 poller and recovery owner.
 

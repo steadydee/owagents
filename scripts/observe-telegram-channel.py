@@ -30,6 +30,7 @@ SEEN_MESSAGE_LIMIT = 2500
 STALE_TRANSPORT_SECONDS = 5 * 60
 STALE_SPOOL_SECONDS = 10 * 60
 REPEAT_ALERT_SECONDS = 6 * 60 * 60
+FAILURE_ALERT_AFTER_SECONDS = 10 * 60
 
 
 def parse_args() -> argparse.Namespace:
@@ -399,20 +400,26 @@ def main() -> int:
 
     previous_health = state.get("health", "unknown")
     consecutive_failures = int(state.get("consecutiveFailures", 0))
+    outage_started_at = float(state.get("outageStartedAtEpoch", 0) or 0)
+    outage_alert_sent = state.get("outageAlertSent") is True
     last_alert_at = float(state.get("lastAlertAtEpoch", 0) or 0)
     alert_kind: Optional[str] = None
 
     if reasons:
+        if not outage_started_at:
+            outage_started_at = now
+            outage_alert_sent = False
         consecutive_failures += 1
-        current_health = "unhealthy" if consecutive_failures >= 2 else "suspect"
+        outage_age = now - outage_started_at
+        current_health = "unhealthy" if outage_age >= FAILURE_ALERT_AFTER_SECONDS else "suspect"
         if current_health == "unhealthy" and (
-            previous_health != "unhealthy" or now - last_alert_at >= REPEAT_ALERT_SECONDS
+            not outage_alert_sent and (previous_health != "unhealthy" or now - last_alert_at >= REPEAT_ALERT_SECONDS)
         ):
             alert_kind = "failure"
     else:
         consecutive_failures = 0
         current_health = "healthy"
-        if previous_health == "unhealthy":
+        if previous_health == "unhealthy" and outage_alert_sent:
             alert_kind = "recovery"
 
     token, chat_id = resolve_alert_config(state_dir, args.chat_id)
@@ -435,7 +442,10 @@ def main() -> int:
             args.dry_run,
         )
 
-    if alert_kind and alert_sent:
+    if alert_kind == "failure" and alert_sent:
+        outage_alert_sent = True
+        last_alert_at = now
+    elif alert_kind == "recovery" and alert_sent:
         last_alert_at = now
 
     snapshot = {
@@ -460,6 +470,8 @@ def main() -> int:
             "lastCheckedAt": snapshot["observedAt"],
             "lastReasons": reasons,
             "lastAlertAtEpoch": last_alert_at,
+            "outageStartedAtEpoch": outage_started_at if reasons else 0,
+            "outageAlertSent": outage_alert_sent if reasons else False,
         }
     )
     atomic_write_json(state_path, state)

@@ -59,6 +59,22 @@ run_observer() {
     --dry-run >/dev/null || true
 }
 
+set_outage_age() {
+  python3 - "$TMP/state/monitor/telegram-health-state.json" "$1" <<'PY'
+import json
+import sys
+import time
+
+path, age = sys.argv[1], float(sys.argv[2])
+with open(path, encoding="utf-8") as handle:
+    state = json.load(handle)
+state["outageStartedAtEpoch"] = time.time() - age
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(state, handle)
+    handle.write("\n")
+PY
+}
+
 run_observer "$TMP/healthy.json"
 grep -q '"health": "healthy"' "$TMP/state/logs/telegram-health.jsonl"
 grep -q '"messageId": 42' "$TMP/state/logs/telegram-ingress-journal.jsonl"
@@ -74,8 +90,20 @@ fi
 
 run_observer "$TMP/unhealthy.json"
 run_observer "$TMP/unhealthy.json"
-grep -q '"health": "unhealthy"' "$TMP/state/logs/telegram-health.jsonl"
-grep -q '"alertKind": "failure"' "$TMP/state/logs/telegram-health.jsonl"
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"health": "suspect"'
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"alertKind": null'
+
+# A brief interruption recovers silently because no failure alert was sent.
+run_observer "$TMP/healthy.json"
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"alertKind": null'
+
+# A sustained interruption alerts once. Recovery is announced only after the
+# corresponding failure alert was successfully delivered.
+run_observer "$TMP/unhealthy.json"
+set_outage_age 601
+run_observer "$TMP/unhealthy.json"
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"health": "unhealthy"'
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"alertKind": "failure"'
 
 run_observer "$TMP/healthy.json"
 tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"alertKind": "recovery"'
