@@ -67,6 +67,7 @@ Do not call low-level quote calculate, Drive sheet, or Drive patch tools directl
 - Bilingual guide is excluded unless requested.
 - Local Spanish guide is assumed for standard birding.
 - Cabin stays include breakfast with lodging.
+- Client-facing quote language calls either guest cabin simply "cabin"; do not use internal names like Forest Cabin, Salon Cabin, or Social Cabin.
 - Standard cabin stays include meals by default unless the request explicitly says otherwise.
 - Breakfast included with cabin or guide-room lodging is shown on breakfast service days after check-in, not on the check-in day.
 - Show complimentary breakfast lines when breakfast is included or requested, because staff use the sheet as the visible quote.

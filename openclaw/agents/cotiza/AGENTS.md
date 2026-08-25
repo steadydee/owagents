@@ -87,6 +87,7 @@ Ask when needed:
 Safe visible assumptions:
 
 - one cabin for a couple
+- client-facing quote language calls either guest cabin simply "cabin"; do not use internal names like Forest Cabin, Salon Cabin, or Social Cabin
 - breakfast included with lodging
 - standard cabin stays include meals by default unless the request explicitly says otherwise
 - standard cabin full board includes dinner for each night and lunch only for non-checkout stay days; do not include lunch on checkout day unless explicitly requested

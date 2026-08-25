@@ -2217,7 +2217,7 @@ def mock_calculate(payload: dict[str, Any]) -> dict[str, Any]:
     line_items: list[dict[str, Any]] = []
     if lodging_requested:
         line_items.append({
-            "description": "Cabin lodging",
+            "description": "Cabin",
             "notes": "Rate is for two people and includes breakfast.",
             "sourceRule": f"{year} cabin operator net" if audience == "operator" else f"{year} cabin rack",
             "unitPriceCop": lodging_rate,
@@ -3393,7 +3393,7 @@ def is_client_included_breakfast_item(item: dict[str, Any]) -> bool:
 
 def quote_line_row(item: dict[str, Any]) -> list[Any]:
     return [
-        display_description(item.get("description") or item.get("name")),
+        "Cabin" if is_cabin_item(item) else display_description(item.get("description") or item.get("name")),
         display_notes(item),
         present_value(item.get("unitPriceCop")),
         present_value(item.get("quantity")),

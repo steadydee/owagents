@@ -479,8 +479,8 @@ def test_sheet_values_group_cabin_quote_by_day_without_checkout_lunch():
     dec29_rows = quote_rows[dec29_index + 1 : next(i for i, row in enumerate(quote_rows) if i > dec29_index and row and row[0] == "Dec 30 2026")]
     breakfast = next(row for row in dec29_rows if row[0] == "Client Breakfast")
     lunch = next(row for row in dec29_rows if row[0] == "Client Lunch")
-    cabin = next(row for row in dec29_rows if row[0] == "Forest Cabin")
-    assert dec29_rows[0][0] == "Forest Cabin"
+    cabin = next(row for row in dec29_rows if row[0] == "Cabin")
+    assert dec29_rows[0][0] == "Cabin"
     assert breakfast[2] == 0
     assert breakfast[4] == 0
     assert lunch[3] == 2
@@ -565,24 +565,24 @@ def test_sheet_values_show_lodging_breakfasts_and_no_unrequested_guide_lunch_or_
     feb5 = day_descriptions("Feb 5 2027")
     feb6 = day_descriptions("Feb 6 2027")
 
-    assert feb4.count("Forest Cabin") == 1
+    assert feb4.count("Cabin") == 1
     assert feb4.count("Guide room") == 1
-    assert feb4[:2] == ["Forest Cabin", "Guide room"]
+    assert feb4[:2] == ["Cabin", "Guide room"]
     assert "Client Breakfast" not in feb4
     assert "Guide Breakfast" not in feb4
     assert "Guide Lunch (Discounted)" not in feb4
     assert all("Driver" not in item for item in feb4 + feb5 + feb6)
 
-    assert feb5.count("Forest Cabin") == 1
+    assert feb5.count("Cabin") == 1
     assert feb5.count("Guide room") == 1
-    assert feb5[:2] == ["Forest Cabin", "Guide room"]
+    assert feb5[:2] == ["Cabin", "Guide room"]
     assert "Client Breakfast" in feb5
     assert "Guide Breakfast" in feb5
     assert "Client Dinner" in feb5
     assert "Guide Dinner" in feb5
     assert "Guide Lunch (Discounted)" not in feb5
 
-    assert "Forest Cabin" not in feb6
+    assert "Cabin" not in feb6
     assert "Guide room" not in feb6
     assert "Client Breakfast" in feb6
     assert "Guide Breakfast" in feb6
@@ -617,6 +617,32 @@ def test_sheet_values_keep_quote_tab_to_five_printable_columns():
 
     assert max(len(row) for row in quote_rows) <= 5
     assert quote_rows[0][4].startswith("=IMAGE(")
+
+
+def test_sheet_values_display_internal_cabin_names_as_cabin():
+    data = {
+        "quoteNumber": "Q-2026-CABIN-NAMES",
+        "arrivalDate": "2027-02-04",
+        "departureDate": "2027-02-05",
+        "guestCount": 2,
+        "calculation": {
+            "currency": "COP",
+            "lineItems": [
+                {"serviceCode": "salon_cabin", "description": "Salon Cabin", "unitPriceCop": 880000, "quantity": 1, "totalCop": 880000},
+                {"serviceCode": "social_cabin", "description": "Social Cabin", "unitPriceCop": 880000, "quantity": 1, "totalCop": 880000},
+            ],
+            "subtotalCop": 1760000,
+            "discountCop": 0,
+            "totalCop": 1760000,
+        },
+    }
+
+    quote_rows = server.sheet_values(data)["Quote"]
+    descriptions = [row[0] for row in quote_rows if row and row[0]]
+
+    assert "Salon Cabin" not in descriptions
+    assert "Social Cabin" not in descriptions
+    assert descriptions.count("Cabin") == 2
 
 
 def test_quote_xlsx_sets_one_page_print_layout():
