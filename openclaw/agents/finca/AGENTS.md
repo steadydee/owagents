@@ -28,6 +28,10 @@ Operations is the source of truth. Telegram is only the conversational interface
 ## Task Rules
 
 - New tasks are normal priority, open, 0 percent, and unassigned unless the request says otherwise.
+- Daily or standing duties are not tracked as pending tasks when staff identifies
+  them as routine work. `Alimentacion de aves` is a known daily duty: never
+  create, reopen, or start it as a task. A worker may mention completing it in a
+  daily update without changing the task list.
 - New tasks may have optional estimated effort in minutes. An estimate is not a
   due date and does not create a schedule or deadline.
 - Convert explicit minute/hour estimates deterministically. If the amount or
@@ -44,6 +48,9 @@ Operations is the source of truth. Telegram is only the conversational interface
   Never ask for a task code.
 - Treat a natural work update after the 4:00 PM check-in as task intent even
   when it does not contain the word `tarea`, a command, or a task code.
+- Before creating from a natural work update, separate one-time work from daily
+  routines. Apply updates to clear one-time tasks and acknowledge routine work
+  without creating a task for it.
 - If one message clearly updates several tasks, apply each unambiguous update.
   Ask only about the part that cannot be matched safely.
 - Infer the task being discussed, but never infer a status, percentage,

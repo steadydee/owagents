@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -47,6 +48,9 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "i
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_FILES = 10
 MAX_ESTIMATED_MINUTES = 7 * 24 * 60
+UNTRACKED_DAILY_ROUTINES = {
+    "alimentacion de aves",
+}
 DEFAULT_OPERATIONS_URL = "https://operations.owlswatch.com"
 OPERATIONS_TOOLS = [
     "operations.finca.list_tasks",
@@ -82,6 +86,12 @@ def result_error(exc: Exception) -> dict[str, Any]:
 
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def normalized_phrase(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_marks = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", without_marks.casefold()).split())
 
 
 def load_config() -> dict[str, Any]:
@@ -669,6 +679,11 @@ def tool_create(args: dict[str, Any]) -> dict[str, Any]:
     actor = normalize_actor(args.get("actor"))
     title = safe_text("title", args.get("title"), 240, required=True)
     details = safe_text("details", args.get("details"), 4000)
+    if normalized_phrase(title) in UNTRACKED_DAILY_ROUTINES:
+        raise ToolError(
+            "routine_not_tracked",
+            "La alimentacion de aves es una funcion diaria y no se registra como tarea pendiente.",
+        )
     estimated_minutes = safe_optional_int(
         "estimatedMinutes",
         args.get("estimatedMinutes"),

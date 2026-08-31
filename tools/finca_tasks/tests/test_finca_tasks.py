@@ -78,6 +78,16 @@ class FincaTaskToolTests(unittest.TestCase):
         created = self.create("Limpiar ventanas", "telegram--1001-9", estimatedMinutes=180)["task"]
         self.assertEqual(created["estimatedMinutes"], 180)
 
+    def test_create_rejects_known_daily_routine(self):
+        for index, title in enumerate(
+            ("Alimentacion de aves", "ALIMENTACION DE AVES", "Alimentación de aves"),
+            start=1,
+        ):
+            with self.subTest(title=title):
+                with self.assertRaises(server.ToolError) as raised:
+                    self.create(title, f"telegram--1001-routine-{index}")
+                self.assertEqual(raised.exception.code, "routine_not_tracked")
+
     def test_create_rejects_invalid_estimated_minutes(self):
         for invalid in (0, -1, 10081, 1.5, True, "180"):
             with self.subTest(invalid=invalid):
