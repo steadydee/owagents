@@ -1,6 +1,6 @@
 ---
 name: intake-receipt
-description: Telegram receipt intake for Owl's Watch Operations. Creates expense drafts only, with durable photo spooling, album buffering, Operations upload, strict receipt extraction, direct Telegram confirmation, and memory logging.
+description: Telegram receipt intake for Owl's Watch Operations. Creates expense drafts only, with durable photo spooling, album buffering, Operations upload, strict receipt extraction, one final Telegram response, and memory logging.
 ---
 
 # intake-receipt
@@ -17,7 +17,7 @@ The skill is the workflow. All external side effects go through the configured `
 
 Do not request, read, log, copy, or expose API tokens. Tool layers enforce token lookup.
 
-Do not use OpenClaw `--announce` delivery for Telegram. Telegram replies go only through `owlswatch_telegram_send_message`, which calls the direct Bot API.
+Do not call OpenClaw's generic `message` tool or any direct Telegram send-message tool. Return one normal final response; OpenClaw owns delivery back to the inbound Telegram topic.
 
 ## When to run
 
@@ -164,13 +164,13 @@ Use this minimal payload shape:
 
 The payload should include null values rather than guessed values when extraction is unclear. The review status must remain draft or pending review.
 
-### Step 7 - Reply on Telegram
+### Step 7 - Return the final response
 
-Compose a brief English message and call `owlswatch_telegram_send_message`, unless the sender explicitly asked for another language.
+Compose one brief English final response, unless the sender explicitly asked for another language.
 
-When running in a Telegram forum topic, include both the group `chat_id` and the inbound topic `message_thread_id` so the confirmation returns to the Receipts topic. If a source `message_id` is available, include it as `reply_to_message_id`.
+Return it as the assistant's final response. OpenClaw routes it to the same group topic as the inbound receipt.
 
-Do not send progress messages such as `Processing...`, `Shelling...`, or status narratives. Progress should be shown only through `owlswatch_telegram_send_chat_action`. Send one final success or error message.
+Do not send progress messages such as `Processing...`, `Reading instructions...`, `Shelling...`, emoji-only acknowledgements, or status narratives. Progress may be shown only through `owlswatch_telegram_send_chat_action`. Return exactly one final success or error response.
 
 High confidence Spanish template:
 

@@ -65,7 +65,6 @@
             "owlswatch_operations_create_expense_draft",
             "owlswatch_telegram_get_file",
             "owlswatch_telegram_download_file",
-            "owlswatch_telegram_send_message",
             "owlswatch_telegram_send_chat_action",
             "owlswatch_vision_extract_receipt",
             "owlswatch_album_buffer_check",
@@ -73,6 +72,7 @@
             "owlswatch_memory_log"
           ],
           "deny": [
+            "message",
             "exec",
             "browser",
             "gateway",
