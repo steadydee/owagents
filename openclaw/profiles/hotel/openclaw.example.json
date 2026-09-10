@@ -100,6 +100,7 @@
   "mcp": {
     "servers": {
       "hotel_pms": {
+        "enabled": false,
         "command": "node",
         "args": [
           "~/.openclaw/workspace-hotel-ops/tools/hotel_pms/openclaw-plugin.js"

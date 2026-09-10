@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$ROOT/tools/hotel_pms/server.py"
+PROFILE="$ROOT/openclaw/profiles/hotel/openclaw.example.json"
 
 python3 -m py_compile "$SERVER"
 python3 -m py_compile "$ROOT/scripts/observe-telegram-channel.py"
@@ -32,5 +33,18 @@ do
     exit 1
   }
 done
+
+python3 - "$PROFILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+profile = json.loads(Path(sys.argv[1]).read_text())
+mcp_server = profile["mcp"]["servers"]["hotel_pms"]
+plugins = profile["plugins"]["entries"]
+
+assert mcp_server.get("enabled") is False, "legacy Hotel MCP runner must stay disabled"
+assert plugins.get("hotel-pms", {}).get("enabled") is True, "native Hotel plugin must stay enabled"
+PY
 
 echo "Hotel smoke passed."
