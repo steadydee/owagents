@@ -32,6 +32,10 @@ Forbidden:
 
 ## Cuenta
 
+The trusted intake plugin reads only its fixed, versioned `intake-receipt/SKILL.md`
+at registration and injects it for `agentId: cuenta` via `before_prompt_build`.
+No model-facing filesystem permission is added; user input cannot select the file.
+
 Allowed:
 
 - Download/spool Telegram receipt photos.

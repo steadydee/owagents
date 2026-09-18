@@ -1,10 +1,15 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/core";
 import { spawn } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { createReceiptPromptHook } from "./prompt-context.mjs";
 
-const SERVER = "/Users/agent/.openclaw/workspace-owlswatch/tools/owlswatch_intake/server.py";
+const TOOL_DIR = dirname(fileURLToPath(import.meta.url));
+const SERVER = resolve(TOOL_DIR, "server.py");
 const BASE_ENV = {
-  OWLSWATCH_WORKSPACE: "/Users/agent/.openclaw/workspace-owlswatch",
-  OPENCLAW_CONFIG_PATH: "/Users/agent/.openclaw-owlswatch/openclaw.json"
+  OWLSWATCH_WORKSPACE: resolve(TOOL_DIR, "../.."),
+  OPENCLAW_CONFIG_PATH: process.env.OPENCLAW_CONFIG_PATH || resolve(homedir(), ".openclaw-owlswatch/openclaw.json")
 };
 
 const toolSchemas = {
@@ -81,6 +86,7 @@ export default definePluginEntry({
   name: "Owl's Watch Intake Tools",
   description: "Narrow first-class tools for Cuenta receipt intake.",
   register(api) {
+    api.on("before_prompt_build", createReceiptPromptHook(BASE_ENV.OWLSWATCH_WORKSPACE));
     for (const [name, spec] of Object.entries(toolSchemas)) {
       api.registerTool({
         name,
