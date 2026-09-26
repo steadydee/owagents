@@ -10,8 +10,8 @@ business workflow. Increasing the compaction reserve alone is not a repair.
 - Load the canonical skill from the trusted plugin; filesystem tools stay denied.
 - Enforce three searches and three thread reads per trusted run, across prompt rebuilds.
 - Limit search results to five and thread responses to 24K characters, without
-  duplicated rawText. Prepare re-reads full threads server-side for dispute and
-  duplicate validation; oversized sources require review.
+  duplicated rawText. Prepare uses the full server-retained sourceId for dispute
+  and duplicate validation, preserving the newly merged immutable preparations.
 - Targeted billing-identity searches need not contain accounting vocabulary.
 - Bound subprocess duration/output; uncertain write outcomes must be checked,
   never blindly retried. Missing data receives one concise question.
@@ -22,7 +22,12 @@ spool, secrets, session history, and existing poller ownership. Recover exhauste
 topic sessions using the supported gateway sessions.reset API. This is not an
 automatic end-to-end recovery system.
 
-## Next architecture, not yet implemented here
+## Architecture direction
+
+The concurrent platform-hardening release introduced durable source/preparation
+and side-effect journals. This patch preserves those changes. The broader
+end-to-end deadline/outbox architecture below still needs acceptance testing;
+it is not implied by a channel health probe.
 
 Use OpenClaw for conversation/intent, with a durable business job runner owning
 search budgets, validation, artifact creation, retries and notification. Persist

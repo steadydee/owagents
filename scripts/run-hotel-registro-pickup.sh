@@ -7,6 +7,10 @@ ENABLED_FILE="${ENABLED_FILE:-$HOME/.openclaw-hotel/registro-pickup.enabled}"
 LOG_DIR="${LOG_DIR:-/tmp/openclaw}"
 LOG_FILE="${LOG_FILE:-$LOG_DIR/hotel-registro-pickup.log}"
 FORCE="${1:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw-hotel/openclaw.json}"
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$HOME/.openclaw-hotel}"
+export TZ="America/Bogota"
 STAMP_DIR="${STAMP_DIR:-$HOME/.openclaw-hotel/schedule-stamps}"
 STAMP_FILE="$STAMP_DIR/hotel-registro-pickup-$(date '+%Y-%m-%d').stamp"
 SCHEDULED_MINUTES=$((17 * 60))
@@ -33,12 +37,7 @@ fi
 
 {
   printf '\n%s hotel registro pickup start\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-  "$OPENCLAW_BIN" --profile "$PROFILE" agent \
-    --agent hotel \
-    --session-id hotel-registro-pickup \
-    --thinking medium \
-    --timeout 1800 \
-    --message "Scheduled run: registro_daily_pickup. Call hotel_registro_daily_pickup with submitTra=true, notify=true, maxRecords=25, daysBack=7, and daysAhead=2. This should catch documents uploaded after checkout, extract uploaded Registro documents, and submit TRA/SIRE only when ready and only through the receipt-gated configured submitter. The tool must keep Telegram silent for successful, skipped, already-complete, and empty runs; it sends one staff-safe Spanish alert only when needsReview or errors is non-empty. Do not send an additional Telegram message. Do not include passport numbers, document numbers, birth dates, raw OCR, document URLs, prices, balances, deposits, or payment details."
+  python3 "$SCRIPT_DIR/run-hotel-tool-job.py"
   printf '%s hotel registro pickup end\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 } >> "$LOG_FILE" 2>&1
 

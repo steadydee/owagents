@@ -8,7 +8,7 @@ export function callPythonTool(server, env, name, args, timeoutMs = name.include
     const fail = code => {
       child.kill("SIGKILL");
       finish({ ok: false, error: { code, retryable: false, message: name.includes("create_")
-        ? "The write outcome is unconfirmed. Report this and check existing artifacts before retrying."
+        ? "The write outcome is unconfirmed. Report this; reconcile only the same preparedId, never prepare a replacement."
         : "The lookup failed. Stop and ask for missing information or report that the source could not be read." } });
     };
     const timer = setTimeout(() => fail("tool_timeout"), timeoutMs);

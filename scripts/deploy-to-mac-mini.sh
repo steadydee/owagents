@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT/scripts/assert-release-ready.sh"
+"$ROOT/scripts/smoke-platform.sh"
 "$ROOT/scripts/remove-external-telegram-watchdogs.sh"
 
 MAIN_WORKSPACE="${MAIN_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-main}"
@@ -10,6 +11,7 @@ CUENTA_WORKSPACE="${CUENTA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch}"
 COTIZA_WORKSPACE="${COTIZA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-cotiza}"
 CORREO_WORKSPACE="${CORREO_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-correo}"
 COBROS_WORKSPACE="${COBROS_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-cobros}"
+REGISTRO_WORKSPACE="${REGISTRO_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch-registro}"
 PROFILE="${OPENCLAW_PROFILE:-owlswatch}"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Backups/owlswatch-agents/deploy}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -121,6 +123,23 @@ if [ ! -f "$COBROS_WORKSPACE/MEMORY.md" ]; then
 fi
 
 echo "Validating deployed source"
+backup_path "$REGISTRO_WORKSPACE/tools/registro_compliance" registro-tools
+backup_path "$REGISTRO_WORKSPACE/skills" registro-skills
+mkdir -p "$REGISTRO_WORKSPACE/tools/registro_compliance" "$REGISTRO_WORKSPACE/skills"
+rsync -a --delete --exclude '__pycache__' --exclude '.pytest_cache' "$ROOT/tools/registro_compliance/" "$REGISTRO_WORKSPACE/tools/registro_compliance/"
+rsync -a "$ROOT/openclaw/agents/registro/skills/" "$REGISTRO_WORKSPACE/skills/"
+for file in AGENTS.md TOOLS.md IDENTITY.md SOUL.md README.md; do
+  backup_path "$REGISTRO_WORKSPACE/$file" registro
+  cp "$ROOT/openclaw/agents/registro/$file" "$REGISTRO_WORKSPACE/$file"
+done
+# Native plugins import the installed SDK. rsync replaces each source directory,
+# so recreate this runtime-only link after every deployment.
+OPENCLAW_GLOBAL_PACKAGE="${OPENCLAW_GLOBAL_PACKAGE:-$(npm root -g 2>/dev/null)/openclaw}"
+test -d "$OPENCLAW_GLOBAL_PACKAGE" || { echo "OpenClaw SDK is missing" >&2; exit 1; }
+for tool_dir in "$CUENTA_WORKSPACE/tools/owlswatch_intake" "$COTIZA_WORKSPACE/tools/owlswatch_quotes" "$CORREO_WORKSPACE/tools/owlswatch_email" "$COBROS_WORKSPACE/tools/owlswatch_cobros" "$REGISTRO_WORKSPACE/tools/registro_compliance"; do
+  mkdir -p "$tool_dir/node_modules"
+  ln -sfn "$OPENCLAW_GLOBAL_PACKAGE" "$tool_dir/node_modules/openclaw"
+done
 python3 -m py_compile "$CUENTA_WORKSPACE/tools/owlswatch_intake/server.py"
 python3 -m py_compile "$COTIZA_WORKSPACE/tools/owlswatch_quotes/server.py"
 python3 -m py_compile "$CORREO_WORKSPACE/tools/owlswatch_email/server.py"
@@ -135,3 +154,5 @@ openclaw --profile "$PROFILE" skills check --agent cobros
 echo "Deploy complete. Backup: $BACKUP_DIR"
 echo "Deployed git commit: $(git -C "$ROOT" rev-parse HEAD)"
 echo "Restart with: openclaw --profile $PROFILE gateway restart"
+
+python3 "$ROOT/scripts/record-release.py" --profile owlswatch --workspace "$MAIN_WORKSPACE" --workspace "$CUENTA_WORKSPACE" --workspace "$COTIZA_WORKSPACE" --workspace "$CORREO_WORKSPACE" --workspace "$COBROS_WORKSPACE" --workspace "$REGISTRO_WORKSPACE"

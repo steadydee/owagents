@@ -5,7 +5,7 @@ OpenClaw tools for the Hotel operations agent.
 The tools call the PMS app tool runtime using short-lived HMAC machine tokens.
 They do not connect to the PMS database directly and they do not send messages
 to guests. Most tools are read-only; reservation creation is guarded by a
-two-step PMS-prepared token and simple staff `sí` confirmation.
+PMS-prepared token and an authenticated native Telegram confirmation command.
 
 ## Tools
 
@@ -43,11 +43,21 @@ two-step PMS-prepared token and simple staff `sí` confirmation.
 tool with a prepare-only token. It stores the returned `preparedToken` in the
 workspace spool and returns only a staff-safe summary plus hidden pending id.
 
-`hotel_pms_create_reservation` loads the pending prepared token by hidden
-pending id after staff replies `sí`, then calls the PMS-owned
-`agent_create_reservation` tool with a guarded write token. It never accepts an
-arbitrary prepared payload from the model. Legacy explicit code confirmation is
-still accepted for backwards compatibility.
+The native `/confirmar_reserva <reference>` command receives OpenClaw's
+`isAuthorizedSender`, sender, agent, session and conversation context directly.
+Only an authorized Telegram user who prepared that exact draft in that same
+chat/topic/session can approve it. The plugin injects context via a separate
+subprocess environment; no model parameter is trusted for authorization.
+The draft hash binds the signed PMS payload, confirmation code, request,
+expiry, and sender/conversation. A durable exclusive claim permits one create;
+replays return the saved result. A crash/timeout after claiming blocks further
+writes and directs staff to PMS for reconciliation.
+
+`hotel_pms_create_reservation` is retained for compatibility as a read of a
+previously confirmed result. Model `si`, legacy codes, booleans and fabricated
+identity fields cannot approve. Prepare without trusted host context returns
+an actionable PMS review link. Old drafts without a trusted binding must be
+prepared again. The native command is intentionally outside the model catalog.
 
 The Hotel agent must never expose prepared tokens, payload hashes, prices,
 balances, deposits, or payment details.
@@ -125,3 +135,33 @@ Telegram or agent memory.
 - `SIRE_AUTH_SCHEME` optional, defaults to `Bearer`
 
 Tokens and secrets are runtime-only. Do not commit them.
+
+## Durable recovery and routing
+
+`state/government-submissions/` holds private atomic journals (mode 0600),
+locked across processes by property/registration/submission type. The first
+claim and every external step are fsynced before the write. TRA primary and
+companion references are persisted separately. Confirmed steps are reused; a
+surviving `sending` or `unknown` step is never blindly repeated. Companion API
+responses must explicitly report success; unrecognized responses require review.
+
+A verified provider receipt is persisted before PMS recording. If PMS is
+unavailable, the same tool operation retries only receipt recording. This is
+`government_receipt_pending`. `government_outcome_unknown` means the provider
+may have accepted a write. `government_payload_changed` blocks reuse with
+changed data. Both require an operator to inspect the portal and reconcile PMS
+and the private journal using actual evidence; never delete a journal or use a
+new identifier to force replay. Partial TRA operations retain the primary and
+all known companion results for that review. There is no model-facing reset or
+reconciliation override. Keep journals across deployments and protect them as
+sensitive runtime state. This is one-host locking; run one active submitter per
+property until PMS owns a distributed claim.
+
+The tool rejects Telegram chat/topic overrides different from
+`HOTEL_TELEGRAM_NOTIFY_CHAT_ID`/`HOTEL_TELEGRAM_NOTIFY_THREAD_ID`. Interactive
+replies continue through OpenClaw's authenticated delivery route.
+
+Verification: `python3 -m unittest discover -s tools/hotel_pms/tests` and
+`node --test tools/hotel_pms/tests/*.test.mjs`. Tests use synthetic data and
+fake I/O, including a killed process after a simulated provider write, concurrent
+claims, receipt-only recovery, forged approvals and destination overrides.

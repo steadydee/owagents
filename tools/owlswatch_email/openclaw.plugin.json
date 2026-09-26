@@ -16,7 +16,8 @@
       "owlswatch_email_list_open_tasks",
       "owlswatch_email_create_gmail_draft",
       "owlswatch_email_send_telegram_message",
-      "owlswatch_email_memory_log"
+      "owlswatch_email_memory_log",
+      "owlswatch_email_acknowledge_item"
     ]
   },
   "configSchema": {

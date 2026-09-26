@@ -82,8 +82,10 @@ render_all() {
 disable_user_service() {
   local label="$1"
   local source="$SOURCE_DIR/$label.plist"
-  launchctl bootout "gui/$TARGET_UID" "$source" >/dev/null 2>&1 || true
-  launchctl disable "gui/$TARGET_UID/$label" >/dev/null 2>&1 || true
+  if launchctl print "gui/$TARGET_UID/$label" >/dev/null 2>&1; then
+    launchctl bootout "gui/$TARGET_UID" "$source"
+  fi
+  launchctl disable "gui/$TARGET_UID/$label"
 }
 
 enable_user_service() {
@@ -104,8 +106,8 @@ install_all() {
     disable_user_service "$label"
     destination="$DAEMON_DIR/$label.plist"
     launchctl bootout "system/$label" >/dev/null 2>&1 || true
-    launchctl bootstrap system "$destination"
     launchctl enable "system/$label"
+    launchctl bootstrap system "$destination"
   done
 
   echo "Installed boot-level Hotel services for $TARGET_USER."

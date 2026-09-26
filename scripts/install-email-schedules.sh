@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ACTION="${1:-install}"
-PLIST_DIR="$HOME/Library/LaunchAgents"
-ENABLED_FILE="$HOME/.openclaw-owlswatch/email-agent.enabled"
+RUNTIME_BIN="${OWLSWATCH_RUNTIME_BIN:-$HOME/.openclaw-owlswatch/bin}"
+LOG_DIR="${OWLSWATCH_SCHEDULE_LOG_DIR:-$HOME/.openclaw-owlswatch/logs}"
+PLIST_DIR="${OWLSWATCH_LAUNCHAGENT_DIR:-$HOME/Library/LaunchAgents}"
+ENABLED_FILE="${ENABLED_FILE:-$HOME/.openclaw-owlswatch/email-agent.enabled}"
 POLL_LABEL="ai.openclaw.owlswatch.email-poll"
 DAILY_LABEL="ai.openclaw.owlswatch.email-daily-summary"
 UNANSWERED_LABEL="ai.openclaw.owlswatch.email-unanswered"
@@ -36,8 +38,10 @@ if [ "$ACTION" != "install" ]; then
   exit 2
 fi
 
-mkdir -p "$PLIST_DIR" "$(dirname "$ENABLED_FILE")" /tmp/openclaw
-chmod +x "$ROOT/scripts/run-correo-poll.sh" "$ROOT/scripts/run-correo-daily-summary.sh" "$ROOT/scripts/run-correo-unanswered.sh"
+mkdir -p "$PLIST_DIR" "$(dirname "$ENABLED_FILE")" "$RUNTIME_BIN" "$LOG_DIR"
+for script in run-correo-poll.sh run-correo-daily-summary.sh run-correo-unanswered.sh; do
+  install -m 755 "$ROOT/scripts/$script" "$RUNTIME_BIN/$script"
+done
 touch "$ENABLED_FILE"
 
 cat > "$PLIST_DIR/$POLL_LABEL.plist" <<PLIST
@@ -46,11 +50,11 @@ cat > "$PLIST_DIR/$POLL_LABEL.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$POLL_LABEL</string>
-  <key>ProgramArguments</key><array><string>$ROOT/scripts/run-correo-poll.sh</string></array>
+  <key>ProgramArguments</key><array><string>$RUNTIME_BIN/run-correo-poll.sh</string></array>
   <key>StartInterval</key><integer>1800</integer>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/tmp/openclaw/owlswatch-email-poll.stdout.log</string>
-  <key>StandardErrorPath</key><string>/tmp/openclaw/owlswatch-email-poll.stderr.log</string>
+  <key>StandardOutPath</key><string>$LOG_DIR/owlswatch-email-poll.stdout.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIR/owlswatch-email-poll.stderr.log</string>
 </dict>
 </plist>
 PLIST
@@ -61,12 +65,12 @@ cat > "$PLIST_DIR/$DAILY_LABEL.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$DAILY_LABEL</string>
-  <key>ProgramArguments</key><array><string>$ROOT/scripts/run-correo-daily-summary.sh</string></array>
+  <key>ProgramArguments</key><array><string>$RUNTIME_BIN/run-correo-daily-summary.sh</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/tmp/openclaw/owlswatch-email-daily-summary.stdout.log</string>
-  <key>StandardErrorPath</key><string>/tmp/openclaw/owlswatch-email-daily-summary.stderr.log</string>
+  <key>StandardOutPath</key><string>$LOG_DIR/owlswatch-email-daily-summary.stdout.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIR/owlswatch-email-daily-summary.stderr.log</string>
 </dict>
 </plist>
 PLIST
@@ -77,12 +81,12 @@ cat > "$PLIST_DIR/$UNANSWERED_LABEL.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$UNANSWERED_LABEL</string>
-  <key>ProgramArguments</key><array><string>$ROOT/scripts/run-correo-unanswered.sh</string></array>
+  <key>ProgramArguments</key><array><string>$RUNTIME_BIN/run-correo-unanswered.sh</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/tmp/openclaw/owlswatch-email-unanswered.stdout.log</string>
-  <key>StandardErrorPath</key><string>/tmp/openclaw/owlswatch-email-unanswered.stderr.log</string>
+  <key>StandardOutPath</key><string>$LOG_DIR/owlswatch-email-unanswered.stdout.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIR/owlswatch-email-unanswered.stderr.log</string>
 </dict>
 </plist>
 PLIST

@@ -14,11 +14,12 @@ Allowed tool families:
 Reservation creation tools:
 
 - `hotel_pms_prepare_reservation`: validates normalized staff intent and returns
-  a staff-safe summary plus hidden pending confirmation id. It does not create a
+  a staff-safe summary plus a native confirmation command. It does not create a
   reservation.
-- `hotel_pms_create_reservation`: creates only from a pending prepared token
-  after staff replies `sí`. It does not accept arbitrary reservation
-  payloads.
+- `hotel_pms_create_reservation`: returns an already confirmed result. It
+  cannot approve a pending draft. Only the authenticated native command
+  `/confirmar_reserva <reference>` authorizes creation, bound to the preparer,
+  conversation/topic, payload hash, and expiry.
 
 Registro tools:
 
@@ -36,11 +37,16 @@ Telegram group.
 Forbidden:
 
 - PMS write tools other than `hotel_pms_create_reservation`.
-- Registro submission tools that claim SIRE/TRA completion. Registro extraction
-  is allowed; government submission is not live yet.
+- Claiming government submission without a verified receipt. Use only
+  `hotel_registro_submit_government`; unknown outcomes block blind replay.
 - Reservation update, cancel, delete, checklist, guest-message, finance, admin,
   or arbitrary PMS write tools.
 - Direct database access.
 - Guest messaging.
 - Email or WhatsApp sending.
 - Broad shell, browser, web, filesystem, cron, node, canvas, or gateway tools.
+
+Government submission tools journal each external step before writing. A known
+receipt with a PMS write failure can be retried without resubmission. Unknown
+outcomes require portal/PMS reconciliation. Telegram notifications are pinned
+to the configured staff chat and topic; destination overrides are rejected.

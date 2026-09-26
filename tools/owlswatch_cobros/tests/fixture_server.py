@@ -1,4 +1,8 @@
 import json, os, sys
+from pathlib import Path
+if sys.argv[1] == 'catalog':
+    print((Path(__file__).parent / 'catalog-fixture.json').read_text())
+    raise SystemExit(0)
 name, args = sys.argv[2], json.load(sys.stdin)
 with open(os.environ['COBROS_UAT_CALLS'], 'a') as f:
     f.write(json.dumps({'name': name, 'args': args}) + '\n')

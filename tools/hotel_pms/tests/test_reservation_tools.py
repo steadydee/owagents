@@ -15,10 +15,13 @@ SPEC.loader.exec_module(server)
 class ReservationToolValidationTest(unittest.TestCase):
     def setUp(self):
         self._alert_state_temp = tempfile.TemporaryDirectory()
+        self._old_workspace = server.WORKSPACE
+        server.WORKSPACE = pathlib.Path(self._alert_state_temp.name)
         self._old_alert_state = server.REGISTRO_PICKUP_ALERT_STATE
         server.REGISTRO_PICKUP_ALERT_STATE = pathlib.Path(self._alert_state_temp.name) / "registro-alerts.json"
 
     def tearDown(self):
+        server.WORKSPACE = self._old_workspace
         server.REGISTRO_PICKUP_ALERT_STATE = self._old_alert_state
         self._alert_state_temp.cleanup()
 
@@ -807,7 +810,7 @@ class ReservationToolValidationTest(unittest.TestCase):
         self.assertEqual(recorded[0]["receiptReference"], "TRA-RECEIPT-1")
         self.assertEqual(recorded[0]["idempotencyKey"], "registro:reg-1:tra")
 
-    def test_government_submitter_tra_missing_receipt_records_failed_not_submitted(self):
+    def test_government_submitter_tra_missing_receipt_blocks_blind_retry(self):
         recorded: list[dict] = []
 
         def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
@@ -849,10 +852,10 @@ class ReservationToolValidationTest(unittest.TestCase):
             server.government_submitter_enabled = old_enabled
             server.call_tra_submitter = old_tra
 
-        self.assertEqual(result["status"], "partial_failure")
-        self.assertEqual(result["results"][0]["submitStatus"], "failed")
-        self.assertEqual(recorded[0]["state"], "failed")
-        self.assertNotIn("receiptReference", recorded[0])
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["results"][0]["reason"], "government_outcome_unknown")
+        self.assertEqual(recorded, [])
+
 
     def test_government_submitter_sire_is_blocked_without_adapter(self):
         def fake_pms_tool(config, tool_name, input_payload=None, profile="read"):
@@ -864,6 +867,7 @@ class ReservationToolValidationTest(unittest.TestCase):
                 return {
                     "registrationId": "reg-1",
                     "submissionType": "sire_entrada",
+                    "idempotencyKey": "synthetic-sire-key",
                     "status": "ready",
                     "payload": {
                         "reservation": {"arrivalDate": "2026-06-26", "departureDate": "2026-06-27"},

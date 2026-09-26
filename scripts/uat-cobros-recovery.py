@@ -10,6 +10,8 @@ with tempfile.TemporaryDirectory(prefix='cobros-recovery-uat-') as tmp:
     shutil.copytree(ROOT / 'openclaw/agents/cobros', workspace)
     tool_dir = workspace / 'tools/owlswatch_cobros'
     shutil.copytree(ROOT / 'tools/owlswatch_cobros', tool_dir)
+    catalog = subprocess.check_output(['python3', str(tool_dir / 'server.py'), 'catalog'], text=True)
+    (tool_dir / 'catalog-fixture.json').write_text(catalog)
     shutil.copyfile(tool_dir / 'tests/fixture_server.py', tool_dir / 'server.py')
     profile = json.loads((ROOT / 'openclaw/profiles/owlswatch/openclaw.example.json').read_text())
     agent = next(a for a in profile['agents']['list'] if a['id'] == 'cobros')

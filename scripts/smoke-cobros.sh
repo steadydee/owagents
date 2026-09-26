@@ -3,15 +3,20 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$ROOT/tools/owlswatch_cobros/server.py"
+SMOKE_TEMP="$(mktemp -d)"
+trap 'rm -rf "$SMOKE_TEMP"' EXIT
+export OWLSWATCH_COBROS_WORKSPACE="$SMOKE_TEMP/workspace"
+export PYTHONPYCACHEPREFIX="$SMOKE_TEMP/pycache"
+export PYTHONDONTWRITEBYTECODE=1
 
 python3 -m py_compile "$SERVER"
 node --test "$ROOT/tools/owlswatch_cobros/tests/run-guards.test.mjs"
 python3 "$ROOT/tools/owlswatch_cobros/tests/test_retrieval.py"
-printf '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n' | python3 "$SERVER" >/tmp/owlswatch-cobros-tools.json
-grep -q 'owlswatch_cobros_search_gmail_threads' /tmp/owlswatch-cobros-tools.json
-grep -q 'owlswatch_cobros_create_packet' /tmp/owlswatch-cobros-tools.json
-grep -q 'owlswatch_cobros_create_gmail_draft' /tmp/owlswatch-cobros-tools.json
-rm -f /tmp/owlswatch-cobros-tools.json
+printf '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n' | python3 "$SERVER" >"$SMOKE_TEMP/tools.json"
+grep -q 'owlswatch_cobros_search_gmail_threads' "$SMOKE_TEMP/tools.json"
+grep -q 'owlswatch_cobros_create_packet' "$SMOKE_TEMP/tools.json"
+grep -q 'owlswatch_cobros_create_gmail_draft' "$SMOKE_TEMP/tools.json"
+rm -f "$SMOKE_TEMP/tools.json"
 
 SERVER_PATH="$SERVER" python3 - <<'PY'
 import importlib.util
@@ -65,4 +70,7 @@ assert missing["status"] == "needs_info", missing
 assert "operator_legal_name_and_nit" in missing["missingFields"]
 PY
 
+python3 -m unittest discover -s "$ROOT/tools/owlswatch_cobros/tests" -v
+node --test "$ROOT/tools/owlswatch_cobros/tests/read-budget.test.mjs"
+node --check "$ROOT/tools/owlswatch_cobros/openclaw-plugin.js"
 echo "Cobros smoke passed."

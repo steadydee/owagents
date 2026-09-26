@@ -27,6 +27,9 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cobros_state import Store, StateError, canonical
+
 WORKSPACE = Path(os.environ.get("OWLSWATCH_COBROS_WORKSPACE", "~/.openclaw/workspace-owlswatch-cobros")).expanduser()
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-owlswatch/openclaw.json")).expanduser()
 REPO_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "cobros" / "operator-billing-profiles.yaml"
@@ -84,7 +87,6 @@ DISPUTE_TERMS = (
     "difference",
     "not match",
 )
-REISSUE_TERMS = ("reexpedir", "reissue", "corregida", "corregido", "correction", "nueva cuenta", "replacement")
 
 PAYEES_FALLBACK: dict[str, dict[str, Any]] = {
     "luz": {
@@ -193,7 +195,7 @@ def b64url(data: bytes) -> str:
 
 
 def sanitized_error(exc: Exception) -> dict[str, Any]:
-    if isinstance(exc, ToolError):
+    if isinstance(exc, (ToolError, StateError)):
         return {"ok": False, "error": {"code": exc.code, "message": exc.message, "retryable": exc.retryable}}
     return {"ok": False, "error": {"code": "internal_error", "message": "Tool failed without exposing sensitive details.", "retryable": False}}
 
@@ -467,7 +469,7 @@ def tool_search_gmail_threads(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "query": gmail_query, "matches": matches}
 
 
-def load_gmail_thread(args: dict[str, Any]) -> dict[str, Any]:
+def tool_read_gmail_thread(args: dict[str, Any]) -> dict[str, Any]:
     thread_id = validate_safe_id("threadId", args.get("threadId"))
     if not re.fullmatch(r"[0-9a-fA-F]{8,32}", thread_id):
         raise ToolError("invalid_input", "Use a Gmail threadId returned by search, not a file or skill name.")
@@ -504,23 +506,24 @@ def load_gmail_thread(args: dict[str, Any]) -> dict[str, Any]:
             "attachments": attachments,
         })
     raw_text = "\n\n".join(f"From: {m.get('from')}\nSubject: {m.get('subject')}\n\n{m.get('bodyText')}" for m in messages)
-    return {
-        "ok": True,
-        "thread": {
-            "threadId": thread_id,
-            "sourceUrl": f"https://mail.google.com/mail/u/0/#inbox/{thread_id}",
-            "messages": messages,
-            "rawText": raw_text,
-        },
+    source = {
+        "threadId": thread_id,
+        "sourceUrl": f"https://mail.google.com/mail/u/0/#inbox/{thread_id}",
+        "messages": messages,
+        "rawText": raw_text,
+        "account": gmail_account(config),
     }
+    source_id = state_store().save_source(source)
+    preview = bounded_thread_preview(source)
+    return {"ok": True, "sourceId": source_id, "thread": preview, "previewOnly": True, "instruction": "Use sourceId for preparation; the tool retains the complete retrieved source."}
 
 
-def tool_read_gmail_thread(args: dict[str, Any]) -> dict[str, Any]:
-    thread = load_gmail_thread(args)["thread"]
-    original = thread["messages"]
+
+def bounded_thread_preview(source: dict[str, Any]) -> dict[str, Any]:
+    original = source["messages"]
     remaining = 12000
-    truncated = len(original) > 8
     messages = []
+    truncated = len(original) > 8
     for msg in original[-8:]:
         bounded = {}
         for key, value in msg.items():
@@ -534,12 +537,12 @@ def tool_read_gmail_thread(args: dict[str, Any]) -> dict[str, Any]:
             else:
                 bounded[key] = value[:400] if isinstance(value, str) else value
         messages.append(bounded)
-    result = {"threadId": thread["threadId"], "sourceUrl": thread["sourceUrl"], "messages": messages,
+    result = {"threadId": source["threadId"], "sourceUrl": source["sourceUrl"], "messages": messages,
               "truncated": truncated, "totalMessages": len(original)}
     while len(json.dumps(result, ensure_ascii=False)) > 24000 and result["messages"]:
         result["messages"].pop(0)
         result["truncated"] = True
-    return {"ok": True, "thread": result}
+    return result
 
 
 def parse_money(value: str) -> int | None:
@@ -774,42 +777,10 @@ def build_review_question(missing: list[str]) -> str:
     return prompts.get(missing[0], "What missing detail should I use for the cuenta de cobro?")
 
 
-def override_text(value: Any, max_len: int = 500) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    return text[:max_len]
-
-
-def override_amount_cop(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        amount = value
-    else:
-        amount = parse_money(str(value))
-    if amount is None or amount <= 0 or amount > 500_000_000:
-        raise ToolError("invalid_input", "override_fields.amountCop must be a valid COP amount.")
-    return amount
-
-
-def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
+def extract_prepared(args: dict[str, Any]) -> dict[str, Any]:
+    text = source_text_from_args(args)
     source_metadata = args.get("source_metadata") if isinstance(args.get("source_metadata"), dict) else {}
     thread = args.get("thread") if isinstance(args.get("thread"), dict) else None
-    # Duplicate/dispute checks use the full source, never only the bounded model excerpt.
-    if thread and thread.get("threadId"):
-        thread = load_gmail_thread({"threadId": thread["threadId"]})["thread"]
-        text = (validate_text("raw_text", args.get("raw_text"), required=False) or "") + "\n" + thread["rawText"]
-        if len(text) > 80000:
-            return {"ok": True, "status": "needs_human", "reason": "source_thread_too_large", "warnings": ["Review the complete Gmail thread before drafting."]}
-    elif thread and thread.get("truncated"):
-        return {"ok": True, "status": "needs_human", "reason": "incomplete_source_thread"}
-    else:
-        text = source_text_from_args(args)
-    override_fields = args.get("override_fields") if isinstance(args.get("override_fields"), dict) else {}
-    human_override = bool(args.get("human_override")) or bool(override_fields)
     profiles = profile_data()
     operator = find_operator(text, profiles) or infer_unknown_operator(text)
     payee = find_payee(text, operator, profiles)
@@ -818,20 +789,10 @@ def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
     concept = extract_concept(text)
     client_reference = extract_client_reference(text)
 
-    if override_fields:
-        if override_fields.get("operatorKey") in profiles.get("operators", {}):
-            operator = profiles["operators"][override_fields["operatorKey"]]
-        if override_fields.get("payeeKey") in profiles.get("payees", {}):
-            payee = profiles["payees"][override_fields["payeeKey"]]
-        amount = override_amount_cop(override_fields.get("amountCop")) or amount
-        service_dates = override_text(override_fields.get("serviceDates")) or service_dates
-        concept = override_text(override_fields.get("concept")) or concept
-        client_reference = override_text(override_fields.get("clientReference")) or client_reference
-
     warnings = []
     comp = comparable(text)
     has_dispute_terms = any(term in comp for term in (comparable(t) for t in DISPUTE_TERMS))
-    if has_dispute_terms and not human_override:
+    if has_dispute_terms:
         return {
             "ok": True,
             "status": "needs_human",
@@ -848,13 +809,11 @@ def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
                 "concept": concept,
             },
         }
-    if has_dispute_terms and human_override:
-        warnings.append("human_override_after_amount_dispute_or_correction")
     if "rut" in comp or "factura electronica" in comp or "factura electrónica" in text.lower():
         warnings.append("rut_or_electronic_invoice_requested")
     if len(all_amounts) > 1:
         warnings.append("multiple_amounts_found")
-    if sent_cuenta_pdf_exists(text, thread) and not any(term in comp for term in (comparable(t) for t in REISSUE_TERMS)):
+    if sent_cuenta_pdf_exists(text, thread):
         return {
             "ok": True,
             "status": "duplicate",
@@ -905,6 +864,62 @@ def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
         "fields": fields,
         "sourceMetadata": source_metadata,
     }
+
+
+def state_store() -> Store:
+    root = SPOOL_DIR / "state"
+    if WORKSPACE.resolve() not in root.resolve().parents:
+        raise ToolError("invalid_state_path", "Cobros state must remain inside its workspace.")
+    return Store(root)
+
+
+def require_keys(args, allowed):
+    if set(args) - set(allowed):
+        raise ToolError("invalid_input", "Unsupported input fields. Use the current tool schema; financial and authority overrides are not accepted.")
+
+
+def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
+    require_keys(args, {"raw_text", "sourceId", "source_metadata"})
+    store = state_store()
+    config = load_config()
+    source = store.source(args["sourceId"]) if args.get("sourceId") else None
+    if source and args.get("raw_text"):
+        raise ToolError("invalid_input", "Use sourceId alone for Gmail preparation; raw text cannot replace a retrieved source.")
+    if source and source["account"] != gmail_account(config):
+        raise ToolError("source_account_mismatch", "The source belongs to a different configured Gmail account.")
+    prepared = extract_prepared({"raw_text": source["rawText"] if source else args.get("raw_text"), "thread": source})
+    if prepared["status"] != "ready":
+        return prepared
+    # Recipient/thread routing is derived from the stored Gmail response or
+    # runtime configuration, never from subsequent model arguments.
+    recipient = external_reply_to(source) if source else cfg_env(config, "OWLSWATCH_COBROS_DRAFT_TO")
+    if recipient and not EMAIL_RE.fullmatch(recipient):
+        raise ToolError("invalid_recipient", "The configured/source recipient is not a single email address.")
+    last = next((m for m in reversed(source.get("messages", [])) if m.get("fromEmail") == recipient), {}) if source else {}
+    destination = {
+        "account": gmail_account(config), "folderId": cobros_folder_id(config),
+        "to": recipient, "threadId": source["threadId"] if source else None,
+        "inReplyTo": last.get("rfc822MessageId"), "sourceMessageId": last.get("gmailMessageId"),
+    }
+    record = {"prepared": prepared, "destination": destination}
+    source_key = ("gmail:" + destination["account"] + ":" + source["threadId"]) if source else (
+        "manual:" + hashlib.sha256(canonical(record).encode()).hexdigest())
+    identity = store.prepare(source_key, record)
+    return {**prepared, "preparedId": identity}
+
+
+def trusted_preparation(args):
+    require_keys(args, {"preparedId"})
+    store = state_store()
+    identity = Store.check_id(args.get("preparedId"))
+    record = store.prepared(identity)
+    if record["prepared"].get("status") != "ready":
+        raise ToolError("not_ready", "This prepared record is not ready.")
+    config = load_config()
+    destination = record["destination"]
+    if (destination["account"] != gmail_account(config) or destination["folderId"] != cobros_folder_id(config)):
+        raise ToolError("destination_changed", "Runtime destination changed since preparation. Human reconciliation is required.")
+    return store, identity, record, config
 
 
 def safe_filename(value: str) -> str:
@@ -1154,100 +1169,95 @@ def render_document_html(config: dict[str, Any], drive: Any, fields: dict[str, A
     return cobros_document_html(fields), "generated_fallback"
 
 
-def create_doc_from_html_text(drive: Any, html_text: str, title: str, folder_id: str) -> dict[str, Any]:
+def create_drive_file(drive, title, folder_id, mime_type, content, content_type, effect_key):
     from googleapiclient.http import MediaIoBaseUpload
-    html_bytes = html_text.encode("utf-8")
-    media = MediaIoBaseUpload(io.BytesIO(html_bytes), mimetype="text/html", resumable=False)
     return drive.files().create(
-        body={"name": title, "parents": [folder_id], "mimeType": "application/vnd.google-apps.document"},
-        media_body=media,
-        fields="id,webViewLink",
-        supportsAllDrives=True,
+        body={"name": title, "parents": [folder_id], "mimeType": mime_type,
+              "appProperties": {"cobrosEffectKey": effect_key}},
+        media_body=MediaIoBaseUpload(io.BytesIO(content), mimetype=content_type, resumable=False),
+        fields="id,webViewLink", supportsAllDrives=True,
     ).execute()
 
 
-def create_doc_from_html(drive: Any, fields: dict[str, Any], title: str, folder_id: str) -> dict[str, Any]:
-    return create_doc_from_html_text(drive, cobros_document_html(fields), title, folder_id)
-
-
-def create_pdf_for_doc(drive: Any, doc_id: str, title: str, folder_id: str) -> tuple[bytes, dict[str, Any], str]:
-    from googleapiclient.http import MediaIoBaseUpload
-    pdf_bytes = drive.files().export(fileId=doc_id, mimeType="application/pdf").execute()
-    pdf_name = f"{title}.pdf"
-    media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
-    pdf_file = drive.files().create(
-        body={"name": pdf_name, "parents": [folder_id], "mimeType": "application/pdf"},
-        media_body=media,
-        fields="id,webViewLink",
-        supportsAllDrives=True,
+def reconcile_drive_file(drive, folder_id, effect_key):
+    # All query values originate in runtime config or the server journal.
+    escape = lambda value: value.replace("\\", "\\\\").replace("'", "\\'")
+    result = drive.files().list(
+        q=f"trashed=false and '{escape(folder_id)}' in parents and appProperties has {{ key='cobrosEffectKey' and value='{effect_key}' }}",
+        fields="files(id,webViewLink),nextPageToken", pageSize=2,
+        supportsAllDrives=True, includeItemsFromAllDrives=True,
     ).execute()
-    return pdf_bytes, pdf_file, pdf_name
+    files = result.get("files", [])
+    if len(files) > 1 or result.get("nextPageToken"):
+        raise ToolError("reconciliation_conflict", "Multiple Drive artifacts match this effect. Human reconciliation is required.")
+    return files[0] if files else None
 
 
-def should_fallback_to_drive_html(message: str) -> bool:
-    lowered = message.lower()
-    return (
-        "docs.googleapis.com" in lowered
-        or "google docs api" in lowered
-        or "file not found" in lowered
-        or "notfound" in lowered
-        or "404" in lowered
-    )
+def write_spooled_pdf(identity, pdf_bytes):
+    SPOOL_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = SPOOL_DIR / (identity + '.pdf')
+    temporary = SPOOL_DIR / (identity + '.pdf.tmp')
+    with temporary.open('wb') as handle:
+        os.chmod(temporary, 0o600)
+        handle.write(pdf_bytes)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    return str(path)
 
 
-def create_doc_and_pdf(config: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
-    try:
-        import io  # noqa: F401
-        from googleapiclient.http import MediaIoBaseUpload  # noqa: F401
-    except ImportError as exc:
-        raise ToolError("dependency_missing", "Google API upload dependencies are not installed.") from exc
-    delegated_user = google_workspace_impersonation_user(config)
-    drive = google_build_service(config, "drive", "v3", ["https://www.googleapis.com/auth/drive"], delegated_user)
-    title = packet_title(fields)
+def create_doc_and_pdf(config, fields, journal):
+    cached = journal.result('packet')
+    if cached:
+        return cached
+    drive = google_build_service(config, "drive", "v3", ["https://www.googleapis.com/auth/drive"], google_workspace_impersonation_user(config))
     folder_id = cobros_folder_id(config)
-    try:
+    title = packet_title(fields)
+    copied = journal.result('document')
+    if not journal.started('document'):
+        # Legacy packets have no journal key. Refuse to create a second packet
+        # with the same deterministic business title; a human must reconcile it.
+        escaped_title = title.replace("\\", "\\\\").replace("'", "\\'")
+        existing = drive.files().list(q=f"trashed=false and '{folder_id}' in parents and name='{escaped_title}'", fields='files(id)', pageSize=1, supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+        if existing.get('files'):
+            raise ToolError('legacy_packet_requires_review', 'A matching document already exists outside this journal. Human reconciliation is required before any new packet.')
+    if not copied:
         html_text, template_source = render_document_html(config, drive, fields)
-        copied = create_doc_from_html_text(drive, html_text, title, folder_id)
-    except Exception as exc:
-        message = str(exc)
-        if "unauthorized_client" in message:
-            raise ToolError("google_workspace_impersonation_unauthorized", "Google Workspace delegation is missing Drive scopes for Cobros document creation.") from exc
-        if "storageQuotaExceeded" in message or "storage quota" in message.lower():
-            raise ToolError("google_drive_storage_quota_exceeded", "Google Drive refused document creation because service-account-owned Drive storage has no quota. Configure Google Workspace impersonation for Drive writes.") from exc
-        raise ToolError("google_drive_error", "Google Drive cuenta de cobro document creation failed.", retryable=True) from exc
-    doc_id = copied["id"]
-    try:
-        pdf_bytes, pdf_file, pdf_name = create_pdf_for_doc(drive, doc_id, title, folder_id)
-    except Exception as exc:
-        raise ToolError("google_drive_error", "Google Drive cuenta de cobro PDF export failed.", retryable=True) from exc
-    SPOOL_DIR.mkdir(parents=True, exist_ok=True)
-    pdf_local_path = SPOOL_DIR / f"{doc_id}.pdf"
-    pdf_local_path.write_bytes(pdf_bytes)
-    return {
-        "title": title,
-        "docFileId": doc_id,
-        "docUrl": copied.get("webViewLink") or f"https://docs.google.com/document/d/{doc_id}/edit",
-        "pdfFileId": pdf_file["id"],
-        "pdfUrl": pdf_file.get("webViewLink") or f"https://drive.google.com/file/d/{pdf_file['id']}/view",
-        "pdfFileName": pdf_name,
-        "pdfLocalPath": str(pdf_local_path),
-        "sizeBytes": len(pdf_bytes),
-        "templateSource": template_source,
-    }
+        journal.save('render', {"templateSource": template_source})
+        copied = journal.effect('document', lambda key: create_drive_file(
+            drive, title, folder_id, 'application/vnd.google-apps.document', html_text.encode(), 'text/html', key),
+            lambda key: reconcile_drive_file(drive, folder_id, key))
+    doc_id = copied['id']
+    # Export is read-only and safe to repeat after interruption.
+    pdf_bytes = drive.files().export(fileId=doc_id, mimeType='application/pdf').execute()
+    if not isinstance(pdf_bytes, bytes) or not pdf_bytes.startswith(b'%PDF-'):
+        raise ToolError('invalid_pdf', 'Drive did not return a PDF; no PDF upload or draft was attempted.')
+    pdf_name = title + '.pdf'
+    pdf_file = journal.effect('pdf', lambda key: create_drive_file(
+        drive, pdf_name, folder_id, 'application/pdf', pdf_bytes, 'application/pdf', key),
+        lambda key: reconcile_drive_file(drive, folder_id, key))
+    # Spool the actual persisted PDF, which can differ from a later export of
+    # an edited Google Doc when reconciling a prior PDF upload.
+    persisted_pdf = drive.files().get(fileId=pdf_file['id'], alt='media', supportsAllDrives=True).execute()
+    if not isinstance(persisted_pdf, bytes) or not persisted_pdf.startswith(b'%PDF-'):
+        raise ToolError('invalid_pdf', 'The persisted artifact is not a PDF.')
+    path = write_spooled_pdf(journal.identity, persisted_pdf)
+    return journal.save('packet', {
+        "title": title, "docFileId": doc_id,
+        "docUrl": copied.get('webViewLink') or f'https://docs.google.com/document/d/{doc_id}/edit',
+        "pdfFileId": pdf_file['id'],
+        "pdfUrl": pdf_file.get('webViewLink') or f"https://drive.google.com/file/d/{pdf_file['id']}/view",
+        "pdfFileName": pdf_name, "pdfLocalPath": path, "sizeBytes": len(persisted_pdf),
+        "pdfSha256": hashlib.sha256(persisted_pdf).hexdigest(),
+        "templateSource": (journal.result('render') or {}).get('templateSource'),
+    })
 
 
 def tool_create_packet(args: dict[str, Any]) -> dict[str, Any]:
-    prepared = args.get("prepared") or args.get("prepared_cobro") or args.get("preparedCobro")
-    if not isinstance(prepared, dict):
-        raise ToolError("invalid_input", "prepared must be an object returned by owlswatch_cobros_prepare.")
-    if prepared.get("status") != "ready":
-        raise ToolError("not_ready", "Cobros packet can only be created from prepared status=ready.")
-    fields = prepared.get("fields")
-    if not isinstance(fields, dict):
-        raise ToolError("invalid_input", "prepared.fields is required.")
-    config = load_config()
-    packet = create_doc_and_pdf(config, fields)
-    return {"ok": True, "packet": packet, "warnings": prepared.get("warnings") or []}
+    store, identity, record, config = trusted_preparation(args)
+    with store.claim(identity) as journal:
+        packet = create_doc_and_pdf(config, record['prepared']['fields'], journal)
+    return {"ok": True, "preparedId": identity, "packet": packet, "warnings": record['prepared'].get('warnings', [])}
 
 
 def read_spooled_pdf(packet: dict[str, Any]) -> bytes:
@@ -1255,12 +1265,14 @@ def read_spooled_pdf(packet: dict[str, Any]) -> bytes:
     if not isinstance(raw, str):
         raise ToolError("invalid_input", "packet.pdfLocalPath is required for Gmail draft attachment.")
     path = Path(raw).expanduser().resolve()
-    workspace = WORKSPACE.resolve()
-    if workspace not in path.parents:
-        raise ToolError("invalid_input", "packet.pdfLocalPath must stay inside the Cobros workspace.")
+    if SPOOL_DIR.resolve() not in path.parents:
+        raise ToolError("invalid_input", "The attachment must remain inside the Cobros spool.")
     if not path.is_file() or path.suffix.lower() != ".pdf":
         raise ToolError("invalid_input", "packet.pdfLocalPath does not point to a spooled PDF.")
-    return path.read_bytes()
+    data = path.read_bytes()
+    if not data.startswith(b"%PDF-") or hashlib.sha256(data).hexdigest() != packet.get("pdfSha256"):
+        raise ToolError("attachment_changed", "The spooled PDF differs from the journaled artifact. Human reconciliation is required.")
+    return data
 
 
 def external_reply_to(thread: dict[str, Any] | None) -> str | None:
@@ -1268,7 +1280,7 @@ def external_reply_to(thread: dict[str, Any] | None) -> str | None:
         return None
     for msg in reversed(thread.get("messages") or []):
         from_email = msg.get("fromEmail")
-        if isinstance(from_email, str) and from_email and not from_email.endswith("@owlswatch.com"):
+        if isinstance(from_email, str) and from_email and not from_email.lower().endswith("@owlswatch.com"):
             return from_email
     return None
 
@@ -1289,7 +1301,7 @@ def gmail_draft_body(fields: dict[str, Any], warnings: list[str]) -> str:
     return "\n".join(lines)
 
 
-def create_gmail_draft(config: dict[str, Any], prepared: dict[str, Any], packet: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+def create_gmail_draft(config: dict[str, Any], prepared: dict[str, Any], packet: dict[str, Any], args: dict[str, Any], effect_key: str) -> dict[str, Any]:
     thread_id = validate_safe_id("threadId", args.get("threadId"), required=False)
     to_email = validate_text("to", args.get("to"), required=False, max_len=240)
     thread = args.get("thread") if isinstance(args.get("thread"), dict) else None
@@ -1304,6 +1316,7 @@ def create_gmail_draft(config: dict[str, Any], prepared: dict[str, Any], packet:
     msg["To"] = to_email
     msg["From"] = gmail_account(config)
     msg["Subject"] = subject
+    msg["Message-ID"] = f"<{effect_key}@owlswatch.com>"
     if args.get("inReplyTo"):
         msg["In-Reply-To"] = str(args.get("inReplyTo"))
         msg["References"] = str(args.get("inReplyTo"))
@@ -1316,10 +1329,12 @@ def create_gmail_draft(config: dict[str, Any], prepared: dict[str, Any], packet:
         message_body["threadId"] = thread_id
     draft = service.users().drafts().create(userId="me", body={"message": message_body}).execute()
     draft_id = draft.get("id")
+    if not draft_id:
+        raise ToolError("gmail_result_invalid", "Gmail did not return a draft identifier.")
     return {"gmailDraftId": draft_id, "gmailThreadId": thread_id or draft.get("message", {}).get("threadId"), "recipient": to_email, "subject": subject}
 
 
-def operations_email_intake(config: dict[str, Any], prepared: dict[str, Any], packet: dict[str, Any], draft: dict[str, Any], args: dict[str, Any]) -> dict[str, Any] | None:
+def operations_email_intake(config: dict[str, Any], prepared: dict[str, Any], packet: dict[str, Any], draft: dict[str, Any], args: dict[str, Any], effect_key: str) -> dict[str, Any] | None:
     token = operations_email_token(config)
     if not token:
         return None
@@ -1368,7 +1383,7 @@ def operations_email_intake(config: dict[str, Any], prepared: dict[str, Any], pa
     response = http_json(
         f"{operations_base_url(config)}/api/emails/intake",
         payload,
-        {"Authorization": f"Bearer {token}"},
+        {"Authorization": f"Bearer {token}", "Idempotency-Key": effect_key, "X-OW-Agent-ID": "cobros", "X-Correlation-ID": effect_key},
         timeout=30,
     )
     if response.get("success") is False or response.get("ok") is False:
@@ -1381,28 +1396,53 @@ def operations_email_intake(config: dict[str, Any], prepared: dict[str, Any], pa
     }
 
 
+def reconcile_gmail_draft(config, destination, prepared, effect_key):
+    service = google_build_service(config, 'gmail', 'v1', ['https://www.googleapis.com/auth/gmail.compose'], gmail_account(config))
+    response = service.users().drafts().list(userId='me', q=f'rfc822msgid:{effect_key}@owlswatch.com', maxResults=2).execute()
+    drafts = response.get('drafts', [])
+    if len(drafts) > 1 or response.get('nextPageToken'):
+        raise ToolError('reconciliation_conflict', 'More than one Gmail draft matches this operation.')
+    if not drafts:
+        return None
+    draft = drafts[0]
+    return {"gmailDraftId": draft['id'], "gmailThreadId": destination.get('threadId') or draft.get('message', {}).get('threadId'),
+            "recipient": destination['to'], "subject": f"Cuenta de cobro - {prepared['fields'].get('clientReference') or prepared['fields'].get('serviceDates')}"}
+
+
 def tool_create_gmail_draft(args: dict[str, Any]) -> dict[str, Any]:
-    prepared = args.get("prepared")
-    packet = args.get("packet")
-    if not isinstance(prepared, dict) or not isinstance(packet, dict):
-        raise ToolError("invalid_input", "prepared and packet are required objects.")
-    if prepared.get("status") != "ready":
-        raise ToolError("not_ready", "Gmail draft can only be created from prepared status=ready.")
-    config = load_config()
-    draft = create_gmail_draft(config, prepared, packet, args)
-    operations_task = operations_email_intake(config, prepared, packet, draft, args)
-    if operations_task:
-        draft["operationsTask"] = operations_task
-    else:
-        draft["operationsTask"] = {"skipped": True, "reason": "email_agent_token_missing"}
-    return {"ok": True, **draft}
+    store, identity, record, config = trusted_preparation(args)
+    prepared, destination = record['prepared'], record['destination']
+    if not destination.get('to'):
+        raise ToolError('recipient_unverified', 'No source-derived or configured recipient is available. The packet can be reviewed manually; no draft was created.')
+    with store.claim(identity) as journal:
+        packet = journal.result('packet')
+        if not packet:
+            raise ToolError('packet_required', 'Create the packet for this preparedId first.')
+        read_spooled_pdf(packet)  # integrity preflight before marking any attempt
+        draft = journal.effect('gmail', lambda key: create_gmail_draft(config, prepared, packet, destination, key),
+            lambda key: reconcile_gmail_draft(config, destination, prepared, key))
+        if not operations_email_token(config):
+            task = {"skipped": True, "reason": "email_agent_token_missing"}
+        else:
+            try:
+                task = journal.effect('operations', lambda key: operations_email_intake(config, prepared, packet, draft, destination, key))
+            except StateError as exc:
+                # Preserve the known draft in the result even if the review
+                # queue outcome is unknown. A replay will never create it again.
+                return {**sanitized_error(exc), **draft, "preparedId": identity,
+                        "operationsTask": {"status": "reconciliation_required"}}
+    return {"ok": True, "preparedId": identity, **draft, "operationsTask": task}
 
 
 def tool_send_telegram_message(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
-    chat_id = str(args.get("chat_id") or cobros_notify_chat_id(config))
+    chat_id = cobros_notify_chat_id(config)
+    thread_id = cobros_notify_thread_id(config)
+    if args.get('chat_id') is not None and str(args['chat_id']) != str(chat_id):
+        raise ToolError('destination_not_allowed', 'Telegram destination is fixed by Cobros runtime configuration.')
+    if args.get('message_thread_id') is not None and str(args['message_thread_id']) != str(thread_id):
+        raise ToolError('destination_not_allowed', 'Telegram topic is fixed by Cobros runtime configuration.')
     text = validate_text("text", args.get("text"), required=True, max_len=3900)
-    thread_id = args.get("message_thread_id") or cobros_notify_thread_id(config)
     payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
     if thread_id:
         payload["message_thread_id"] = str(thread_id)
@@ -1425,9 +1465,9 @@ def tool_memory_log(args: dict[str, Any]) -> dict[str, Any]:
 TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str, Any]]]] = {
     "owlswatch_cobros_search_gmail_threads": ("Search read-only Gmail for accounting requests or a specific billing identity.", {"type": "object", "properties": {"query": {"type": ["string", "null"]}, "maxResults": {"type": "integer", "minimum": 1, "maximum": 5}, "purpose": {"type": "string", "enum": ["accounting", "billing_identity"]}}, "additionalProperties": False}, tool_search_gmail_threads),
     "owlswatch_cobros_read_gmail_thread": ("Read one Owl's Watch Gmail thread for cuenta de cobro drafting.", {"type": "object", "properties": {"threadId": {"type": "string"}}, "required": ["threadId"], "additionalProperties": False}, tool_read_gmail_thread),
-    "owlswatch_cobros_prepare": ("Extract and validate cuenta de cobro fields. Does not create documents.", {"type": "object", "properties": {"raw_text": {"type": ["string", "null"]}, "thread": {"type": ["object", "null"], "additionalProperties": True}, "source_metadata": {"type": ["object", "null"], "additionalProperties": True}, "human_override": {"type": "boolean"}, "override_fields": {"type": ["object", "null"], "additionalProperties": True}}, "additionalProperties": False}, tool_prepare),
-    "owlswatch_cobros_create_packet": ("Create Google Doc cuenta de cobro and exported PDF from a ready prepared result.", {"type": "object", "properties": {"prepared": {"type": "object", "additionalProperties": True}}, "required": ["prepared"], "additionalProperties": False}, tool_create_packet),
-    "owlswatch_cobros_create_gmail_draft": ("Create a Gmail draft reply with the cuenta de cobro PDF attached. Never sends.", {"type": "object", "properties": {"prepared": {"type": "object", "additionalProperties": True}, "packet": {"type": "object", "additionalProperties": True}, "thread": {"type": ["object", "null"], "additionalProperties": True}, "threadId": {"type": ["string", "null"]}, "to": {"type": ["string", "null"]}, "subject": {"type": ["string", "null"]}, "body": {"type": ["string", "null"]}, "inReplyTo": {"type": ["string", "null"]}, "sourceMessageId": {"type": ["string", "null"]}, "sourceSummary": {"type": ["string", "null"]}}, "required": ["prepared", "packet"], "additionalProperties": False}, tool_create_gmail_draft),
+    "owlswatch_cobros_prepare": ("Extract immutable cuenta de cobro fields. Use sourceId for Gmail or raw_text for a pasted request. No correction override authority.", {"type": "object", "properties": {"raw_text": {"type": ["string", "null"]}, "sourceId": {"type": ["string", "null"]}, "source_metadata": {"type": ["object", "null"], "additionalProperties": True}}, "additionalProperties": False}, tool_prepare),
+    "owlswatch_cobros_create_packet": ("Create or resume the journaled Doc/PDF for a server-issued preparedId. Never reconstruct prepared fields.", {"type": "object", "properties": {"preparedId": {"type": "string"}}, "required": ["preparedId"], "additionalProperties": False}, tool_create_packet),
+    "owlswatch_cobros_create_gmail_draft": ("Create or reconcile the source-bound Gmail draft for a preparedId. Uses the journaled PDF and recipient. Never sends.", {"type": "object", "properties": {"preparedId": {"type": "string"}}, "required": ["preparedId"], "additionalProperties": False}, tool_create_gmail_draft),
     "owlswatch_cobros_send_telegram_message": ("Send a short Cobros Telegram notification to the configured Owl's Watch topic.", {"type": "object", "properties": {"text": {"type": "string"}, "chat_id": {"type": ["string", "number", "null"]}, "message_thread_id": {"type": ["string", "number", "null"]}}, "required": ["text"], "additionalProperties": False}, tool_send_telegram_message),
     "owlswatch_cobros_memory_log": ("Append one concise Cobros memory line.", {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"], "additionalProperties": False}, tool_memory_log),
 }
@@ -1467,6 +1507,9 @@ def handle(request: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def main() -> None:
+    if len(sys.argv) == 2 and sys.argv[1] == "catalog":
+        print(json_dumps({name: {"description": d, "parameters": schema} for name, (d, schema, _) in TOOLS.items()}))
+        return
     if len(sys.argv) == 3 and sys.argv[1] == "call":
         name = sys.argv[2]
         try:

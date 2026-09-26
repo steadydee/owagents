@@ -611,13 +611,18 @@ def default_thread_id(config: dict[str, Any]) -> str | None:
 
 def tool_registro_telegram_notify(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
+    chat_id = default_chat_id(config)
+    thread_id = default_thread_id(config)
+    if args.get("chat_id") is not None and str(args["chat_id"]) != str(chat_id):
+        raise ToolError("destination_not_allowed", "Registro notifications must stay in the configured staff group.")
+    if args.get("message_thread_id") is not None and str(args["message_thread_id"]) != str(thread_id):
+        raise ToolError("destination_not_allowed", "Registro notifications must stay in the configured staff topic.")
     text = validate_text("text", args.get("text"), required=True, max_len=3900)
     payload: dict[str, Any] = {
-        "chat_id": str(args.get("chat_id") or default_chat_id(config)),
+        "chat_id": str(chat_id),
         "text": text,
         "disable_web_page_preview": True,
     }
-    thread_id = args.get("message_thread_id") or default_thread_id(config)
     if thread_id:
         payload["message_thread_id"] = str(thread_id)
     response = http_json(f"https://api.telegram.org/bot{telegram_token(config)}/sendMessage", payload, {}, timeout=20)
