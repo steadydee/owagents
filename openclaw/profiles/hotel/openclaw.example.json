@@ -157,8 +157,8 @@
     },
     "load": {
       "paths": [
-        "~/.openclaw/workspace-hotel-ops/tools/hotel_pms",
-        "~/.openclaw-hotel/tools/agent_runtime_guard"
+        "~/.openclaw/workspace-hotel-ops/tools/hotel_pms/openclaw-plugin.js",
+        "~/.openclaw-hotel/tools/agent_runtime_guard/openclaw-plugin.js"
       ]
     }
   },

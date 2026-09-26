@@ -451,12 +451,12 @@
     },
     "load": {
       "paths": [
-        "~/.openclaw/workspace-owlswatch/tools/owlswatch_intake",
-        "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes",
-        "~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email",
-        "~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros",
-        "~/.openclaw/workspace-owlswatch-registro/tools/registro_compliance",
-        "~/.openclaw-owlswatch/tools/agent_runtime_guard"
+        "~/.openclaw/workspace-owlswatch/tools/owlswatch_intake/openclaw-plugin.js",
+        "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes/openclaw-plugin.js",
+        "~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email/openclaw-plugin.js",
+        "~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros/openclaw-plugin.js",
+        "~/.openclaw/workspace-owlswatch-registro/tools/registro_compliance/openclaw-plugin.js",
+        "~/.openclaw-owlswatch/tools/agent_runtime_guard/openclaw-plugin.js"
       ]
     }
   },
