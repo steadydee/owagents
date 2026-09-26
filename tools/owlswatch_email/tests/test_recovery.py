@@ -17,6 +17,23 @@ import recovery
 import run
 
 
+class ScheduleCompatibilityTests(unittest.TestCase):
+    def test_schedule_day_uses_bogota_across_utc_midnight(self):
+        self.assertEqual(run.schedule_day(dt.datetime(2026, 9, 27, 2, tzinfo=dt.timezone.utc)), "2026-09-26")
+        self.assertEqual(run.schedule_day(dt.datetime(2026, 9, 27, 13, tzinfo=dt.timezone.utc)), "2026-09-27")
+
+    def test_legacy_same_day_marker_prevents_upgrade_resend_without_claiming_delivery(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            state = root / "state"
+            (root / "correo-daily-summary-2026-09-26.stamp").touch()
+            with patch.dict(os.environ, {"OWLSWATCH_LEGACY_STAMP_DIR": folder}):
+                self.assertTrue(run.digest_already_run("daily_summary", state, dt.datetime(2026, 9, 27, 2, tzinfo=dt.timezone.utc)))
+                self.assertFalse(run.digest_already_run("daily_summary", state, dt.datetime(2026, 9, 27, 13, tzinfo=dt.timezone.utc)))
+                self.assertFalse(run.digest_already_run("unanswered_7d", state, dt.datetime(2026, 9, 27, 2, tzinfo=dt.timezone.utc)))
+            self.assertFalse(state.exists(), "Legacy marker must not invent a verified completion record")
+
+
 class Request:
     def __init__(self, value): self.value = value
     def execute(self):

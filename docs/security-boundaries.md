@@ -227,5 +227,8 @@ trusted run limits, records content-free usage/outcomes, and pauses requests to
 a provider for 30 minutes after an observed insufficient-credit failure. It does
 not hold provider credentials or infer approval. Paid idle heartbeats are
 disabled; deterministic schedule preflights decide whether a model is needed.
+Its audited local hooks require `hooks.allowConversationAccess: true` to receive
+run boundaries, aggregate usage, and terminal provider-error metadata. The hook
+inspects terminal assistant status locally and never persists conversation text.
 Duplicate legacy MCP registrations are disabled only when the corresponding
 native plugin is enabled; their environment configuration is preserved.

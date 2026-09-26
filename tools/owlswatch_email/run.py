@@ -11,8 +11,24 @@ import shutil
 import subprocess
 import sys
 import uuid
+from zoneinfo import ZoneInfo
 import recovery
 import server
+
+
+def schedule_day(now):
+    return now.astimezone(ZoneInfo("America/Bogota")).date().isoformat()
+
+
+def digest_already_run(mode, state, now):
+    day = schedule_day(now)
+    if (state / f"{mode}-{day}.json").exists():
+        return True
+    # Honor an already-run legacy schedule during upgrade without asserting
+    # that its old model response proved delivery. Never resend just to migrate.
+    old_name = {"daily_summary": "correo-daily-summary", "unanswered_7d": "correo-unanswered"}.get(mode)
+    legacy = Path(os.environ.get("OWLSWATCH_LEGACY_STAMP_DIR", "~/.openclaw-owlswatch/schedule-stamps")).expanduser()
+    return bool(old_name and (legacy / f"{old_name}-{day}.stamp").exists())
 
 
 def daily_digest(mode):
@@ -40,7 +56,7 @@ def daily_digest(mode):
         lines.append("Older records may need Gmail reconciliation; do not treat this count as confirmed unanswered email.")
     identifiers = list(dict.fromkeys(recovery.thread_id(t) for t in tasks if recovery.thread_id(t)))[:8]
     lines.extend(server.gmail_source_url(identifier) for identifier in identifiers)
-    return server.tool_email_send_telegram_message({"text": "\n".join(lines), "dedupeKey": f"{mode}-{now.date()}", "dedupeHours": 24})
+    return server.tool_email_send_telegram_message({"text": "\n".join(lines), "dedupeKey": f"{mode}-{schedule_day(now)}", "dedupeHours": 24})
 
 
 def run(mode, force=False, invoke=subprocess.run):
@@ -65,9 +81,10 @@ def run(mode, force=False, invoke=subprocess.run):
                 attempt.update(status="incomplete", pendingCount=result["pendingCount"])
                 return 1
             if mode != "polling_30m":
-                day = server.now_utc().date().isoformat()
+                now = server.now_utc()
+                day = schedule_day(now)
                 stamp = state / f"{mode}-{day}.json"
-                if force or not stamp.exists():
+                if force or not digest_already_run(mode, state, now):
                     notification = daily_digest(mode)
                     if not notification.get("ok"):
                         raise server.ToolError("digest_failed", "Digest delivery was not acknowledged.")
@@ -93,7 +110,7 @@ def main():
         print(json.dumps({"status": "disabled"}))
         return 0
     if not args.force and args.mode != "polling_30m":
-        local = server.now_utc().astimezone()
+        local = server.now_utc().astimezone(ZoneInfo("America/Bogota"))
         if local.hour * 60 + local.minute < (480 if args.mode == "daily_summary" else 495):
             print(json.dumps({"status": "before_schedule"}))
             return 0
