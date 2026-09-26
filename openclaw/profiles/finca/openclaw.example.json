@@ -96,8 +96,8 @@
     },
     "load": {
       "paths": [
-        "~/.openclaw/workspace-finca-ops/tools/finca_tasks",
-        "~/.openclaw-finca/tools/agent_runtime_guard"
+        "~/.openclaw/workspace-finca-ops/tools/finca_tasks/openclaw-plugin.js",
+        "~/.openclaw-finca/tools/agent_runtime_guard/openclaw-plugin.js"
       ]
     }
   },

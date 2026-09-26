@@ -18,6 +18,7 @@ PLUGIN_TRANSPORTS = {
     "owlswatch_email": "owlswatch-email", "owlswatch_cobros": "owlswatch-cobros",
     "registro_compliance": "registro-compliance", "hotel_pms": "hotel-pms",
 }
+NATIVE_DIRECTORIES = set(PLUGIN_TRANSPORTS) | {"finca_tasks", "bailey_finance", "agent_runtime_guard"}
 LOOP_POLICY = {"enabled": True, "historySize": 30, "warningThreshold": 4,
                "criticalThreshold": 8, "globalCircuitBreakerThreshold": 12,
                "unknownToolThreshold": 3,
@@ -41,6 +42,15 @@ def harden(config, guard_path):
     entries = plugins.setdefault("entries", {})
     entries[GUARD_ID] = {"enabled": True}
     paths = plugins.setdefault("load", {}).setdefault("paths", [])
+    # Directory discovery may choose a helper .mjs file alphabetically instead
+    # of the plugin entry. Always pin the known native entry file.
+    paths[:] = list(dict.fromkeys(
+        value.rstrip("/") + "/openclaw-plugin.js"
+        if value.rstrip("/").split("/")[-1] in NATIVE_DIRECTORIES else value
+        for value in paths
+    ))
+    if guard_path.rstrip("/").split("/")[-1] == "agent_runtime_guard":
+        guard_path = guard_path.rstrip("/") + "/openclaw-plugin.js"
     if guard_path not in paths:
         paths.append(guard_path)
     if isinstance(plugins.get("allow"), list) and GUARD_ID not in plugins["allow"]:
