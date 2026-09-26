@@ -52,3 +52,52 @@ Gmail draft creation also requires Workspace domain-wide delegation scope:
 `https://www.googleapis.com/auth/gmail.compose`
 
 No tool sends final email.
+
+
+## Integrity And Recovery Contract
+
+`read_gmail_thread` persists the full provider source and returns `sourceId` plus a
+bounded preview. `prepare({sourceId})` reads that stored source; manual requests
+use `prepare({raw_text})`. Only ready results receive an opaque `preparedId`.
+No `human_override` or mutable financial override is accepted. Both
+`create_packet({preparedId})` and `create_gmail_draft({preparedId})` load immutable
+bank, payee, amount, status and source routing from local state. Older mutable
+`prepared`, `packet`, `to`, body, and local-path arguments are rejected.
+
+State lives only in `<workspace>/spool/cobros/state/journal.sqlite3` (0600) with
+per-preparation process locks. Keep this journal and spool when deploying or
+restarting. It contains private source/financial data; never commit it, clear it
+to retry a workflow, or run two hosts against independent copies of its state.
+Repeated preparation of the same Gmail thread is idempotent; a changed financial
+record for that thread requires human reconciliation. Identical manual prepared
+records also deduplicate. A matching legacy document title in the configured
+folder blocks creation until a human reconciles the pre-journal artifact.
+
+Each external create is recorded as attempting before IO. Completed document,
+PDF, Gmail and Operations stages are reused. Interrupted Drive creates reconcile
+using `appProperties.cobrosEffectKey`; Gmail drafts use a deterministic Message-ID.
+No match or multiple matches halt the workflow with `outcome_unknown` instead of
+recreating anything. This includes the crash window before a provider response.
+Operations intake carries a stable Idempotency-Key and actor/correlation headers;
+its unknown result requires manual review because this package has no authoritative
+read endpoint for that external task. The already-created Gmail draft is returned.
+A human must check provider artifacts and app audit records before any journal
+repair; no repair/reset authority is exposed to the agent.
+
+The PDF attachment is loaded only from the journaled spool path and verified by
+SHA-256. A retrieved Gmail source fixes the draft recipient/thread; a manual
+request needs optional `OWLSWATCH_COBROS_DRAFT_TO`, otherwise the packet remains
+available for manual review without a draft. Telegram always uses configured
+chat/topic; mismatching destination arguments are rejected.
+
+The plugin derives schemas from `server.py catalog`, has a bounded subprocess
+lifetime, and applies a trusted-run hook limit of six Gmail searches, twelve reads,
+and two identical queries. Existing grants and final-send boundaries are unchanged.
+Provider reconciliation uses documented [Gmail draft search](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.drafts/list)
+and [Drive application properties](https://developers.google.com/workspace/drive/api/guides/properties).
+
+## Validation
+
+`./scripts/smoke-cobros.sh` runs extraction/render smoke checks, fake-provider
+integrity/recovery/concurrency tests, and the read-budget tests. It creates a
+temporary isolated workspace and never sends Gmail, Drive or Telegram mutations.
