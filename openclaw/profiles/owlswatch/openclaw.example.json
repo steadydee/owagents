@@ -178,6 +178,13 @@
         "skills": ["cuenta-cobro"],
         "tools": {
           "profile": "minimal",
+          "loopDetection": {
+            "enabled": true,
+            "warningThreshold": 3,
+            "unknownToolThreshold": 2,
+            "criticalThreshold": 5,
+            "globalCircuitBreakerThreshold": 8
+          },
           "alsoAllow": [
             "owlswatch_cobros_search_gmail_threads",
             "owlswatch_cobros_read_gmail_thread",

@@ -1,10 +1,14 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/core";
-import { spawn } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createCobrosGuards } from "./run-guards.mjs";
+import { callPythonTool } from "./tool-bridge.mjs";
 
-const SERVER = "/Users/agent/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros/server.py";
+const TOOL_DIR = dirname(fileURLToPath(import.meta.url));
+const WORKSPACE = resolve(TOOL_DIR, "../..");
+const SERVER = resolve(TOOL_DIR, "server.py");
 const BASE_ENV = {
-  OWLSWATCH_COBROS_WORKSPACE: "/Users/agent/.openclaw/workspace-owlswatch-cobros",
-  OPENCLAW_CONFIG_PATH: "/Users/agent/.openclaw-owlswatch/openclaw.json"
+  OWLSWATCH_COBROS_WORKSPACE: WORKSPACE
 };
 
 const toolSchemas = {
@@ -14,7 +18,8 @@ const toolSchemas = {
       type: "object",
       properties: {
         query: { type: ["string", "null"] },
-        maxResults: { type: "integer", minimum: 1, maximum: 20 }
+        maxResults: { type: "integer", minimum: 1, maximum: 5 },
+        purpose: { type: "string", enum: ["accounting", "billing_identity"] }
       },
       additionalProperties: false
     }
@@ -102,37 +107,22 @@ function jsonResult(value) {
   };
 }
 
-function callPythonTool(name, args) {
-  return new Promise((resolve) => {
-    const child = spawn("python3", [SERVER, "call", name], {
-      env: { ...process.env, ...BASE_ENV },
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    let out = "";
-    child.stdout.on("data", (chunk) => { out += chunk.toString(); });
-    child.on("close", () => {
-      try {
-        resolve(jsonResult(JSON.parse(out || "{}")));
-      } catch {
-        resolve(jsonResult({ ok: false, error: { code: "tool_bridge_error", message: "Tool bridge returned invalid JSON.", retryable: false } }));
-      }
-    });
-    child.stdin.end(JSON.stringify(args ?? {}));
-  });
-}
-
 export default definePluginEntry({
   id: "owlswatch-cobros",
   name: "Owl's Watch Cobros Tools",
   description: "Narrow tools for Cobros cuenta de cobro drafting.",
   register(api) {
+    const guards = createCobrosGuards(WORKSPACE);
+    api.on("before_prompt_build", guards.prompt);
+    api.on("before_tool_call", guards.beforeTool);
+    api.on("agent_end", guards.end);
     for (const [name, spec] of Object.entries(toolSchemas)) {
       api.registerTool({
         name,
         label: name,
         description: spec.description,
         parameters: spec.parameters,
-        execute: async (_toolCallId, rawParams) => callPythonTool(name, rawParams)
+        execute: async (_toolCallId, rawParams) => jsonResult(await callPythonTool(SERVER, { ...process.env, ...BASE_ENV }, name, rawParams))
       }, { name });
     }
   }

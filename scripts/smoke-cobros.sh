@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$ROOT/tools/owlswatch_cobros/server.py"
 
 python3 -m py_compile "$SERVER"
+node --test "$ROOT/tools/owlswatch_cobros/tests/run-guards.test.mjs"
+python3 "$ROOT/tools/owlswatch_cobros/tests/test_retrieval.py"
 printf '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n' | python3 "$SERVER" >/tmp/owlswatch-cobros-tools.json
 grep -q 'owlswatch_cobros_search_gmail_threads' /tmp/owlswatch-cobros-tools.json
 grep -q 'owlswatch_cobros_create_packet' /tmp/owlswatch-cobros-tools.json
