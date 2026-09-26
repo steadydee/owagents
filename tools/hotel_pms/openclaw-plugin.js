@@ -2,6 +2,7 @@ import { definePluginEntry } from "openclaw/plugin-sdk/core";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { hostContext, confirmationReply } from "./approval-context.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = process.env.HOTEL_PMS_SERVER || join(HERE, "server.py");
@@ -188,17 +189,10 @@ const toolSchemas = {
     },
   },
   hotel_pms_create_reservation: {
-    description: "Create a PMS reservation from a pending PMS-prepared draft after staff replies si, or from a legacy confirmation code.",
+    description: "Return an already confirmed reservation. Only the authenticated /confirmar_reserva command can authorize creation.",
     parameters: {
-      type: "object",
-      properties: {
-        pendingId: { type: ["string", "null"] },
-        confirmationText: { type: ["string", "null"] },
-        confirmationCode: { type: ["string", "null"] },
-        idempotencyKey: { type: ["string", "null"] },
-        sourceMetadata: { type: ["object", "null"], additionalProperties: true },
-      },
-      additionalProperties: false,
+      type: "object", properties: { pendingId: { type: "string" } },
+      required: ["pendingId"], additionalProperties: false,
     },
   },
   hotel_registro_get_by_reservation: {
@@ -350,21 +344,23 @@ function jsonResult(value) {
   };
 }
 
-function callPythonTool(name, args) {
+function callPython(name, args, trusted = null, command = "call") {
   return new Promise((resolve) => {
-    const child = spawn("python3", [SERVER, "call", name], {
-      env: { ...process.env, ...BASE_ENV },
+    const child = spawn("python3", [SERVER, command, ...(command === "call" ? [name] : [])], {
+      env: { ...process.env, ...BASE_ENV, HOTEL_TRUSTED_CONTEXT: JSON.stringify(trusted ?? {}) },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let out = "";
     child.stdout.on("data", (chunk) => {
       out += chunk.toString();
     });
+    child.stderr.on("data", () => {});
+    child.on("error", () => resolve({ ok: false, error: { code: "tool_bridge_error", message: "Hotel tool process could not start.", retryable: false } }));
     child.on("close", () => {
       try {
-        resolve(jsonResult(JSON.parse(out || "{}")));
+        resolve(JSON.parse(out || "{}"));
       } catch {
-        resolve(jsonResult({ ok: false, error: { code: "tool_bridge_error", message: "Tool bridge returned invalid JSON.", retryable: false } }));
+        resolve({ ok: false, error: { code: "tool_bridge_error", message: "Tool bridge returned invalid JSON.", retryable: false } });
       }
     });
     child.stdin.end(JSON.stringify(args ?? {}));
@@ -378,15 +374,29 @@ export default definePluginEntry({
   register(api) {
     for (const [name, spec] of Object.entries(toolSchemas)) {
       api.registerTool(
-        {
+        (ctx) => ({
           name,
           label: name,
           description: spec.description,
           parameters: spec.parameters,
-          execute: async (_toolCallId, rawParams) => callPythonTool(name, rawParams),
-        },
+          execute: async (_toolCallId, rawParams) => jsonResult(await callPython(name, rawParams, hostContext(ctx))),
+        }),
         { name },
       );
     }
+    api.registerCommand({
+      name: "confirmar_reserva",
+      description: "Confirma la reserva preparada desde la misma cuenta y conversación.",
+      channels: ["telegram"], acceptsArgs: true, requireAuth: true,
+      handler: async (ctx) => {
+        const trusted = hostContext(ctx, { command: true });
+        const pendingId = String(ctx.args ?? "").trim();
+        if (!trusted || !/^[A-F0-9]{16}$/.test(pendingId)) {
+          return { text: "No pude verificar esta confirmación. Usa el comando exacto de la reserva preparada, en la misma cuenta y conversación, o revísala en PMS." };
+        }
+        const result = await callPython(null, { pendingId }, trusted, "approve-reservation");
+        return { text: confirmationReply(result) };
+      },
+    });
   },
 });

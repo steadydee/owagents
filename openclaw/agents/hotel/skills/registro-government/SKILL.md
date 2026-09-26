@@ -314,3 +314,11 @@ Registro run for <reservationId>: <guestCount> guests, <documentCount> documents
 Actual SIRE/TRA submission is only allowed through the configured submitter
 tool. Never drive the government websites directly from the model, and never
 manually mark a submission as complete without a government receipt/reference.
+
+# Recovery
+
+Never resend after `government_outcome_unknown` or
+`government_payload_changed`; ask the operator to reconcile portal evidence and
+PMS. Do not change identifiers or dates to bypass the journal. A
+`government_receipt_pending` result has a durable verified receipt: repeating
+the same operation records that receipt in PMS without submitting again.

@@ -102,3 +102,12 @@ Create audit should record:
 - idempotency key
 - PMS reservation ID
 - tool correlation ID
+
+## Hotel wrapper approval provenance
+
+PMS signatures establish payload integrity. Human approval is captured outside
+the model by `/confirmar_reserva <reference>`, using the host-authenticated
+Telegram sender, chat/topic and session. The wrapper binds these to the PMS
+payload hash and expiry and stores a single-use durable approval claim. Model
+`confirmationText`, booleans and copied source metadata grant no authority.
+Unknown create outcomes require PMS review instead of a second create attempt.

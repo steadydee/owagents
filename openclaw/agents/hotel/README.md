@@ -22,7 +22,9 @@ edit reservation details.
 
 Hotel cannot send guest messages, modify/cancel/delete reservations, toggle
 checklist items, or confirm availability. New reservation creation requires a
-PMS-prepared draft and a simple staff `sí` confirmation. Future guest-message
+PMS-prepared draft and authenticated native `/confirmar_reserva <reference>`
+confirmation from the same sender, chat/topic and session. Model calls cannot
+approve; uncertain create outcomes require PMS review. Future guest-message
 workflows should create drafts or staff reminders first.
 
 ## Model vs Tool Decisions
