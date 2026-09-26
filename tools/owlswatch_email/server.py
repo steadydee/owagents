@@ -27,6 +27,10 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import recovery
+import draft_journal
+
 WORKSPACE = Path(os.environ.get("OWLSWATCH_EMAIL_WORKSPACE", "~/.openclaw/workspace-owlswatch-correo")).expanduser()
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-owlswatch/openclaw.json")).expanduser()
 TASK_DIR = WORKSPACE / "tasks" / "email"
@@ -34,7 +38,6 @@ NOTIFICATION_DIR = WORKSPACE / "tasks" / "email_notifications"
 MEMORY_DIR = WORKSPACE / "memory"
 
 DEFAULT_LUNA_BASE_URL = "https://luna.owlswatch.com"
-DEFAULT_NOTIFY_CHAT_ID = "-1003949383737"
 DEFAULT_GMAIL_ACCOUNT = "info@owlswatch.com"
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\\-]{1,300}$")
@@ -188,11 +191,13 @@ def google_build_service(config: dict[str, Any], scopes: list[str]) -> Any:
     try:
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
+        from google_auth_httplib2 import AuthorizedHttp
+        import httplib2
     except Exception as exc:
         raise ToolError("dependency_missing", "Google API client libraries are not installed for the email tools.") from exc
     credentials = service_account.Credentials.from_service_account_file(google_credentials_path(config), scopes=scopes)
     credentials = credentials.with_subject(gmail_account(config))
-    return build("gmail", "v1", credentials=credentials)
+    return build("gmail", "v1", http=AuthorizedHttp(credentials, http=httplib2.Http(timeout=30)), cache_discovery=False)
 
 
 def luna_base_url(config: dict[str, Any]) -> str:
@@ -221,7 +226,10 @@ def telegram_token(config: dict[str, Any]) -> str:
 
 
 def email_notify_chat_id(config: dict[str, Any]) -> str:
-    return cfg_env(config, "OWLSWATCH_EMAIL_NOTIFY_CHAT_ID") or DEFAULT_NOTIFY_CHAT_ID
+    value = cfg_env(config, "OWLSWATCH_EMAIL_NOTIFY_CHAT_ID")
+    if not value:
+        raise ToolError("config_missing", "The fixed Correo Telegram destination must be configured.")
+    return value
 
 
 def email_notify_thread_id(config: dict[str, Any]) -> str | None:
@@ -307,6 +315,7 @@ def message_to_summary(message: dict[str, Any]) -> dict[str, Any]:
         "subject": headers.get("subject", ""),
         "date": date_iso,
         "messageIdHeader": headers.get("message-id"),
+        "replyTo": headers.get("reply-to"),
         "bodyText": extract_gmail_body(message.get("payload") or {}),
         "labelIds": message.get("labelIds") or [],
     }
@@ -330,7 +339,7 @@ def get_message(service: Any, message_id: str, fmt: str = "metadata") -> dict[st
 
 
 def thread_messages(thread: dict[str, Any]) -> list[dict[str, Any]]:
-    messages = [message_to_summary(m) for m in thread.get("messages") or []]
+    messages = [message_to_summary(m) for m in thread.get("messages") or [] if "DRAFT" not in m.get("labelIds", [])]
     return sorted(messages, key=lambda m: m.get("date") or "")
 
 
@@ -496,7 +505,7 @@ def read_notification(key: str) -> dict[str, Any] | None:
 
 def write_notification(key: str, record: dict[str, Any]) -> None:
     NOTIFICATION_DIR.mkdir(parents=True, exist_ok=True)
-    notification_path(key).write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+    recovery.atomic_json(notification_path(key), record)
 
 
 def recently_notified(key: str, cooldown_hours: int) -> bool:
@@ -520,7 +529,7 @@ def read_task(path: Path) -> dict[str, Any] | None:
 
 def write_task(task: dict[str, Any]) -> None:
     TASK_DIR.mkdir(parents=True, exist_ok=True)
-    task_path(str(task["taskId"])).write_text(json.dumps(task, ensure_ascii=False, indent=2) + "\n")
+    recovery.atomic_json(task_path(str(task["taskId"])), task)
 
 
 def sign_luna_token(config: dict[str, Any]) -> str:
@@ -629,6 +638,18 @@ def tool_gmail_search_unanswered_threads(args: dict[str, Any]) -> dict[str, Any]
     return {"ok": True, "query": query, "matches": matches}
 
 
+
+def compact_message(message):
+    if message is None:
+        return None
+    return {**message, "bodyText": str(message.get("bodyText") or "")[:6000],
+            "bodyTruncated": len(str(message.get("bodyText") or "")) > 6000}
+
+
+def compact_messages(messages):
+    return [compact_message(message) for message in messages[-6:]]
+
+
 def tool_gmail_read_thread(args: dict[str, Any]) -> dict[str, Any]:
     thread_id = validate_safe_id("threadId", args.get("threadId"))
     config = load_config()
@@ -640,8 +661,10 @@ def tool_gmail_read_thread(args: dict[str, Any]) -> dict[str, Any]:
         "thread": {
             "threadId": thread_id,
             "sourceUrl": gmail_source_url(thread_id),
-            "messages": messages,
-            "latestExternalMessage": latest_external_message(messages, gmail_account(config)),
+            "messages": compact_messages(messages),
+            "messageCount": len(messages),
+            "truncated": len(messages) > 6,
+            "latestExternalMessage": compact_message(latest_external_message(messages, gmail_account(config))),
         },
     }
 
@@ -669,8 +692,10 @@ def tool_gmail_resolve_url(args: dict[str, Any]) -> dict[str, Any]:
             "thread": {
                 "threadId": token,
                 "sourceUrl": gmail_source_url(token),
-                "messages": messages,
-                "latestExternalMessage": latest_external_message(messages, gmail_account(config)),
+                "messages": compact_messages(messages),
+            "messageCount": len(messages),
+            "truncated": len(messages) > 6,
+                "latestExternalMessage": compact_message(latest_external_message(messages, gmail_account(config))),
             },
         }
     except Exception:
@@ -686,8 +711,10 @@ def tool_gmail_resolve_url(args: dict[str, Any]) -> dict[str, Any]:
             "thread": {
                 "threadId": thread_id,
                 "sourceUrl": gmail_source_url(thread_id),
-                "messages": messages,
-                "latestExternalMessage": latest_external_message(messages, gmail_account(config)),
+                "messages": compact_messages(messages),
+            "messageCount": len(messages),
+            "truncated": len(messages) > 6,
+                "latestExternalMessage": compact_message(latest_external_message(messages, gmail_account(config))),
             },
         }
     except Exception:
@@ -738,22 +765,37 @@ def tool_email_upsert_task(args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ToolError("invalid_input", "task must be an object.")
     task_id = task_id_from(payload)
-    existing = read_task(task_path(task_id)) or {}
-    now = now_iso()
-    task = {
-        **existing,
-        **payload,
-        "taskId": task_id,
-        "status": validate_text("status", payload.get("status"), max_len=80) or existing.get("status") or "proposed",
-        "updatedAt": now,
-        "createdAt": existing.get("createdAt") or now,
-    }
-    write_task(task)
-    return {"ok": True, "taskId": task_id, "taskPath": str(task_path(task_id)), "status": task["status"]}
+    with recovery.lock(sys.modules[__name__]):
+        existing = read_task(task_path(task_id)) or {}
+        status = recovery.canonical_status(payload.get("status") or existing.get("status") or "proposed")
+        if status not in recovery.OPEN_STATUSES | {"ignored", "rejected", "superseded"}:
+            raise ToolError("invalid_status", "Use an open status or an explicit dismissal; Gmail confirms completed replies.")
+        config = load_config()
+        priority = payload.get("priority") or existing.get("priority") or "normal"
+        if priority not in {"low", "normal", "high", "urgent"}:
+            raise ToolError("invalid_priority", "Unknown priority.")
+        next_action = payload.get("nextActionAt") or existing.get("nextActionAt")
+        if next_action and not parse_iso_datetime(next_action):
+            raise ToolError("invalid_input", "nextActionAt must be an ISO timestamp.")
+        if not next_action:
+            hours = 2 if priority == "urgent" else 8 if priority == "high" else 24
+            next_action = (now_utc() + dt.timedelta(hours=hours)).isoformat()
+        task = {**existing, **payload, "taskId": task_id, "status": status, "priority": priority,
+                "owner": existing.get("owner") or cfg_env(config, "OWLSWATCH_EMAIL_REVIEW_OWNER") or "unassigned",
+                "nextActionAt": next_action, "updatedAt": now_iso(), "createdAt": existing.get("createdAt") or now_iso()}
+        if status == "draft_ready":
+            thread = recovery.thread_id(task)
+            source_id = task.get("sourceMessageId")
+            key = hashlib.sha256(f"{gmail_account(config)}:{thread}:{source_id}".encode()).hexdigest()
+            operation = recovery.read_json(recovery.root(sys.modules[__name__]) / "draft_operations" / f"{key}.json")
+            if operation.get("status") != "confirmed" or operation.get("gmailDraftId") != task.get("gmailDraftId"):
+                raise ToolError("draft_not_confirmed", "Use the confirmed ensure-draft result and exact sourceMessageId.")
+        write_task(task)
+    return {"ok": True, **recovery.compact_task(task)}
 
 
 def tool_email_list_open_tasks(args: dict[str, Any]) -> dict[str, Any]:
-    statuses = args.get("statuses") or ["draft_ready", "needs_human", "needs_info", "error", "proposed"]
+    statuses = args.get("statuses") or sorted(recovery.OPEN_STATUSES)
     if not isinstance(statuses, list) or not all(isinstance(s, str) for s in statuses):
         raise ToolError("invalid_input", "statuses must be an array of strings.")
     limit = int(args.get("limit") or 25)
@@ -769,7 +811,7 @@ def tool_email_list_open_tasks(args: dict[str, Any]) -> dict[str, Any]:
     tasks = []
     for path in sorted(TASK_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         task = read_task(path)
-        if not task or task.get("status") not in statuses:
+        if not task or recovery.canonical_status(task.get("status")) not in statuses:
             continue
         if cutoff:
             message_time = latest_task_message_time(task)
@@ -779,39 +821,27 @@ def tool_email_list_open_tasks(args: dict[str, Any]) -> dict[str, Any]:
             relevant_time = message_time or fallback_time
             if not relevant_time or relevant_time < cutoff:
                 continue
-        tasks.append(task)
+        tasks.append(recovery.compact_task(task))
         if len(tasks) >= limit:
             break
     return {"ok": True, "tasks": tasks}
 
 
 def tool_gmail_create_draft(args: dict[str, Any]) -> dict[str, Any]:
-    config = load_config()
-    if not gmail_drafts_enabled(config):
-        return {"ok": False, "error": {"code": "gmail_drafts_disabled", "message": "Gmail draft creation is disabled until compose scope is approved.", "retryable": False}}
-    thread_id = validate_safe_id("threadId", args.get("threadId"))
-    to_email = validate_text("to", args.get("to"), required=True, max_len=240)
-    subject = validate_text("subject", args.get("subject"), required=True, max_len=300)
-    body = validate_text("body", args.get("body"), required=True, max_len=50000)
-    service = google_build_service(config, ["https://www.googleapis.com/auth/gmail.compose"])
-    msg = EmailMessage()
-    msg["To"] = to_email
-    msg["From"] = gmail_account(config)
-    msg["Subject"] = subject
-    if args.get("inReplyTo"):
-        msg["In-Reply-To"] = str(args.get("inReplyTo"))
-        msg["References"] = str(args.get("inReplyTo"))
-    msg.set_content(body)
-    raw = b64url(msg.as_bytes())
-    draft = service.users().drafts().create(userId="me", body={"message": {"raw": raw, "threadId": thread_id}}).execute()
-    return {"ok": True, "gmailDraftId": draft.get("id"), "threadId": thread_id}
+    return draft_journal.ensure(sys.modules[__name__], args)
+
+
+def tool_email_acknowledge_item(args: dict[str, Any]) -> dict[str, Any]:
+    return recovery.acknowledge(sys.modules[__name__], args)
 
 
 def tool_email_send_telegram_message(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
-    chat_id = str(args.get("chat_id") or email_notify_chat_id(config))
+    if "chat_id" in args or "message_thread_id" in args:
+        raise ToolError("destination_override_denied", "Telegram destinations are fixed by runtime configuration.")
+    chat_id = str(email_notify_chat_id(config))
     text = validate_text("text", args.get("text"), required=True, max_len=3900)
-    thread_id = args.get("message_thread_id") or email_notify_thread_id(config)
+    thread_id = email_notify_thread_id(config)
     force = bool(args.get("force"))
     dedupe_hours = int(args.get("dedupeHours") or 24)
     if not 1 <= dedupe_hours <= 168:
@@ -877,7 +907,8 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
     "owlswatch_email_upsert_task": ("Create or update a durable local email draft/review task.", {"type": "object", "properties": {"task": {"type": "object", "additionalProperties": True}}, "required": ["task"], "additionalProperties": False}, tool_email_upsert_task),
     "owlswatch_email_list_open_tasks": ("List durable local email tasks needing review or summary.", {"type": "object", "properties": {"statuses": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}, "maxAgeHours": {"type": "integer", "minimum": 1, "maximum": 720}, "requireRecentExternal": {"type": "boolean"}}, "additionalProperties": False}, tool_email_list_open_tasks),
     "owlswatch_email_create_gmail_draft": ("Create a Gmail draft in the original thread when compose scope is explicitly enabled. Never sends.", {"type": "object", "properties": {"threadId": {"type": "string"}, "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "inReplyTo": {"type": ["string", "null"]}}, "required": ["threadId", "to", "subject", "body"], "additionalProperties": False}, tool_gmail_create_draft),
-    "owlswatch_email_send_telegram_message": ("Send an email-agent Telegram notification to the configured Owl's Watch ops chat/topic. Gmail-thread links are automatically deduped for 24 hours unless force=true.", {"type": "object", "properties": {"text": {"type": "string"}, "chat_id": {"type": ["string", "number", "null"]}, "message_thread_id": {"type": ["string", "number", "null"]}, "dedupeKey": {"type": ["string", "null"]}, "dedupeHours": {"type": "integer", "minimum": 1, "maximum": 168}, "force": {"type": "boolean"}}, "required": ["text"], "additionalProperties": False}, tool_email_send_telegram_message),
+    "owlswatch_email_send_telegram_message": ("Send an email-agent Telegram notification to the configured Owl's Watch ops chat/topic. Gmail-thread links are automatically deduped for 24 hours unless force=true.", {"type": "object", "properties": {"text": {"type": "string"}, "dedupeKey": {"type": ["string", "null"]}, "dedupeHours": {"type": "integer", "minimum": 1, "maximum": 168}, "force": {"type": "boolean"}}, "required": ["text"], "additionalProperties": False}, tool_email_send_telegram_message),
+    "owlswatch_email_acknowledge_item": ("Acknowledge one exact scheduled scan item after verified task/draft and Telegram handoff, or a deliberate ignored classification.", {"type": "object", "properties": {"scanId": {"type": "string"}, "threadId": {"type": "string"}, "sourceMessageId": {"type": "string"}, "outcome": {"type": "string", "enum": ["ignored", "task_saved"]}, "taskId": {"type": "string"}}, "required": ["scanId", "threadId", "sourceMessageId", "outcome"], "additionalProperties": False}, tool_email_acknowledge_item),
     "owlswatch_email_memory_log": ("Append one concise Correo memory line.", {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"], "additionalProperties": False}, tool_email_memory_log),
 }
 

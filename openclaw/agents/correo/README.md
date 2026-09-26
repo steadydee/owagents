@@ -43,3 +43,25 @@ Operations remains the source of truth for expenses and cuentas de cobro. Luna i
 only a context provider.
 
 Correo never auto-sends.
+
+## Scheduled operation
+
+The installed runner checks Gmail history before starting the model. Unchanged
+polls use no model turn. Changed work is delivered in batches of four with an
+exact scan/message identity; each item needs a durable acknowledgement after
+its saved task and Telegram handoff. Failures keep that item pending. Gmail
+remains the only human review/send interface.
+
+Configure `OWLSWATCH_EMAIL_NOTIFY_CHAT_ID` and the optional topic explicitly;
+model-selected destinations are rejected. Set `OWLSWATCH_EMAIL_REVIEW_OWNER` to
+a real accountable reviewer if desired; otherwise new tasks say `unassigned`.
+The tool supplies next-action times and retains waiting-for-quote/payment/
+availability states in open work. The unanswered schedule provides a separate
+metadata follow-up queue, including older work, instead of silently dropping
+unresolved records after seven days. A bounded Gmail reconciliation sweep
+closes tasks only after a confirmed sent reply.
+
+Structured run/attempt results and resumable checkpoints live under
+`tasks/email_runtime/`. Never clear a failed scan because a model said “done”.
+Unknown Gmail draft outcomes require reconciliation; repeated ensure requests
+reuse a confirmed draft rather than creating another.

@@ -36,6 +36,7 @@ fi
 
 mkdir -p "$PLIST_DIR" "$(dirname "$ENABLED_FILE")" "$BIN_DIR" /tmp/openclaw
 install -m 700 "$ROOT/scripts/run-hotel-registro-pickup.sh" "$RUNNER"
+install -m 700 "$ROOT/scripts/run-hotel-tool-job.py" "$BIN_DIR/run-hotel-tool-job.py"
 touch "$ENABLED_FILE"
 
 cat > "$PLIST_DIR/$LABEL.plist" <<PLIST
@@ -56,7 +57,11 @@ PLIST
 
 plist="$PLIST_DIR/$LABEL.plist"
 launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$plist"
+if launchctl print "system/$LABEL" >/dev/null 2>&1; then
+  launchctl disable "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+else
+  launchctl bootstrap "gui/$(id -u)" "$plist"
+fi
 
 echo "Installed Hotel Registro pickup schedule"
 echo "Registro pickup: 17:00 America/Bogota"

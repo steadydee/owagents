@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT/scripts/assert-release-ready.sh"
+"$ROOT/scripts/smoke-platform.sh"
 "$ROOT/scripts/remove-external-telegram-watchdogs.sh"
 
 WORKSPACE="${FINCA_WORKSPACE:-$HOME/.openclaw/workspace-finca-ops}"
@@ -57,3 +58,5 @@ python3 -m unittest discover -s "$ROOT/tools/finca_tasks/tests" >/dev/null
 echo "Finca source deployed. Runtime state and secrets were preserved."
 echo "Backup: $BACKUP_DIR"
 echo "Deployed git commit: $(git -C "$ROOT" rev-parse HEAD)"
+
+python3 "$ROOT/scripts/record-release.py" --profile finca --workspace "$WORKSPACE"

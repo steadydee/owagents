@@ -7,7 +7,7 @@ Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegr
 - `main`: conductor only. No business side-effect tools.
 - `cuenta`: creates expense drafts only.
 - `cotiza`: creates quote drafts and Drive quote sheets only.
-- `correo`: creates Email Desk tasks and Gmail drafts only. It does not send final emails.
+- `correo`: creates local review records and Gmail drafts only. Gmail is the human review interface. It does not send final emails.
 - `cobros`: creates cuenta de cobro Drive Doc/PDF packets, Gmail drafts with attached PDFs, and Email Desk review tasks only. It does not send final emails.
 - `hotel`: reads PMS reservation operations data, creates reservations only through the guarded PMS prepare/confirm flow, and sends staff-only Telegram notifications. It does not modify or cancel reservations or send guest messages.
 - `finca`: creates and updates only the Operations finca-task subsystem, attaches task photos, and sends the daily worker task report from its own profile and bot.
@@ -75,9 +75,16 @@ Allowed:
 
 - Search/read the configured Owl's Watch Gmail account.
 - Fetch guest-shareable Luna context through `get_email_response_context`.
-- Submit Email Desk draft tasks and scan summaries to Operations.
+- Persist local review records with an owner (or explicit `unassigned`) and next-action date; reconcile closure only against Gmail SENT replies.
+- Acknowledge an exact changed-message candidate with `owlswatch_email_acknowledge_item` only after a persisted review result or explicit ignored classification. This narrow tool advances scan state; it cannot send email.
 - Create Gmail drafts only when compose scope and config explicitly enable it.
 - Send short Telegram notifications.
+
+Correo's Gmail history cursor and durable acknowledgements bound each scan to
+changed messages. A process exit or model claim cannot acknowledge a message.
+Draft writes are journaled before the provider call and reconciled by operation
+identity after an uncertain outcome; the tool never blindly recreates a draft.
+Recipients derive from the stored source; Telegram routes come from configuration.
 
 Forbidden:
 
@@ -108,6 +115,15 @@ Forbidden:
 - Use quote prices or historical examples as accounting truth.
 - Access unrelated Operations modules or direct databases.
 
+Cobros stores immutable preparations and source references. Document and draft
+tools accept only server-issued `preparedId` values, not model-provided banking
+fields, packet paths, or approval flags. Corrections require human review;
+`human_override` cannot authorize them. Concurrent writes use local locks and a
+durable stage journal; unknown provider outcomes require reconciliation before
+continuing. Searches and reads have per-run limits. Keep `spool/cobros/state`
+across releases. Gmail recipients derive from stored source messages or the
+explicit manual-source recipient setting, and Telegram destinations are fixed.
+
 ## Hotel
 
 Allowed:
@@ -125,6 +141,18 @@ Forbidden:
 - Confirm availability.
 - Access PMS direct database credentials.
 - Use broad PMS write, finance, admin, or restricted tools.
+
+Reservation approval is an authenticated native Telegram command,
+`/confirmar_reserva <reference>`, bound to the preparing sender, conversation,
+topic, session, exact draft payload and expiry. A model's `sí` or confirmation
+argument never authorizes a booking. Missing host authorization context falls
+back to human review in PMS. Claims are single-use and durably journaled.
+
+Government submissions journal each external step and receipt before advancing.
+Unknown outcomes block resubmission; a known receipt with a failed PMS save
+retries only that save. Preserve `state/government-submissions` and reservation
+approval journals. One host and one active supervisor per profile are required
+for these local locks. All staff notification destinations are configuration-bound.
 
 ## Finca
 
@@ -191,3 +219,13 @@ Any change that broadens tools must include:
 ## Secrets
 
 Never commit tokens, service-account JSON, auth profiles, runtime sessions, memory logs, receipt spools, raw Gmail content, or generated quote sheets.
+
+## Runtime control
+
+The native `owlswatch-runtime-guard` plugin exposes no model tools. It applies
+trusted run limits, records content-free usage/outcomes, and pauses requests to
+a provider for 30 minutes after an observed insufficient-credit failure. It does
+not hold provider credentials or infer approval. Paid idle heartbeats are
+disabled; deterministic schedule preflights decide whether a model is needed.
+Duplicate legacy MCP registrations are disabled only when the corresponding
+native plugin is enabled; their environment configuration is preserved.

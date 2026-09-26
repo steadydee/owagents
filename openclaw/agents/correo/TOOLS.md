@@ -22,3 +22,10 @@ Forbidden:
 - direct database access
 - token handling in prompts or replies
 - writing email draft tasks or scan runs to Operations
+
+Scheduled handoff additionally uses `owlswatch_email_acknowledge_item` with
+`scanId`, `threadId`, `sourceMessageId`, `outcome` (`task_saved` or `ignored`),
+and `taskId` for actionable items. This is an acknowledgement, never approval
+or final email send authority. Telegram destinations are fixed in runtime config;
+the tool does not accept destination overrides. Gmail draft recipients must match
+the current external sender's reply address.

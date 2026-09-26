@@ -10,6 +10,12 @@ Runtime profile:
 - Correo workspace: `~/.openclaw/workspace-owlswatch-correo`
 - Cobros workspace: `~/.openclaw/workspace-owlswatch-cobros`
 
+Use a clean release checkout on `main` that exactly matches `origin/main`.
+Follow [runtime limits and recovery](runbooks/agent-runtime-recovery.md) for
+configuration hardening, dependency verification, durable-state preservation,
+schedule refresh and health verification. The deployment scripts now run the
+combined platform smoke gate and record a source manifest per profile.
+
 Deploy source:
 
 ```sh

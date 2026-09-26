@@ -12,7 +12,11 @@
       },
       "model": {
         "primary": "openai/gpt-5.5"
-      }
+      },
+      "heartbeat": {
+        "every": "0m"
+      },
+      "timeoutSeconds": 600
     },
     "list": [
       {
@@ -57,7 +61,9 @@
         },
         "workspace": "~/.openclaw/workspace-owlswatch",
         "agentDir": "~/.openclaw-owlswatch/agents/cuenta/agent",
-        "skills": ["intake-receipt"],
+        "skills": [
+          "intake-receipt"
+        ],
         "tools": {
           "profile": "minimal",
           "alsoAllow": [
@@ -97,7 +103,9 @@
           }
         },
         "workspace": "~/.openclaw/workspace-owlswatch-cotiza",
-        "skills": ["quote-draft"],
+        "skills": [
+          "quote-draft"
+        ],
         "tools": {
           "profile": "minimal",
           "alsoAllow": [
@@ -134,7 +142,9 @@
           }
         },
         "workspace": "~/.openclaw/workspace-owlswatch-correo",
-        "skills": ["email-draft"],
+        "skills": [
+          "email-draft"
+        ],
         "tools": {
           "profile": "minimal",
           "alsoAllow": [
@@ -148,7 +158,8 @@
             "owlswatch_email_create_gmail_draft",
             "owlswatch_email_send_telegram_message",
             "owlswatch_email_memory_log",
-            "owlswatch_quote_prepare"
+            "owlswatch_quote_prepare",
+            "owlswatch_email_acknowledge_item"
           ],
           "deny": [
             "exec",
@@ -175,7 +186,9 @@
           }
         },
         "workspace": "~/.openclaw/workspace-owlswatch-cobros",
-        "skills": ["cuenta-cobro"],
+        "skills": [
+          "cuenta-cobro"
+        ],
         "tools": {
           "profile": "minimal",
           "alsoAllow": [
@@ -212,7 +225,9 @@
           }
         },
         "workspace": "~/.openclaw/workspace-owlswatch-registro",
-        "skills": ["registro-processing"],
+        "skills": [
+          "registro-processing"
+        ],
         "tools": {
           "profile": "minimal",
           "alsoAllow": [
@@ -259,7 +274,10 @@
       "enabled": true,
       "botToken": "<telegram-bot-token-runtime-only>",
       "dmPolicy": "allowlist",
-      "allowFrom": ["<dennis_chat_id>", "<adriana_chat_id>"],
+      "allowFrom": [
+        "<dennis_chat_id>",
+        "<adriana_chat_id>"
+      ],
       "groupPolicy": "allowlist",
       "groups": {
         "<owl_watch_ops_group_id>": {
@@ -300,14 +318,19 @@
           "ingest": true
         }
       },
-      "groupAllowFrom": ["<dennis_chat_id>", "<adriana_chat_id>"]
+      "groupAllowFrom": [
+        "<dennis_chat_id>",
+        "<adriana_chat_id>"
+      ]
     }
   },
   "mcp": {
     "servers": {
       "owlswatch_intake": {
         "command": "python3",
-        "args": ["~/.openclaw/workspace-owlswatch/tools/owlswatch_intake/server.py"],
+        "args": [
+          "~/.openclaw/workspace-owlswatch/tools/owlswatch_intake/server.py"
+        ],
         "env": {
           "OWLSWATCH_WORKSPACE": "~/.openclaw/workspace-owlswatch",
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
@@ -315,11 +338,14 @@
           "EXPENSE_INTAKE_API_TOKEN": "<runtime-only>",
           "OWLSWATCH_VISION_MODEL": "gpt-4o-mini",
           "OPENAI_API_KEY": "<runtime-only>"
-        }
+        },
+        "enabled": false
       },
       "owlswatch_quotes": {
         "command": "python3",
-        "args": ["~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes/server.py"],
+        "args": [
+          "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes/server.py"
+        ],
         "env": {
           "OWLSWATCH_COTIZA_WORKSPACE": "~/.openclaw/workspace-owlswatch-cotiza",
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
@@ -331,11 +357,14 @@
           "GOOGLE_WORKSPACE_IMPERSONATE_USER": "info@owlswatch.com",
           "OWLSWATCH_QUOTES_MOCKS": "0",
           "OWLSWATCH_GMAIL_QUOTE_LABEL": "*"
-        }
+        },
+        "enabled": false
       },
       "owlswatch_email": {
         "command": "python3",
-        "args": ["~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email/server.py"],
+        "args": [
+          "~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email/server.py"
+        ],
         "env": {
           "OWLSWATCH_EMAIL_WORKSPACE": "~/.openclaw/workspace-owlswatch-correo",
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
@@ -346,11 +375,14 @@
           "OWLSWATCH_EMAIL_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
           "OWLSWATCH_EMAIL_NOTIFY_THREAD_ID": "<optional_email_topic_id>",
           "OWLSWATCH_GMAIL_DRAFTS_ENABLED": "1"
-        }
+        },
+        "enabled": false
       },
       "owlswatch_cobros": {
         "command": "python3",
-        "args": ["~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros/server.py"],
+        "args": [
+          "~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros/server.py"
+        ],
         "env": {
           "OWLSWATCH_COBROS_WORKSPACE": "~/.openclaw/workspace-owlswatch-cobros",
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
@@ -364,11 +396,14 @@
           "OWLSWATCH_COBROS_PROFILES_PATH": "~/.openclaw/workspace-owlswatch-cobros/data/cobros/operator-billing-profiles.yaml",
           "OWLSWATCH_COBROS_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
           "OWLSWATCH_COBROS_NOTIFY_THREAD_ID": "<optional_cobros_topic_id>"
-        }
+        },
+        "enabled": false
       },
       "registro_compliance": {
         "command": "python3",
-        "args": ["~/.openclaw/workspace-owlswatch-registro/tools/registro_compliance/server.py"],
+        "args": [
+          "~/.openclaw/workspace-owlswatch-registro/tools/registro_compliance/server.py"
+        ],
         "env": {
           "REGISTRO_WORKSPACE": "~/.openclaw/workspace-owlswatch-registro",
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
@@ -382,7 +417,8 @@
           "REGISTRO_TELEGRAM_BOT_TOKEN": "<telegram-bot-token-runtime-only>",
           "REGISTRO_TELEGRAM_NOTIFY_CHAT_ID": "<owl_watch_ops_group_id>",
           "REGISTRO_TELEGRAM_NOTIFY_THREAD_ID": "<optional_registro_topic_id>"
-        }
+        },
+        "enabled": false
       }
     }
   },
@@ -408,6 +444,9 @@
       },
       "registro-compliance": {
         "enabled": true
+      },
+      "owlswatch-runtime-guard": {
+        "enabled": true
       }
     },
     "load": {
@@ -416,13 +455,29 @@
         "~/.openclaw/workspace-owlswatch-cotiza/tools/owlswatch_quotes",
         "~/.openclaw/workspace-owlswatch-correo/tools/owlswatch_email",
         "~/.openclaw/workspace-owlswatch-cobros/tools/owlswatch_cobros",
-        "~/.openclaw/workspace-owlswatch-registro/tools/registro_compliance"
+        "~/.openclaw/workspace-owlswatch-registro/tools/registro_compliance",
+        "~/.openclaw-owlswatch/tools/agent_runtime_guard"
       ]
     }
   },
   "messages": {
     "groupChat": {
       "visibleReplies": "message_tool"
+    }
+  },
+  "tools": {
+    "loopDetection": {
+      "enabled": true,
+      "historySize": 30,
+      "warningThreshold": 4,
+      "criticalThreshold": 8,
+      "globalCircuitBreakerThreshold": 12,
+      "unknownToolThreshold": 3,
+      "detectors": {
+        "genericRepeat": true,
+        "knownPollNoProgress": true,
+        "pingPong": true
+      }
     }
   }
 }

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Narrow PMS tools for the Hotel operations agent.
 
-Hotel is a read-only operations clerk. It calls the PMS tool runtime with a
-short-lived machine token and sends staff-facing Telegram notifications. It
-does not read the database directly and does not send guest messages.
+Hotel is a narrow operations clerk. It calls the PMS tool runtime with a
+short-lived machine token, requires authenticated human reservation approval,
+and journals government submissions. It never reads the database directly or
+sends guest messages.
 """
 
 from __future__ import annotations
@@ -30,6 +31,12 @@ import http.cookiejar
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
+
+# Resolve only sibling trusted code when imported by the standalone test runner.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from durable_state import StateError, atomic_json
+import reservation_guard
+import submission_journal
 
 WORKSPACE = Path(os.environ.get("HOTEL_PMS_WORKSPACE", "~/.openclaw/workspace-hotel-ops")).expanduser()
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-hotel/openclaw.json")).expanduser()
@@ -141,7 +148,7 @@ def now_iso() -> str:
 
 
 def sanitized_error(exc: Exception) -> dict[str, Any]:
-    if isinstance(exc, ToolError):
+    if isinstance(exc, (ToolError, StateError)):
         return {"ok": False, "error": {"code": exc.code, "message": exc.message, "retryable": exc.retryable}}
     if os.environ.get("HOTEL_PMS_DEBUG") == "1":
         return {"ok": False, "error": {"code": "internal_error", "message": str(exc), "retryable": False}}
@@ -516,7 +523,7 @@ def cleanup_expired_reservation_drafts() -> None:
             continue
 
 
-def store_reservation_draft(pms_result: dict[str, Any], request_payload: dict[str, Any]) -> str:
+def store_reservation_draft(pms_result: dict[str, Any], request_payload: dict[str, Any], trusted: dict[str, Any] | None = None) -> str:
     code = validate_confirmation_code(pms_result.get("confirmationCode"))
     token = pms_result.get("preparedToken")
     if not isinstance(token, str) or not token.strip():
@@ -540,10 +547,12 @@ def store_reservation_draft(pms_result: dict[str, Any], request_payload: dict[st
         "createdAt": now_iso(),
         "status": "prepared",
     }
-    text = json.dumps(payload, ensure_ascii=False, indent=2)
-    draft_file_for_pending_id(pending_id).write_text(text, encoding="utf-8")
-    # Keep a code-indexed copy for backwards compatibility with older CREAR <CODE> prompts.
-    draft_file_for_code(code).write_text(text, encoding="utf-8")
+    if trusted:
+        payload["approvalBinding"] = reservation_guard.binding(trusted)
+        payload["approvalPayloadHash"] = reservation_guard.draft_hash(payload)
+    atomic_json(draft_file_for_pending_id(pending_id), payload)
+    # Legacy indexes remain readable for audits; they cannot approve creation.
+    atomic_json(draft_file_for_code(code), payload)
     return pending_id
 
 
@@ -2195,6 +2204,12 @@ def tool_hotel_pms_get_ari_outbox_health(args: dict[str, Any]) -> dict[str, Any]
 def tool_hotel_pms_prepare_reservation(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     payload = validate_prepare_payload(args)
+    try:
+        trusted = reservation_guard.trusted_context()
+    except StateError:
+        trusted = None
+    # Audit identity comes exclusively from the host, never model sourceMetadata.
+    payload["sourceMetadata"] = {"source": "telegram", "telegramChatId": trusted["chatId"], "telegramUserId": trusted["senderId"], "telegramMessageThreadId": trusted.get("threadId")} if trusted else {"source": "agent"}
     date_guard = source_text_date_year_guard(args, payload)
     if date_guard:
         return {"ok": True, "prepare": date_guard}
@@ -2208,52 +2223,56 @@ def tool_hotel_pms_prepare_reservation(args: dict[str, Any]) -> dict[str, Any]:
     status = result.get("status")
     safe_result = staff_safe_value(result)
     if status == "ready":
-        pending_id = store_reservation_draft(result, payload)
+        if trusted is None:
+            return {"ok": True, "prepare": {"status": "blocked", "reason": "trusted_context_required", "instruction": "No pude verificar la conversación. Revisa y crea la reserva en PMS.", "pmsUrl": f"{pms_base_url(config)}/reservations/new"}}
+        pending_id = store_reservation_draft(result, payload, trusted)
         if not isinstance(safe_result, dict):
             safe_result = {}
         safe_result.pop("confirmationCode", None)
         safe_result["pendingId"] = pending_id
         safe_result["confirmationRequired"] = True
-        safe_result["instruction"] = "Responde si para confirmar y crearla en PMS."
+        safe_result["instruction"] = f"Confirma desde esta misma cuenta y conversación: /confirmar_reserva {pending_id}"
     return {"ok": True, "prepare": safe_result}
 
 
-def tool_hotel_pms_create_reservation(args: dict[str, Any]) -> dict[str, Any]:
+def create_bound_reservation(args: dict[str, Any], *, approve: bool = False) -> dict[str, Any]:
     config = load_config()
-    pending_id_raw = args.get("pendingId")
-    confirmation_code_raw = args.get("confirmationCode")
-    if pending_id_raw is not None:
-        pending_id = validate_pending_id(pending_id_raw)
-        validate_yes_confirmation(args.get("confirmationText"))
-        draft = load_reservation_draft(pending_id, by_pending_id=True)
-        code = validate_confirmation_code(draft.get("confirmationCode"))
-    elif confirmation_code_raw is not None:
-        code = validate_confirmation_code(confirmation_code_raw)
-        draft = load_reservation_draft(code)
-    else:
-        raise ToolError("invalid_input", "pendingId or confirmationCode is required.")
-    prepared_token = draft.get("preparedToken")
-    if not isinstance(prepared_token, str) or not prepared_token.strip():
-        raise ToolError("prepared_draft_invalid", "Pending reservation draft is missing its PMS token.")
+    context = reservation_guard.trusted_context(approval=approve)
+    pending_id = validate_pending_id(args.get("pendingId"))
+    draft = load_reservation_draft(pending_id, by_pending_id=True)
 
-    source_metadata = merge_source_metadata(draft.get("sourceMetadata"), args.get("sourceMetadata"))
-    payload = clean_payload({
-        "preparedToken": prepared_token,
-        "confirmationCode": code,
-        "idempotencyKey": validate_safe_id("idempotencyKey", args.get("idempotencyKey"), required=False) or draft.get("idempotencyKey"),
-        "sourceMetadata": source_metadata,
-    })
-    result = pms_tool(config, "agent_create_reservation", payload, profile="create")
-    if not isinstance(result, dict):
-        raise ToolError("pms_contract_error", "PMS create response was malformed.")
+    def create(approval: dict[str, Any]) -> dict[str, Any]:
+        payload = clean_payload({
+            "preparedToken": draft.get("preparedToken"),
+            "confirmationCode": draft.get("confirmationCode"),
+            "idempotencyKey": draft.get("idempotencyKey"),
+            "sourceMetadata": {
+                "source": "telegram",
+                "telegramChatId": context["chatId"],
+                "telegramUserId": context["senderId"],
+                "telegramMessageThreadId": context.get("threadId"),
+                "confirmationEventId": approval["eventId"],
+            },
+        })
+        result = pms_tool(config, "agent_create_reservation", payload, profile="create")
+        if not isinstance(result, dict) or not isinstance(result.get("reservationId") or result.get("id"), str):
+            raise ToolError("pms_contract_error", "PMS create response did not identify a created reservation. Review PMS before retrying.")
+        safe = staff_safe_value(result)
+        if isinstance(safe, dict):
+            reservation_id = safe.get("reservationId") or safe.get("id")
+            if isinstance(reservation_id, str):
+                safe["pmsUrl"] = f"{pms_base_url(config)}/reservations/{urllib.parse.quote(reservation_id)}"
+        return {"ok": True, "reservation": safe}
 
-    safe_result = staff_safe_value(result)
-    if isinstance(safe_result, dict):
-        reservation_id = safe_result.get("reservationId") or safe_result.get("id")
-        if isinstance(reservation_id, str) and "pmsUrl" not in safe_result and "url" not in safe_result:
-            safe_result["pmsUrl"] = f"{pms_base_url(config)}/reservations/{urllib.parse.quote(reservation_id)}"
-    mark_reservation_draft_created(draft, result)
-    return {"ok": True, "reservation": safe_result}
+    return reservation_guard.execute_approved(
+        RESERVATION_DRAFT_DIR / "approvals", pending_id, draft, context, approve, create,
+    )
+
+
+def tool_hotel_pms_create_reservation(args: dict[str, Any]) -> dict[str, Any]:
+    # This model-facing tool can return an already-created result, but it can
+    # never turn text, booleans, IDs or a legacy code into human approval.
+    return create_bound_reservation(args)
 
 
 def tool_hotel_registro_get_by_reservation(args: dict[str, Any]) -> dict[str, Any]:
@@ -3260,7 +3279,10 @@ def call_tra_api_submitter(config: dict[str, Any], prepared: dict[str, Any], tok
         "x-ow-request-source": "hotel_registro_submitter",
         "x-ow-correlation-id": f"hotel-tra-{int(time.time())}-{os.getpid()}",
     }
-    primary_response = http_json(tra_api_one_url(config), primary_payload, headers, timeout=45)
+    primary_response = submission_journal.external_step(
+        "tra-primary", lambda: http_json(tra_api_one_url(config), primary_payload, headers, timeout=45),
+        lambda response: bool(tra_api_primary_code(response)),
+    )
     primary_code = tra_api_primary_code(primary_response)
     if not primary_code:
         return {
@@ -3270,9 +3292,12 @@ def call_tra_api_submitter(config: dict[str, Any], prepared: dict[str, Any], tok
             "responseSummary": safe_submission_response_summary(primary_response),
         }
     companion_summaries: list[dict[str, Any]] = []
-    for companion in companions:
+    for index, companion in enumerate(companions):
         companion_payload = {**companion, "padre": primary_code}
-        companion_response = http_json(tra_api_two_url(config), companion_payload, headers, timeout=45)
+        companion_response = submission_journal.external_step(
+            f"tra-companion-{index}", lambda: http_json(tra_api_two_url(config), companion_payload, headers, timeout=45),
+            lambda response: isinstance(response, dict) and str(response.get("status", "")).lower() in {"ok", "success", "submitted"},
+        )
         companion_summaries.append(safe_submission_response_summary(companion_response))
     return {
         "ok": True,
@@ -3327,7 +3352,7 @@ def call_tra_submitter(config: dict[str, Any], prepared: dict[str, Any]) -> dict
     token = tra_api_token(config)
     if token:
         if url:
-            response = http_json(
+            response = submission_journal.external_step("tra-adapter", lambda: http_json(
                 url,
                 prepared_government_payload(prepared),
                 {
@@ -3336,7 +3361,7 @@ def call_tra_submitter(config: dict[str, Any], prepared: dict[str, Any]) -> dict
                     "x-ow-correlation-id": f"hotel-tra-{int(time.time())}-{os.getpid()}",
                 },
                 timeout=45,
-            )
+            ))
             receipt = receipt_reference_from_response(response)
             if not receipt:
                 return {
@@ -3352,7 +3377,9 @@ def call_tra_submitter(config: dict[str, Any], prepared: dict[str, Any]) -> dict
                 "responseSummary": safe_submission_response_summary(response),
             }
         return call_tra_api_submitter(config, prepared, token)
-    return call_tra_form_submitter(config, prepared)
+    if not tra_username(config) or not tra_password(config):
+        return {"ok": False, "status": "blocked", "reason": "tra_credentials_missing"}
+    return submission_journal.external_step("tra-form", lambda: call_tra_form_submitter(config, prepared))
 
 
 def http_text_with_opener(
@@ -4143,7 +4170,7 @@ def call_sire_submitter(config: dict[str, Any], prepared: dict[str, Any], submis
             and sire_password(config)
             and sire_company_value(config)
         ):
-            return call_sire_jsf_form_submitter(config, prepared, submission_type)
+            return submission_journal.external_step("sire-form", lambda: call_sire_jsf_form_submitter(config, prepared, submission_type))
         return {
             "ok": False,
             "status": "blocked",
@@ -4162,7 +4189,7 @@ def call_sire_submitter(config: dict[str, Any], prepared: dict[str, Any], submis
             "submissionType": normalize_submission_type(submission_type),
             "payloadSummary": payload_result.get("summary"),
         }
-    response = http_json(
+    response = submission_journal.external_step("sire-api", lambda: http_json(
         url,
         payload,
         {
@@ -4171,7 +4198,7 @@ def call_sire_submitter(config: dict[str, Any], prepared: dict[str, Any], submis
             "x-ow-correlation-id": f"hotel-sire-{int(time.time())}-{os.getpid()}",
         },
         timeout=60,
-    )
+    ))
     receipt = receipt_reference_from_response(response)
     if not receipt:
         return {
@@ -4366,104 +4393,40 @@ def tool_hotel_registro_submit_government(args: dict[str, Any]) -> dict[str, Any
         submission_type = normalize_submission_type(prepared.get("submissionType"))
         base = safe_government_submission_summary(prepared)
         idempotency_key = validate_text("idempotencyKey", prepared.get("idempotencyKey"), max_len=300)
-        if submission_type == "tra":
-            outcome = call_tra_submitter(config, prepared)
-            if outcome.get("status") == "submitted" and outcome.get("receiptReference"):
-                record_result = record_government_submission(
-                    config,
-                    registration_id=registration_id,
-                    submission_type=submission_type,
-                    state="submitted",
-                    receipt_reference=str(outcome["receiptReference"]),
-                    idempotency_key=idempotency_key,
-                    payload_summary={
-                        "submissionType": submission_type,
-                        "guestCount": base.get("guestCount"),
-                        "reservationId": reservation_id,
-                    },
-                    response_summary=outcome.get("responseSummary") if isinstance(outcome.get("responseSummary"), dict) else {},
-                )
-                results.append({
-                    **base,
-                    "submitStatus": "submitted",
-                    "receiptReference": outcome["receiptReference"],
-                    "recorded": staff_safe_value(record_result),
-                })
-                continue
-            overall_status = "blocked" if outcome.get("status") == "blocked" else "partial_failure"
-            if outcome.get("status") == "failed":
-                record_government_submission(
-                    config,
-                    registration_id=registration_id,
-                    submission_type=submission_type,
-                    state="failed",
-                    idempotency_key=idempotency_key,
-                    payload_summary={
-                        "submissionType": submission_type,
-                        "guestCount": base.get("guestCount"),
-                        "reservationId": reservation_id,
-                    },
-                    response_summary=outcome.get("responseSummary") if isinstance(outcome.get("responseSummary"), dict) else {},
-                    error_code=str(outcome.get("reason") or "submit_failed"),
-                    error_message="TRA submission did not return a verified receipt/reference.",
-                )
-            results.append({
-                **base,
-                "submitStatus": outcome.get("status") or "failed",
-                "reason": outcome.get("reason") or "submit_failed",
-                "missingFields": staff_safe_value(outcome.get("missingFields")),
-            })
+        if prepared.get("status") != "ready" or not idempotency_key:
+            results.append({**base, "submitStatus": "blocked", "reason": "prepared_submission_not_ready"})
+            overall_status = "blocked"
             continue
 
-        outcome = call_sire_submitter(config, prepared, submission_type)
-        if outcome.get("status") == "submitted" and outcome.get("receiptReference"):
-            record_result = record_government_submission(
-                config,
-                registration_id=registration_id,
-                submission_type=submission_type,
-                state="submitted",
-                receipt_reference=str(outcome["receiptReference"]),
+        def submit() -> dict[str, Any]:
+            if submission_type == "tra":
+                return call_tra_submitter(config, prepared)
+            return call_sire_submitter(config, prepared, submission_type)
+
+        def persist(outcome: dict[str, Any]) -> Any:
+            return record_government_submission(
+                config, registration_id=registration_id, submission_type=submission_type,
+                state="submitted", receipt_reference=str(outcome["receiptReference"]),
                 idempotency_key=idempotency_key,
-                payload_summary={
-                    "submissionType": submission_type,
-                    "guestCount": base.get("guestCount"),
-                    "reservationId": reservation_id,
-                    **(outcome.get("payloadSummary") if isinstance(outcome.get("payloadSummary"), dict) else {}),
-                },
+                payload_summary={"submissionType": submission_type, "guestCount": base.get("guestCount"), "reservationId": reservation_id},
                 response_summary=outcome.get("responseSummary") if isinstance(outcome.get("responseSummary"), dict) else {},
             )
-            results.append({
-                **base,
-                "submitStatus": "submitted",
-                "receiptReference": outcome["receiptReference"],
-                "recorded": staff_safe_value(record_result),
-            })
-            continue
-        overall_status = "blocked" if outcome.get("status") == "blocked" else "partial_failure"
-        if outcome.get("status") == "failed":
-            record_government_submission(
-                config,
-                registration_id=registration_id,
-                submission_type=submission_type,
-                state="failed",
-                idempotency_key=idempotency_key,
-                payload_summary={
-                    "submissionType": submission_type,
-                    "guestCount": base.get("guestCount"),
-                    "reservationId": reservation_id,
-                    **(outcome.get("payloadSummary") if isinstance(outcome.get("payloadSummary"), dict) else {}),
-                },
-                response_summary=outcome.get("responseSummary") if isinstance(outcome.get("responseSummary"), dict) else {},
-                error_code=str(outcome.get("reason") or "submit_failed"),
-                error_message="SIRE submission did not return a verified receipt/reference.",
+
+        try:
+            outcome, recorded = submission_journal.execute(
+                WORKSPACE / "state" / "government-submissions",
+                [pms_property_id(config), registration_id, submission_type],
+                {"idempotencyKey": idempotency_key, "payload": prepared_government_payload(prepared)},
+                submit, persist,
             )
-        results.append({
-            **base,
-            "submitStatus": outcome.get("status") or "failed",
-            "reason": outcome.get("reason") or "submit_failed",
-            "missingFields": staff_safe_value(outcome.get("missingFields")),
-            "payloadSummary": staff_safe_value(outcome.get("payloadSummary")),
-        })
+            if outcome.get("status") == "blocked":
+                overall_status = "blocked"
+                results.append({**base, "submitStatus": "blocked", "reason": outcome.get("reason"), "payloadSummary": staff_safe_value(outcome.get("payloadSummary"))})
+            else:
+                results.append({**base, "submitStatus": "submitted", "receiptReference": outcome["receiptReference"], "recorded": staff_safe_value(recorded)})
+        except StateError as exc:
+            overall_status = "blocked"
+            results.append({**base, "submitStatus": "blocked", "reason": exc.code, "message": exc.message, "retryable": exc.retryable})
 
     return {
         "ok": True,
@@ -4935,13 +4898,18 @@ def default_thread_id(config: dict[str, Any]) -> str | None:
 def tool_hotel_telegram_send_message(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     text = validate_text("text", args.get("text"), required=True, max_len=3900)
-    chat_id = str(args.get("chat_id") or default_chat_id(config))
+    configured_chat = str(default_chat_id(config))
+    chat_id = str(args.get("chat_id") or configured_chat)
+    configured_thread = str(default_thread_id(config) or "")
+    requested_thread = str(args.get("message_thread_id") or configured_thread)
+    if chat_id != configured_chat or requested_thread != configured_thread:
+        raise ToolError("telegram_destination_not_allowed", "Hotel notifications can only go to the configured staff chat and topic.")
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": text,
         "disable_web_page_preview": True,
     }
-    thread_id = args.get("message_thread_id") or default_thread_id(config)
+    thread_id = configured_thread
     if thread_id:
         payload["message_thread_id"] = str(thread_id)
     response = http_json(f"https://api.telegram.org/bot{telegram_token(config)}/sendMessage", payload, {}, timeout=20)
@@ -5125,18 +5093,8 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str,
         tool_hotel_pms_prepare_reservation,
     ),
     "hotel_pms_create_reservation": (
-        "Create a PMS reservation from a pending PMS-prepared draft after staff replies si, or from a legacy confirmation code.",
-        {
-            "type": "object",
-            "properties": {
-                "pendingId": {"type": ["string", "null"]},
-                "confirmationText": {"type": ["string", "null"]},
-                "confirmationCode": {"type": ["string", "null"]},
-                "idempotencyKey": {"type": ["string", "null"]},
-                "sourceMetadata": {"type": ["object", "null"]},
-            },
-            "additionalProperties": False,
-        },
+        "Return an already confirmed PMS reservation. Only the authenticated /confirmar_reserva command can approve creation.",
+        {"type": "object", "properties": {"pendingId": {"type": "string"}}, "required": ["pendingId"], "additionalProperties": False},
         tool_hotel_pms_create_reservation,
     ),
     "hotel_registro_get_by_reservation": (
@@ -5295,6 +5253,13 @@ def main() -> None:
     command = sys.argv[1]
     if command == "list":
         print(json.dumps(list_tools(), ensure_ascii=False))
+        return
+    if command == "approve-reservation":
+        try:
+            args = json.loads(sys.stdin.read() or "{}")
+            print(json.dumps(create_bound_reservation(args, approve=True), ensure_ascii=False))
+        except Exception as exc:
+            print(json.dumps(sanitized_error(exc), ensure_ascii=False))
         return
     if command != "call" or len(sys.argv) < 3:
         print(json.dumps({"ok": False, "error": {"code": "usage", "message": "Usage: server.py call <tool>"}}))

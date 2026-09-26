@@ -988,6 +988,8 @@ def tool_attach_photos(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def telegram_send(config: dict[str, Any], chat_id: str, text: str, reply_to: str | None = None) -> dict[str, Any]:
+    if str(chat_id) != str(notify_chat_id(config)):
+        raise ToolError("destination_not_allowed", "Finca notifications must stay in the configured staff group.")
     payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
     if reply_to:
         payload["reply_to_message_id"] = reply_to
