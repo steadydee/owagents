@@ -45,4 +45,4 @@ This installs:
 - daily summary
 - daily unanswered scan
 
-The jobs call `openclaw agent --agent correo`; Correo sends Telegram notifications itself through narrow tools.
+The installed wrappers call the deployed deterministic `run.py`. It checks Gmail history, reconciles a bounded slice of local open tasks, and invokes `openclaw agent --agent correo` only for changed candidates. Daily/follow-up metadata digests use the same fixed-destination notification tool without a model turn. Plists point to profile `bin` wrappers, never the source worktree. Per-item acknowledgements, not subprocess output, commit scan progress.
