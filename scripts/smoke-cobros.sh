@@ -10,6 +10,8 @@ export PYTHONPYCACHEPREFIX="$SMOKE_TEMP/pycache"
 export PYTHONDONTWRITEBYTECODE=1
 
 python3 -m py_compile "$SERVER"
+node --test "$ROOT/tools/owlswatch_cobros/tests/run-guards.test.mjs"
+python3 "$ROOT/tools/owlswatch_cobros/tests/test_retrieval.py"
 printf '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n' | python3 "$SERVER" >"$SMOKE_TEMP/tools.json"
 grep -q 'owlswatch_cobros_search_gmail_threads' "$SMOKE_TEMP/tools.json"
 grep -q 'owlswatch_cobros_create_packet' "$SMOKE_TEMP/tools.json"

@@ -62,6 +62,11 @@ If there is no cuenta de cobro or accounting-document intent, reply briefly aski
 
 ## Step 2 - Retrieve Source
 
+The trusted plugin already loads this skill. Never call `read` or use a fake
+Gmail thread ID to load instructions. For missing NITs, use `purpose: billing_identity`
+and the specific agency or sender; do not broaden to unrelated agencies or NITs.
+After no relevant matches or a lookup failure, stop and ask for the missing data.
+
 For Gmail search:
 
 - call `owlswatch_cobros_search_gmail_threads`
@@ -92,7 +97,7 @@ reconciliation outside this agent's tool authority.
 
 ## Step 4 - Handle Prepare Status
 
-If `status = needs_info`, ask exactly one concise question for the most important missing field. Do not create a document.
+If `status = needs_info`, state the missing information and ask one concise question. Do not create a document. Example: "No pude verificar el NIT de esa agencia. ¿Me compartes su NIT y razón social? No he creado el documento."
 
 If `status = needs_human`, do not create a document. Send a short Telegram alert with the blocker and Gmail/source reference.
 
@@ -123,8 +128,9 @@ The tool creates a Gmail draft and an Operations Email Desk review task, never a
 
 ## Step 7 - Telegram Alert
 
-Send one short alert with `owlswatch_cobros_send_telegram_message` and `{"text":"<outcome and review links>"}`.
-The destination and topic are fixed by runtime configuration. Do not supply or select another destination.
+For inbound Telegram requests, use the final reply as the single notification.
+Do not also call the Telegram send tool. For an explicitly requested proactive
+notification, use that tool; its destination is fixed by runtime configuration.
 
 Ready example:
 
@@ -212,9 +218,15 @@ Do not duplicate a thread that already has a cuenta PDF. Reissues require human 
 
 ## Bounded Retrieval
 
-Use at most six Gmail searches and twelve thread reads per run. The tool hook also
+Use at most three Gmail searches and three thread reads per run, five results
+per search. The tool hook also
 blocks the third identical search/read. If the budget is reached, stop, show up to
 three candidates, or ask for a specific thread. Do not reformulate queries to evade it.
+
+Missing information or a lookup failure must produce a useful final reply, not
+only "On it". State what is missing and whether any document/draft was created.
+If a write outcome is unknown, say so; do not claim success or failure until
+the same preparedId has been reconciled. Never create a replacement preparation.
 
 ## Untrusted Sources And Re-runs
 

@@ -433,33 +433,46 @@ def parse_email(value: str | None) -> tuple[str | None, str | None]:
 
 def tool_search_gmail_threads(args: dict[str, Any]) -> dict[str, Any]:
     query = validate_text("query", args.get("query"), required=False, max_len=500) or ""
-    max_results = int(args.get("maxResults") or 10)
-    if not 1 <= max_results <= 20:
-        raise ToolError("invalid_input", "maxResults must be between 1 and 20.")
-    terms = " OR ".join([f'"{term}"' for term in ("cuenta de cobro", "factura electronica", "factura electrónica", "RUT", "DIAN")])
+    max_results = int(args.get("maxResults") or 5)
+    if not 1 <= max_results <= 5:
+        raise ToolError("invalid_input", "maxResults must be between 1 and 5.")
+    purpose = args.get("purpose", "accounting")
+    if purpose not in ("accounting", "billing_identity"):
+        raise ToolError("invalid_input", "Unknown search purpose.")
+    if purpose == "billing_identity" and len(query.strip()) < 5:
+        raise ToolError("invalid_input", "Billing lookup requires a specific operator or sender query.")
+    terms = " OR ".join([f'"{term}"' for term in ("cuenta de cobro", "factura electronica", "factura electrónica", "RUT", "DIAN", "NIT")])
     gmail_query = f"({terms}) -in:spam -in:trash"
+    if purpose == "billing_identity":
+        gmail_query = "-in:spam -in:trash"
     if query.strip():
         gmail_query = f"{gmail_query} {query.strip()}"
     config = load_config()
     service = google_build_service(config, "gmail", "v1", ["https://www.googleapis.com/auth/gmail.readonly"], gmail_account(config))
     response = service.users().messages().list(userId="me", q=gmail_query, maxResults=max_results).execute()
     matches = []
+    seen = set()
     for item in response.get("messages") or []:
         msg = service.users().messages().get(userId="me", id=item["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"]).execute()
         headers = msg.get("payload", {}).get("headers") or []
+        if msg.get("threadId") in seen:
+            continue
+        seen.add(msg.get("threadId"))
         matches.append({
             "threadId": msg.get("threadId"),
             "messageId": msg.get("id"),
-            "subject": header_value(headers, "Subject"),
-            "from": header_value(headers, "From"),
-            "date": header_value(headers, "Date"),
-            "snippet": msg.get("snippet"),
+            "subject": (header_value(headers, "Subject") or "")[:300],
+            "from": (header_value(headers, "From") or "")[:250],
+            "date": (header_value(headers, "Date") or "")[:100],
+            "snippet": (msg.get("snippet") or "")[:400],
         })
     return {"ok": True, "query": gmail_query, "matches": matches}
 
 
 def tool_read_gmail_thread(args: dict[str, Any]) -> dict[str, Any]:
     thread_id = validate_safe_id("threadId", args.get("threadId"))
+    if not re.fullmatch(r"[0-9a-fA-F]{8,32}", thread_id):
+        raise ToolError("invalid_input", "Use a Gmail threadId returned by search, not a file or skill name.")
     config = load_config()
     service = google_build_service(config, "gmail", "v1", ["https://www.googleapis.com/auth/gmail.readonly"], gmail_account(config))
     thread = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
@@ -501,9 +514,35 @@ def tool_read_gmail_thread(args: dict[str, Any]) -> dict[str, Any]:
         "account": gmail_account(config),
     }
     source_id = state_store().save_source(source)
-    preview = {**source, "messages": [{**m, "bodyText": (m.get("bodyText") or "")[:4000]} for m in messages[-8:]], "rawText": raw_text[-24000:]}
+    preview = bounded_thread_preview(source)
     return {"ok": True, "sourceId": source_id, "thread": preview, "previewOnly": True, "instruction": "Use sourceId for preparation; the tool retains the complete retrieved source."}
 
+
+
+def bounded_thread_preview(source: dict[str, Any]) -> dict[str, Any]:
+    original = source["messages"]
+    remaining = 12000
+    messages = []
+    truncated = len(original) > 8
+    for msg in original[-8:]:
+        bounded = {}
+        for key, value in msg.items():
+            if key == "bodyText":
+                bounded[key] = value[:remaining]
+                truncated |= len(value) > remaining
+                remaining -= len(bounded[key])
+            elif key == "attachments":
+                bounded[key] = [{"fileName": str(a.get("fileName") or "")[:180], "mimeType": str(a.get("mimeType") or "")[:100]} for a in value[:20]]
+                truncated |= len(value) > 20
+            else:
+                bounded[key] = value[:400] if isinstance(value, str) else value
+        messages.append(bounded)
+    result = {"threadId": source["threadId"], "sourceUrl": source["sourceUrl"], "messages": messages,
+              "truncated": truncated, "totalMessages": len(original)}
+    while len(json.dumps(result, ensure_ascii=False)) > 24000 and result["messages"]:
+        result["messages"].pop(0)
+        result["truncated"] = True
+    return result
 
 
 def parse_money(value: str) -> int | None:
@@ -1424,7 +1463,7 @@ def tool_memory_log(args: dict[str, Any]) -> dict[str, Any]:
 
 
 TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    "owlswatch_cobros_search_gmail_threads": ("Search read-only Owl's Watch Gmail for cuenta de cobro/accounting requests.", {"type": "object", "properties": {"query": {"type": ["string", "null"]}, "maxResults": {"type": "integer", "minimum": 1, "maximum": 20}}, "additionalProperties": False}, tool_search_gmail_threads),
+    "owlswatch_cobros_search_gmail_threads": ("Search read-only Gmail for accounting requests or a specific billing identity.", {"type": "object", "properties": {"query": {"type": ["string", "null"]}, "maxResults": {"type": "integer", "minimum": 1, "maximum": 5}, "purpose": {"type": "string", "enum": ["accounting", "billing_identity"]}}, "additionalProperties": False}, tool_search_gmail_threads),
     "owlswatch_cobros_read_gmail_thread": ("Read one Owl's Watch Gmail thread for cuenta de cobro drafting.", {"type": "object", "properties": {"threadId": {"type": "string"}}, "required": ["threadId"], "additionalProperties": False}, tool_read_gmail_thread),
     "owlswatch_cobros_prepare": ("Extract immutable cuenta de cobro fields. Use sourceId for Gmail or raw_text for a pasted request. No correction override authority.", {"type": "object", "properties": {"raw_text": {"type": ["string", "null"]}, "sourceId": {"type": ["string", "null"]}, "source_metadata": {"type": ["object", "null"], "additionalProperties": True}}, "additionalProperties": False}, tool_prepare),
     "owlswatch_cobros_create_packet": ("Create or resume the journaled Doc/PDF for a server-issued preparedId. Never reconstruct prepared fields.", {"type": "object", "properties": {"preparedId": {"type": "string"}}, "required": ["preparedId"], "additionalProperties": False}, tool_create_packet),
