@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT/scripts/assert-release-ready.sh"
+"$ROOT/scripts/smoke-platform.sh"
 "$ROOT/scripts/remove-external-telegram-watchdogs.sh"
 WORKSPACE="${HOTEL_WORKSPACE:-$HOME/.openclaw/workspace-hotel-ops}"
 PROFILE_DIR="${HOTEL_PROFILE_DIR:-$HOME/.openclaw-hotel}"
@@ -31,7 +32,7 @@ backup_path "$WORKSPACE/skills" hotel-skills
 backup_path "$WORKSPACE/tools/hotel_pms" hotel-tools
 
 echo "Deploying Hotel source"
-mkdir -p "$WORKSPACE/skills" "$WORKSPACE/tools/hotel_pms" "$PROFILE_DIR"
+mkdir -p "$WORKSPACE/docs" "$WORKSPACE/skills" "$WORKSPACE/tools/hotel_pms" "$PROFILE_DIR"
 rsync -a "$ROOT/openclaw/agents/hotel/AGENTS.md" "$ROOT/openclaw/agents/hotel/IDENTITY.md" "$ROOT/openclaw/agents/hotel/SOUL.md" "$ROOT/openclaw/agents/hotel/README.md" "$ROOT/openclaw/agents/hotel/TOOLS.md" "$WORKSPACE/"
 rsync -a --delete "$ROOT/openclaw/agents/hotel/skills/" "$WORKSPACE/skills/"
 rsync -a --delete --exclude '__pycache__' --exclude '.pytest_cache' "$ROOT/tools/hotel_pms/" "$WORKSPACE/tools/hotel_pms/"
@@ -61,5 +62,8 @@ if launchctl print system/ai.openclaw.hotel >/dev/null 2>&1; then
   echo "Hotel uses boot-level LaunchDaemons. Refresh them after this deploy with:"
   echo "  sudo $ROOT/scripts/install-headless-hotel-services.sh install"
 fi
+rsync -a "$ROOT/openclaw/agents/hotel/docs/" "$WORKSPACE/docs/"
 echo "Hotel deploy complete. Backup: $BACKUP_DIR"
 echo "Deployed git commit: $(git -C "$ROOT" rev-parse HEAD)"
+
+python3 "$ROOT/scripts/record-release.py" --profile hotel --workspace "$WORKSPACE"

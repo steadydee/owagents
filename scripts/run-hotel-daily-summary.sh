@@ -7,6 +7,7 @@ ENABLED_FILE="${ENABLED_FILE:-$HOME/.openclaw-hotel/hotel-summary.enabled}"
 LOG_DIR="${LOG_DIR:-/tmp/openclaw}"
 LOG_FILE="${LOG_FILE:-$LOG_DIR/hotel-daily-summary.log}"
 FORCE="${1:-}"
+export TZ="America/Bogota"
 STAMP_DIR="${STAMP_DIR:-$HOME/.openclaw-hotel/schedule-stamps}"
 STAMP_FILE="$STAMP_DIR/hotel-daily-summary-$(date '+%Y-%m-%d').stamp"
 SCHEDULED_MINUTES=$((16 * 60))
@@ -35,9 +36,9 @@ fi
   printf '\n%s hotel daily summary start\n' "$(date '+%Y-%m-%d %H:%M:%S')"
   "$OPENCLAW_BIN" --profile "$PROFILE" agent \
     --agent hotel \
-    --session-id hotel-daily-summary \
+    --session-id "hotel-daily-summary-$(date '+%Y%m%d-%H%M%S')" \
     --thinking medium \
-    --timeout 1200 \
+    --timeout 600 \
     --message "Scheduled run: tomorrow_summary. Send the Owl's Watch staff Telegram hotel summary for tomorrow in Spanish. Include who arrives, who checks out, who stays another day, bird tours, pasadias/day visits, and concise operational notes. Do not include prices, rates, balances, deposits, payment status, payment notes, or other finance details. Use the PMS tools as current truth and send via hotel_telegram_send_message."
   printf '%s hotel daily summary end\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 } >> "$LOG_FILE" 2>&1

@@ -56,7 +56,11 @@ PLIST
 
 plist="$PLIST_DIR/$DAILY_LABEL.plist"
 launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$plist"
+if launchctl print "system/$DAILY_LABEL" >/dev/null 2>&1; then
+  launchctl disable "gui/$(id -u)/$DAILY_LABEL" >/dev/null 2>&1 || true
+else
+  launchctl bootstrap "gui/$(id -u)" "$plist"
+fi
 
 echo "Installed Hotel daily summary schedule"
 echo "Daily summary: 16:00 America/Bogota"

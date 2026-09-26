@@ -58,7 +58,7 @@ def run(mode, force=False, invoke=subprocess.run):
                     raise server.ToolError("runtime_missing", "OpenClaw executable is not configured.")
                 payload = {"scanId": scan["scanId"], "candidates": scan["candidates"]}
                 prompt = "Scheduled Correo changed-message batch. Gmail is the review interface. Process only these candidates; do not rescan Gmail. Read each thread, create/reuse a draft when safe, persist exact sourceMessageId, notify through the configured tool, then acknowledge each exact item with owlswatch_email_acknowledge_item. Explicitly ignored items also require acknowledgement. Do not claim success from text. Batch: " + json.dumps(payload, separators=(",", ":"))
-                response = invoke([binary, "--profile", os.environ.get("OPENCLAW_PROFILE", "owlswatch"), "agent", "--agent", "correo", "--session-id", f"correo-{scan['scanId']}-{attempt['attemptId'][:8]}", "--thinking", "low", "--timeout", "1200", "--message", prompt], timeout=1260, check=False)
+                response = invoke([binary, "--profile", os.environ.get("OPENCLAW_PROFILE", "owlswatch"), "agent", "--agent", "correo", "--session-id", f"correo-{scan['scanId']}-{attempt['attemptId'][:8]}", "--thinking", "low", "--timeout", "600", "--message", prompt], timeout=660, check=False)
                 result_code = response.returncode
             result = recovery.finalize(server, scan["scanId"], result_code)
             if not result["ok"]:

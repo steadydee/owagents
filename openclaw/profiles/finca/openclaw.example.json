@@ -10,7 +10,11 @@
       },
       "model": {
         "primary": "deepseek/deepseek-reasoner"
-      }
+      },
+      "heartbeat": {
+        "every": "0m"
+      },
+      "timeoutSeconds": 600
     },
     "list": [
       {
@@ -85,11 +89,15 @@
     "entries": {
       "finca-tasks": {
         "enabled": true
+      },
+      "owlswatch-runtime-guard": {
+        "enabled": true
       }
     },
     "load": {
       "paths": [
-        "~/.openclaw/workspace-finca-ops/tools/finca_tasks"
+        "~/.openclaw/workspace-finca-ops/tools/finca_tasks",
+        "~/.openclaw-finca/tools/agent_runtime_guard"
       ]
     }
   },
@@ -131,6 +139,21 @@
             "<authorized_worker_user_id>"
           ]
         }
+      }
+    }
+  },
+  "tools": {
+    "loopDetection": {
+      "enabled": true,
+      "historySize": 30,
+      "warningThreshold": 4,
+      "criticalThreshold": 8,
+      "globalCircuitBreakerThreshold": 12,
+      "unknownToolThreshold": 3,
+      "detectors": {
+        "genericRepeat": true,
+        "knownPollNoProgress": true,
+        "pingPong": true
       }
     }
   }

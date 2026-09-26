@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import importlib.util
 import hashlib
 import json
 import os
@@ -397,6 +398,14 @@ def main() -> int:
     offset = inspect_offset(state_dir)
     journaled = journal_new_messages(state_dir, state)
     reasons, summary = assess_health(status, status_error, spool, durable_ingress, now_ms)
+    runtime = {}
+    health_module = Path(__file__).with_name("agent-health.py")
+    if health_module.exists():
+        spec = importlib.util.spec_from_file_location("agent_runtime_health", health_module)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        runtime = module.inspect_runtime(state_dir, now)
+        reasons.extend(runtime.get("reasons", []))
 
     previous_health = state.get("health", "unknown")
     consecutive_failures = int(state.get("consecutiveFailures", 0))
@@ -429,16 +438,16 @@ def main() -> int:
         alert_sent = send_alert(
             token,
             chat_id,
-            "Alerta del bot Hotel\nLa recepcion de mensajes de Telegram no esta saludable ("
+            "Alerta del bot " + args.profile + "\nEl servicio necesita revision ("
             + label
-            + "). OpenClaw esta intentando recuperarla.",
+            + "). Revise el canal, el saldo del proveedor o el estado de la tarea segun el motivo.",
             args.dry_run,
         )
     elif alert_kind == "recovery":
         alert_sent = send_alert(
             token,
             chat_id,
-            "Bot Hotel recuperado\nLa recepcion de mensajes de Telegram volvio a estar disponible.",
+            "Bot " + args.profile + " recuperado\nLos controles del servicio volvieron a estar saludables.",
             args.dry_run,
         )
 
@@ -454,6 +463,7 @@ def main() -> int:
         "health": current_health,
         "reasons": reasons,
         "channel": summary,
+        "runtime": runtime,
         "spool": spool,
         "durableIngress": durable_ingress,
         "offset": offset,

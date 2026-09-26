@@ -1,0 +1,7 @@
+{
+  "id": "owlswatch-runtime-guard",
+  "name": "Owl's Watch Runtime Guard",
+  "description": "Bound agent work and record content-free run health and usage.",
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}
