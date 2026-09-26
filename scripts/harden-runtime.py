@@ -40,7 +40,7 @@ def harden(config, guard_path):
     result.setdefault("tools", {})["loopDetection"] = copy.deepcopy(LOOP_POLICY)
     plugins = result.setdefault("plugins", {})
     entries = plugins.setdefault("entries", {})
-    entries[GUARD_ID] = {"enabled": True}
+    entries[GUARD_ID] = {"enabled": True, "hooks": {"allowConversationAccess": True}}
     paths = plugins.setdefault("load", {}).setdefault("paths", [])
     # Directory discovery may choose a helper .mjs file alphabetically instead
     # of the plugin entry. Always pin the known native entry file.

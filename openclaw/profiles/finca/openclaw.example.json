@@ -91,7 +91,10 @@
         "enabled": true
       },
       "owlswatch-runtime-guard": {
-        "enabled": true
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        }
       }
     },
     "load": {
