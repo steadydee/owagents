@@ -122,26 +122,30 @@ console.log(JSON.stringify({sources: result.candidates.map(c => c.source), diagn
             self.assertEqual([Path(source).name for source in declared["sources"]], [entry.name])
             self.assertEqual(declared["diagnostics"], [])
 
-    def load_guard(self, allow_conversation):
+    def load_guard(self, allow_conversation, package_name="agent_runtime_guard", plugin_id=hardening.GUARD_ID):
         with tempfile.TemporaryDirectory() as tmp:
             sandbox = Path(tmp)
-            plugin = sandbox / "agent_runtime_guard"
-            shutil.copytree(ROOT / "tools/agent_runtime_guard", plugin,
+            plugin = sandbox / "tools" / package_name
+            shutil.copytree(ROOT / "tools" / package_name, plugin,
                             ignore=shutil.ignore_patterns("tests", "node_modules", "__pycache__"))
+            if package_name == "owlswatch_cobros":
+                shutil.copytree(ROOT / "openclaw/agents/cobros/skills/cuenta-cobro", sandbox / "skills/cuenta-cobro")
             (plugin / "node_modules").mkdir()
             (plugin / "node_modules/openclaw").symlink_to(self.package, target_is_directory=True)
-            config = hardening.harden({"plugins": {"allow": [hardening.GUARD_ID]}}, str(plugin / "openclaw-plugin.js"))
+            config = hardening.harden({"plugins": {"allow": [plugin_id],
+                "entries": {plugin_id: {"enabled": True}}, "load": {"paths": [str(plugin / "openclaw-plugin.js")]}}},
+                str(sandbox / "tools/agent_runtime_guard/openclaw-plugin.js"))
             if not allow_conversation:
-                config["plugins"]["entries"][hardening.GUARD_ID].pop("hooks", None)
+                config["plugins"]["entries"][plugin_id].pop("hooks", None)
             script = """
 import { pathToFileURL } from 'node:url';
-const [discoveryPath, discoveryExport, loaderPath, loaderExport, configText] = process.argv.slice(1);
+const [discoveryPath, discoveryExport, loaderPath, loaderExport, configText, pluginId] = process.argv.slice(1);
 const discoveryModule = await import(pathToFileURL(discoveryPath).href);
 const loaderModule = await import(pathToFileURL(loaderPath).href);
 const config = JSON.parse(configText);
 const discovery = discoveryModule[discoveryExport]({ loadPaths: config.plugins.load.paths, env: process.env });
 const registry = loaderModule[loaderExport]({
-  config, env: process.env, discovery, onlyPluginIds: ['owlswatch-runtime-guard'],
+  config, env: process.env, discovery, onlyPluginIds: [pluginId],
   cache: false, activate: false, loadModules: true, mode: 'full',
   logger: {debug() {}, info() {}, warn() {}, error() {}},
 });
@@ -157,7 +161,7 @@ console.log(JSON.stringify({
                    "OPENCLAW_CONFIG_PATH": str(sandbox / "no-config.json")}
             result = subprocess.run(["node", "--input-type=module", "-e", script,
                                      str(self.discovery), self.export, str(self.loader), self.loader_export,
-                                     json.dumps(config)], env=env, capture_output=True, text=True,
+                                     json.dumps(config), plugin_id], env=env, capture_output=True, text=True,
                                     check=True, timeout=30)
             return json.loads(result.stdout)
 
@@ -175,6 +179,12 @@ console.log(JSON.stringify({
         self.assertEqual({hook["name"] for hook in result["hooks"]}, {"before_tool_call", "model_call_ended"})
         blocked = [item for item in result["diagnostics"] if "allowConversationAccess=true" in item.get("message", "")]
         self.assertEqual(len(blocked), 3)
+
+    def test_cobros_cleanup_hook_is_registered_in_actual_sdk(self):
+        result = self.load_guard(True, "owlswatch_cobros", "owlswatch-cobros")
+        self.assertEqual(result["plugins"], [{"id": "owlswatch-cobros", "status": "loaded"}])
+        self.assertIn({"pluginId": "owlswatch-cobros", "name": "agent_end"}, result["hooks"])
+        self.assertFalse([item for item in result["diagnostics"] if item.get("pluginId") == "owlswatch-cobros"])
 
 
 if __name__ == "__main__":

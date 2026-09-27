@@ -41,6 +41,11 @@ def harden(config, guard_path):
     plugins = result.setdefault("plugins", {})
     entries = plugins.setdefault("entries", {})
     entries[GUARD_ID] = {"enabled": True, "hooks": {"allowConversationAccess": True}}
+    # Cobros releases per-run research counters at agent_end. Without this
+    # audited cleanup hook, the finite run map eventually blocks new work.
+    cobros = entries.get("owlswatch-cobros")
+    if isinstance(cobros, dict) and cobros.get("enabled") is True:
+        cobros.setdefault("hooks", {})["allowConversationAccess"] = True
     paths = plugins.setdefault("load", {}).setdefault("paths", [])
     # Directory discovery may choose a helper .mjs file alphabetically instead
     # of the plugin entry. Always pin the known native entry file.
