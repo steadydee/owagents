@@ -272,6 +272,8 @@ def parse_http_error(exc: urllib.error.HTTPError, default_code: str) -> ToolErro
         payload = json.loads(exc.read().decode() or "{}")
     except Exception:
         payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
     code = payload.get("errorCode") or payload.get("code") or default_code
     message = payload.get("message") or payload.get("error") or f"Upstream request failed with HTTP {exc.code}."
     if not isinstance(code, str):
@@ -279,7 +281,12 @@ def parse_http_error(exc: urllib.error.HTTPError, default_code: str) -> ToolErro
     if not isinstance(message, str):
         message = f"Upstream request failed with HTTP {exc.code}."
     retryable = exc.code in (408, 409, 425, 429) or 500 <= exc.code <= 599
-    return ToolError(code.lower(), message[:500], retryable=retryable)
+    error = ToolError(code.lower(), message[:500], retryable=retryable)
+    # Only an explicit Telegram API rejection proves that no message was sent.
+    # A bare HTTP error/proxy response or a transport timeout is ambiguous.
+    if payload.get("ok") is False and type(payload.get("error_code")) is int and payload["error_code"] == exc.code and exc.code in (400, 401, 403, 404, 429):
+        error.delivery_status = "not_sent"
+    return error
 
 
 def http_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: int = 45) -> dict[str, Any]:
@@ -994,9 +1001,16 @@ def telegram_send(config: dict[str, Any], chat_id: str, text: str, reply_to: str
     if reply_to:
         payload["reply_to_message_id"] = reply_to
     response = http_json(f"https://api.telegram.org/bot{telegram_token(config)}/sendMessage", payload, {})
+    if response.get("ok") is False:
+        error = ToolError("telegram_send_failed", "Telegram rejected the Finca message.", retryable=response.get("error_code") == 429)
+        if type(response.get("error_code")) is int and response["error_code"] in (400, 401, 403, 404, 429):
+            error.delivery_status = "not_sent"
+        raise error
     if response.get("ok") is not True:
-        raise ToolError("telegram_send_failed", "Telegram rejected the Finca message.", retryable=True)
+        raise ToolError("telegram_outcome_unknown", "Telegram did not return a delivery receipt.")
     result = response.get("result") or {}
+    if not isinstance(result, dict) or type(result.get("message_id")) is not int or result["message_id"] <= 0:
+        raise ToolError("telegram_outcome_unknown", "Telegram did not return a delivery receipt.")
     return {"ok": True, "messageId": result.get("message_id")}
 
 
