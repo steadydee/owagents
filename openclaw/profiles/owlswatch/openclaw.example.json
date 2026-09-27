@@ -447,7 +447,10 @@
         "enabled": true
       },
       "owlswatch-cobros": {
-        "enabled": true
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        }
       },
       "registro-compliance": {
         "enabled": true
