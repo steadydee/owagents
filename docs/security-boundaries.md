@@ -12,6 +12,7 @@ Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegr
 - `hotel`: reads PMS reservation operations data, creates reservations only through the guarded PMS prepare/confirm flow, and sends staff-only Telegram notifications. It does not modify or cancel reservations or send guest messages.
 - `finca`: creates and updates only the Operations finca-task subsystem, attaches task photos, and sends the daily worker task report from its own profile and bot.
 - `registro`: fetches guest ID images from ChakraHQ, extracts identity fields locally, writes registration data to PMS registro tools, submits SIRE reports through the browser on the SIRE domain only after recon, asks Luna for narrow guest fixes, and sends staff-only Telegram notifications. It never messages guests directly, never touches reservations, never reads the PMS database directly, and never handles SIRE credentials.
+- `nomina`: prepares payroll drafts and permanent-change previews in its private Telegram profile. A local transactional service owns the v1 ledger; authenticated native human commands alone finalize, record payments and apply permanent changes. It does not send money or write Operations.
 
 ## Main
 
@@ -191,6 +192,57 @@ Forbidden:
 - Invent identity fields, city codes, motives, occupations, or receipt references.
 - Send document images, raw IDs, full government payloads, or tokens to Telegram.
 - Access PMS tools outside the `registro` classification.
+
+## Nómina
+
+The dedicated `nomina` profile has its own private manager bot/route, workspace,
+agent directory and state. Each read and write verifies trusted host Telegram
+sender/account/chat/topic/session metadata against runtime-only allowlists.
+Group membership alone is insufficient. Its fixed payroll skill is injected by
+the native plugin without granting filesystem access.
+
+Allowed model tools:
+
+- `nomina_status`, `nomina_list_payees`, `nomina_get_loans`: current scoped state.
+- `nomina_prepare_change`: preview a permanent profile, loan, installment or
+  loan-event change without applying it.
+- `nomina_prepare_run`, `nomina_adjust_draft`: prepare revisioned payroll drafts
+  and explicit one-period adjustments.
+- `nomina_get_run`, `nomina_history`: read current and historical persisted runs.
+- `nomina_prepare_finalize`, `nomina_prepare_paid`: prepare exact finalization
+  or reported-payment transitions, never execute them through a model tool.
+- `nomina_prepare_supersede`, `nomina_prepare_reverse_payment`: prepare audited
+  corrections that preserve the original snapshot and ledger history.
+- `nomina_export`, `nomina_archive_status`: write restricted snapshot reports and
+  inspect/retry configuration-bound archive delivery independently of payroll.
+
+The trusted native `/revisar_nomina TOKEN` command renders the exact saved action
+and records a human review; only its subsequent `/confirmar_nomina TOKEN` applies
+permanent changes. Both require authenticated host authorization, the same
+preparing sender and route/session, a live token and unchanged prepared state.
+Confirmation is single-use and requires that exact native review.
+User text, model-supplied approval fields and forwarded commands cannot approve.
+Finalization reserves loans; human acknowledgment of completed payments posts
+repayments. No bank payment or reversal is executed. SQL transactions, revisions,
+stable request IDs and unique business identities enforce retry boundaries.
+The SDK currently does not expose source Telegram message IDs; tool-call audit
+IDs must not be described as complete source-message deduplication.
+
+Amounts, rounding, allocations and approved payment destinations are resolved by
+code. Normal model-tool replies mask banking details. Full payment destinations
+appear only in the authenticated native review, restricted local reports and
+explicitly configured private Drive files.
+Archive upload IDs are journaled before provider creation; unknown outcomes retry
+the same identity. Encrypted backups use SQLite's online-backup API and exclude
+keys/configuration. Failed delivery never repeats a payroll mutation.
+
+Forbidden: model finalization/payment authority, bank transfers, employee or
+arbitrary Telegram messages, public archive sharing, tax-rule inference,
+Operations writes, arbitrary paths, secrets in prompts, broad shell/file/web/
+browser tools and autonomous schedules. Configuration starts disabled with
+unusable numeric placeholders and no production data. Runtime state is preserved
+across isolated source deployments. The shared runtime guard is loaded for this
+profile only; deployment does not modify other agents or watchdogs.
 
 ## Tool Policy
 

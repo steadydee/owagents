@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "telegram": {
+    "account_id": "default",
+    "allowed_sender_ids": ["0"],
+    "allowed_routes": [{"chat_id": "0", "thread_id": ""}]
+  },
+  "archive": {
+    "enabled": false,
+    "drive_folder_id": "<private-payroll-folder-id>",
+    "google_credentials_file": "secrets/google-service-account.json",
+    "backup_key_file": "secrets/backup.key"
+  }
+}

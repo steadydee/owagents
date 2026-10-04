@@ -11,12 +11,13 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILES = ("owlswatch", "hotel", "finca", "bailey-finance")
+PROFILES = ("owlswatch", "hotel", "finca", "bailey-finance", "nomina")
 GUARD_ID = "owlswatch-runtime-guard"
 PLUGIN_TRANSPORTS = {
     "owlswatch_intake": "owlswatch-intake", "owlswatch_quotes": "owlswatch-quotes",
     "owlswatch_email": "owlswatch-email", "owlswatch_cobros": "owlswatch-cobros",
     "registro_compliance": "registro-compliance", "hotel_pms": "hotel-pms",
+    "owlswatch_payroll": "owlswatch-payroll",
 }
 NATIVE_DIRECTORIES = set(PLUGIN_TRANSPORTS) | {"finca_tasks", "bailey_finance", "agent_runtime_guard"}
 LOOP_POLICY = {"enabled": True, "historySize": 30, "warningThreshold": 4,

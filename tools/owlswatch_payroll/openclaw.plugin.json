@@ -1,0 +1,7 @@
+{
+  "id": "owlswatch-payroll",
+  "name": "Owl's Watch Nómina Tools",
+  "description": "Reviewed payroll drafts, loan ledger, and native human confirmations.",
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}
