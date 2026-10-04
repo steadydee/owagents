@@ -12,7 +12,7 @@ if compgen -G "$ROOT/tools/hotel_pms/tests/*.test.mjs" > /dev/null; then
   node --test "$ROOT"/tools/hotel_pms/tests/*.test.mjs
 fi
 python3 -m unittest discover -s "$ROOT/tools/hotel_pms/tests" -p 'test_*.py'
-for name in cuenta cotiza correo cobros hotel finca registro; do
+for name in cuenta cotiza correo cobros hotel finca registro nomina; do
   "$ROOT/scripts/smoke-$name.sh"
 done
 "$ROOT/scripts/test-telegram-observer.sh"

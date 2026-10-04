@@ -1,0 +1,97 @@
+{
+  "env": {
+    "vars": {
+      "OWLSWATCH_PAYROLL_WORKSPACE": "<absolute-private-payroll-workspace>",
+      "OWLSWATCH_PAYROLL_PYTHON": "<absolute-private-payroll-workspace>/.venv/bin/python3"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace-nomina-nomina",
+      "skills": ["payroll"],
+      "models": {"deepseek/deepseek-reasoner": {}},
+      "model": {"primary": "deepseek/deepseek-reasoner"},
+      "heartbeat": {"every": "0m"},
+      "timeoutSeconds": 180
+    },
+    "list": [{
+      "id": "nomina",
+      "name": "Nómina",
+      "default": true,
+      "workspace": "~/.openclaw/workspace-nomina-nomina",
+      "agentDir": "~/.openclaw-nomina/agents/nomina/agent",
+      "skills": ["payroll"],
+      "tools": {
+        "profile": "minimal",
+        "alsoAllow": [
+          "nomina_status", "nomina_list_payees", "nomina_get_loans",
+          "nomina_prepare_change", "nomina_prepare_run", "nomina_adjust_draft",
+          "nomina_get_run", "nomina_prepare_finalize", "nomina_prepare_paid",
+          "nomina_prepare_supersede", "nomina_prepare_reverse_payment",
+          "nomina_history", "nomina_export", "nomina_archive_status"
+        ],
+        "deny": [
+          "exec", "browser", "gateway", "cron", "nodes", "canvas",
+          "group:fs", "group:web", "bundle-mcp", "message"
+        ]
+      }
+    }]
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 19231,
+    "bind": "loopback",
+    "channelHealthCheckMinutes": 1,
+    "channelStaleEventThresholdMinutes": 5,
+    "channelMaxRestartsPerHour": 6,
+    "auth": {"mode": "token", "token": "<generate-locally>"}
+  },
+  "plugins": {
+    "entries": {
+      "owlswatch-payroll": {
+        "enabled": true,
+        "hooks": {"allowConversationAccess": true}
+      },
+      "owlswatch-runtime-guard": {
+        "enabled": true,
+        "hooks": {"allowConversationAccess": true}
+      }
+    },
+    "load": {
+      "paths": [
+        "~/.openclaw/workspace-nomina-nomina/tools/owlswatch_payroll/openclaw-plugin.js",
+        "~/.openclaw/workspace-nomina-nomina/tools/agent_runtime_guard/openclaw-plugin.js"
+      ]
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false,
+      "botToken": "<set-locally-only>",
+      "healthMonitor": {"enabled": true},
+      "dmPolicy": "allowlist",
+      "allowFrom": ["0"],
+      "groupPolicy": "disabled",
+      "groupAllowFrom": [],
+      "groups": {},
+      "streaming": {
+        "mode": "off",
+        "preview": {"toolProgress": false},
+        "progress": {"label": false, "toolProgress": false, "maxLines": 1},
+        "block": {"enabled": false}
+      }
+    }
+  },
+  "session": {"dmScope": "per-channel-peer"},
+  "tools": {
+    "loopDetection": {
+      "enabled": true,
+      "historySize": 30,
+      "warningThreshold": 4,
+      "criticalThreshold": 8,
+      "globalCircuitBreakerThreshold": 12,
+      "unknownToolThreshold": 3,
+      "detectors": {"genericRepeat": true, "knownPollNoProgress": true, "pingPong": true}
+    }
+  }
+}

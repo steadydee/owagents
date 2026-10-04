@@ -44,3 +44,14 @@ __pycache__/
 node_modules/
 dist/
 build/
+
+# Nómina runtime-only configuration, ledger and backups
+**/payroll-config.json
+**/payroll.sqlite*
+**/payroll.db*
+**/payroll-backups/
+openclaw/agents/nomina/USER.md
+openclaw/agents/nomina/state/
+openclaw/agents/nomina/snapshots/
+openclaw/agents/nomina/archives/
+openclaw/agents/nomina/backups/

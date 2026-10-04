@@ -1,0 +1,5 @@
+# Core payroll and reports use Python 3.9+ standard library.
+# Optional encrypted off-machine archive and restore (install for production).
+cryptography==48.0.0
+google-api-python-client==2.195.0
+google-auth==2.50.0
