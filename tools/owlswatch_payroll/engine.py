@@ -207,7 +207,7 @@ class PayrollEngine:
             db.execute("UPDATE pending SET result=? WHERE token=?", (canonical(result), token))
             return masked(result)
 
-    def review(self, token, actor, render=None):
+    def review(self, token, actor, render=None, *, mark_reviewed=True, delivered_hash=None, delivery_receipts=None):
         """Show the saved deterministic preview through the authenticated host.
 
         The host supplies its bounded renderer. Rendering errors roll back the
@@ -239,8 +239,16 @@ class PayrollEngine:
             result = {"action": pending["kind"], "pending_id": token, "preview": json.loads(pending["preview"]), "expires_at": pending["expires_at"], "confirmation_command": "/confirmar_nomina " + token}
             if render:
                 result["summary"] = render(result)
+            if not mark_reviewed:
+                return result
+            if delivered_hash is not None and (not render or
+                    hashlib.sha256(result["summary"].encode("utf-8")).hexdigest() != delivered_hash):
+                fail("REVIEW_DELIVERY_MISMATCH", "The delivered review differs from the saved review. Open it again before confirming.")
             db.execute("INSERT OR REPLACE INTO pending_reviews VALUES (?,?,?,?,?)", (token, pending["payload_hash"], pending["version"], self._scope(actor), time.time()))
-            self._audit(db, "action_reviewed", {"pending_id": token, "payload_hash": pending["payload_hash"]}, actor)
+            review_audit = {"pending_id": token, "payload_hash": pending["payload_hash"]}
+            if delivered_hash is not None:
+                review_audit.update(delivered_sha256=delivered_hash, telegram_message_ids=delivery_receipts)
+            self._audit(db, "action_reviewed", review_audit, actor)
             return result
 
     def snapshot(self, run_id):

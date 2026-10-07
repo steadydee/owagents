@@ -24,7 +24,8 @@ function failure(code, uncertain) {
 export function callPython({ server, env, python = "python3", command = "call", name, args = {},
   trusted = null, timeoutMs = 45000, maxOutputBytes = 262144 }) {
   const valid = command === "call" ? /^nomina_[a-z_]+$/.test(name ?? "")
-    : (command === "approve" || command === "review") && /^[A-F0-9]{16,32}$/.test(name ?? "");
+    : command === "report" ? /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(name ?? "")
+    : ["approve", "review", "review-delivered"].includes(command) && /^[A-F0-9]{16,32}$/.test(name ?? "");
   if (!valid) return Promise.resolve(failure("invalid_bridge_request", false));
   let input;
   try { input = JSON.stringify(args); } catch { return Promise.resolve(failure("invalid_tool_arguments", false)); }

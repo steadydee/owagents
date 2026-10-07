@@ -133,7 +133,7 @@ fi
 export OPENCLAW_CONFIG_PATH="$PROFILE_CONFIG"
 openclaw --profile nomina config validate
 openclaw --profile nomina skills check
-openclaw --profile nomina gateway restart
+python3 "$ROOT/scripts/install-nomina-maintenance.py" --workspace "$WORKSPACE" --enable --reload-gateway
 openclaw --profile nomina gateway status
 openclaw --profile nomina channels status --probe
 python3 "$ROOT/scripts/record-release.py" --profile nomina --workspace "$WORKSPACE"
