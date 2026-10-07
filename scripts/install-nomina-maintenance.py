@@ -7,6 +7,7 @@ import plistlib
 import shutil
 import subprocess
 import tempfile
+import time
 
 
 def atomic_private(path, data):
@@ -24,6 +25,17 @@ def atomic_private(path, data):
         Path(temporary).unlink(missing_ok=True)
 
 
+def bootstrap_service(domain, path):
+    # launchd can return EIO briefly after bootout while the old job exits.
+    for attempt in range(4):
+        result = subprocess.run(["launchctl", "bootstrap", domain, str(path)], capture_output=True)
+        if result.returncode == 0:
+            return
+        if result.returncode != 5 or attempt == 3:
+            raise RuntimeError("Nomina launchd bootstrap failed; inspect the private service logs")
+        time.sleep(0.5 * (2 ** attempt))
+
+
 def reload_gateway(gateway_path):
     domain = "gui/" + str(os.getuid())
     target = domain + "/ai.openclaw.nomina"
@@ -33,7 +45,7 @@ def reload_gateway(gateway_path):
     elif "Could not find service" not in probe.stderr:
         raise RuntimeError("Could not verify the existing Nomina service before reload")
     subprocess.run(["launchctl", "enable", target], check=True, capture_output=True)
-    subprocess.run(["launchctl", "bootstrap", domain, str(gateway_path)], check=True, capture_output=True)
+    bootstrap_service(domain, gateway_path)
 
 
 def install(workspace, home, openclaw, *, enable=False, activate=True, reload=False):
@@ -77,7 +89,7 @@ def install(workspace, home, openclaw, *, enable=False, activate=True, reload=Fa
         domain = "gui/" + str(os.getuid())
         subprocess.run(["launchctl", "bootout", domain, str(target)], capture_output=True, check=False)
         subprocess.run(["launchctl", "enable", domain + "/" + label], check=True)
-        subprocess.run(["launchctl", "bootstrap", domain, str(target)], check=True)
+        bootstrap_service(domain, target)
     return {"label": label, "enabled": (workspace / "maintenance.enabled").exists(),
             "gateway_reload_required": not reload}
 
