@@ -6,7 +6,7 @@ connection. No real payees, payroll runs, payments or transfers were created.
 
 ## Evidence
 
-- 142 Python tests and 39 JavaScript tests passed against the installed OpenClaw
+- 145 Python tests and 39 JavaScript tests passed against the installed OpenClaw
   SDK 2026.7.1-2. These use isolated synthetic data and injected delivery failures.
 - 18/18 offline conversation fixtures passed. They exercise real local tools but
   do not score DeepSeek's ability to understand natural language.
@@ -30,6 +30,10 @@ Production read-only delivery checks must be recorded separately from the
 synthetic tests. Do not run a fake payroll to test production. Real native
 review/confirmation and report-download UAT still requires a reviewed synthetic
 test context or the user's first genuine approved setup.
+
+The first live gateway reload encountered transient launchd exit 5 during
+bootout/bootstrap. A retry restored the gateway. The installer now retries only
+that bootstrap error, at most four attempts, without touching another service.
 
 ## Remaining External Gates
 

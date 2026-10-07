@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import plistlib
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -180,6 +181,42 @@ class MaintenanceTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 module.reload_gateway(path)
             self.assertEqual(run.call_count, 1)
+
+    def bootstrap_fixture(self):
+        script = Path(__file__).resolve().parents[3] / "scripts/install-nomina-maintenance.py"
+        spec = importlib.util.spec_from_file_location("install_nomina", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_bootstrap_retries_transient_unload_race_for_same_service_only(self):
+        module = self.bootstrap_fixture()
+        with patch.object(module.subprocess, "run", side_effect=[
+                subprocess.CompletedProcess([], 5), subprocess.CompletedProcess([], 0)]) as run, \
+                patch.object(module.time, "sleep") as sleep:
+            module.bootstrap_service("gui/502", Path("/private/ai.openclaw.nomina.plist"))
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+        sleep.assert_called_once_with(0.5)
+
+    def test_bootstrap_permanent_failure_is_bounded(self):
+        module = self.bootstrap_fixture()
+        with patch.object(module.subprocess, "run", return_value=subprocess.CompletedProcess([], 5)) as run, \
+                patch.object(module.time, "sleep") as sleep:
+            with self.assertRaises(RuntimeError):
+                module.bootstrap_service("gui/502", Path("/private/ai.openclaw.nomina.plist"))
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.5, 1.0, 2.0])
+
+    def test_bootstrap_other_error_does_not_retry_or_leak_stderr(self):
+        module = self.bootstrap_fixture()
+        with patch.object(module.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, stderr=b"private")) as run, \
+                patch.object(module.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "Nomina launchd bootstrap failed") as raised:
+                module.bootstrap_service("gui/502", Path("/private/ai.openclaw.nomina.plist"))
+        self.assertNotIn("private", str(raised.exception).replace("private service logs", "logs"))
+        run.assert_called_once()
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":
