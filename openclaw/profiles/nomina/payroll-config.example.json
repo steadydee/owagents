@@ -10,6 +10,7 @@
     "enabled": false,
     "drive_folder_id": "<private-payroll-folder-id>",
     "google_credentials_file": "secrets/google-service-account.json",
+    "allowed_reader_emails": ["owner@example.com", "dedicated-backup@example.iam.gserviceaccount.com"],
     "backup_key_file": "secrets/backup.key"
   }
 }

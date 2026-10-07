@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 PROFILE_DIR="${PROFILE_DIR:-$HOME/.openclaw-owlswatch}"
 CUENTA_WORKSPACE="${CUENTA_WORKSPACE:-$HOME/.openclaw/workspace-owlswatch}"
@@ -10,6 +11,8 @@ FINCA_PROFILE_DIR="${FINCA_PROFILE_DIR:-$HOME/.openclaw-finca}"
 FINCA_WORKSPACE="${FINCA_WORKSPACE:-$HOME/.openclaw/workspace-finca-ops}"
 HOTEL_PROFILE_DIR="${HOTEL_PROFILE_DIR:-$HOME/.openclaw-hotel}"
 HOTEL_WORKSPACE="${HOTEL_WORKSPACE:-$HOME/.openclaw/workspace-hotel-ops}"
+NOMINA_PROFILE_DIR="${NOMINA_PROFILE_DIR:-$HOME/.openclaw-nomina}"
+NOMINA_WORKSPACE="${NOMINA_WORKSPACE:-$HOME/.openclaw/workspace-nomina-nomina}"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Backups/owlswatch-agents/runtime}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$BACKUP_ROOT/$STAMP"
@@ -46,6 +49,27 @@ fi
 if [ -f "$HOTEL_PROFILE_DIR/openclaw.json" ]; then
   redact_json "$HOTEL_PROFILE_DIR/openclaw.json" "$OUT/hotel-openclaw.redacted.json"
 fi
+
+# Nómina is intentionally allowlisted here: no payroll config, ledger, reports,
+# memory, provider auth, encryption keys, sessions or spool enter this archive.
+if [ -f "$NOMINA_PROFILE_DIR/openclaw.json" ]; then
+  redact_json "$NOMINA_PROFILE_DIR/openclaw.json" "$OUT/nomina-openclaw.redacted.json"
+fi
+mkdir -p "$OUT/nomina"
+if [ -f "$NOMINA_PROFILE_DIR/source-release.json" ]; then
+  cp "$NOMINA_PROFILE_DIR/source-release.json" "$OUT/nomina/"
+fi
+python3 - "$HOME/Library/LaunchAgents" "$OUT/nomina/schedules.json" <<'PY'
+import json, pathlib, plistlib, sys
+root, target = map(pathlib.Path, sys.argv[1:])
+result = []
+for label in ('ai.openclaw.nomina', 'ai.openclaw.nomina.maintenance'):
+    path = root / (label + '.plist')
+    if path.is_file():
+        data = plistlib.loads(path.read_bytes())
+        result.append({key: data[key] for key in ('Label', 'RunAtLoad', 'KeepAlive', 'StartInterval') if key in data})
+target.write_text(json.dumps(result, indent=2) + '\n')
+PY
 
 mkdir -p "$OUT/cuenta" "$OUT/cotiza" "$OUT/correo" "$OUT/cobros" "$OUT/finca" "$OUT/hotel" "$OUT/launch-agents"
 rsync -a --exclude 'memory' --exclude 'spool' --exclude '.openclaw' --exclude '.git' "$CUENTA_WORKSPACE/" "$OUT/cuenta/"

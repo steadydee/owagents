@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Nómina service boundary. Native approvals are deliberately not tools."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -71,19 +72,40 @@ def execute(command, name, arguments=None):
     # Import lazily: catalog/SDK discovery must work before private setup exists.
     from engine import PayrollEngine
     root, config = runtime_config()
-    actor = trusted_actor(config, native=command in ("approve", "review"))
+    actor = trusted_actor(config, native=command in ("approve", "review", "review-delivered", "report"))
     state = private_directory(root / "state", root)
     database = state / "payroll.sqlite3"
     if database.is_symlink():
         raise BoundaryError("UNSAFE_PATH", "Payroll database must not be a symbolic link.")
     engine = PayrollEngine(database)
-    if command == "review":
+    if command in ("review", "review-delivered"):
         from native_review import render_native
         if not re.fullmatch(r"[A-F0-9]{16,32}", name):
             raise BoundaryError("INVALID_CONFIRMATION", "Use the exact review command from the current preview.")
-        review = engine.review(name, actor, render=render_native)
-        return {"ok": True, "result": {"pending_id": review["pending_id"], "action": review["action"]},
+        delivered_hash = None
+        receipts = None
+        if command == "review-delivered":
+            delivered_hash = (arguments or {}).get("sha256")
+            receipts = (arguments or {}).get("message_ids")
+            if not isinstance(delivered_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", delivered_hash) or not isinstance(receipts, list) or not 1 <= len(receipts) <= 100 or any(not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", value) for value in receipts):
+                raise BoundaryError("REVIEW_DELIVERY_REQUIRED", "La revisión no tiene una entrega verificada. Pulsa Revisar de nuevo.")
+        review = engine.review(name, actor, render=render_native,
+                               mark_reviewed=command == "review-delivered", delivered_hash=delivered_hash,
+                               delivery_receipts=receipts)
+        return {"ok": True, "result": {"pending_id": review["pending_id"], "action": review["action"],
+                "already_confirmed": review.get("already_confirmed", False)},
+                "sha256": hashlib.sha256(review["summary"].encode("utf-8")).hexdigest(),
                 "summary": review["summary"]}
+    if command == "report":
+        from reports import export_run
+        from security import private_file
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", name) or (arguments or {}).get("format") not in ("csv", "html"):
+            raise BoundaryError("INVALID_REPORT", "Solicita el informe de una nómina finalizada; elige CSV o HTML.")
+        report = export_run(root, engine.snapshot(name))
+        filename = "payments.csv" if arguments["format"] == "csv" else "payroll.html"
+        selected = private_file("exports/" + report["sha256"] + "/" + filename, root)
+        return {"ok": True, "result": {"run_id": name, "media_path": str(selected)},
+                "summary": "Informe privado de nómina. Este archivo no ejecuta pagos."}
     if command == "approve":
         if not re.fullmatch(r"[A-F0-9]{16,32}", name):
             raise BoundaryError("INVALID_CONFIRMATION", "Use the exact confirmation command from the current preview.")
@@ -95,6 +117,7 @@ def execute(command, name, arguments=None):
     if name == "nomina_export":
         from reports import export_run
         result = export_run(root, engine.snapshot(arguments["run_id"]))
+        result["download_commands"] = {fmt: "/informe_nomina " + arguments["run_id"] + " " + fmt for fmt in ("csv", "html")}
         archived = after_commit(root, config, engine, database, actor, {"run_id": arguments["run_id"]})
         return {"ok": True, "result": result, "archive": archived}
     if name == "nomina_archive_status":
@@ -130,16 +153,16 @@ def main():
             # Local operator maintenance only: not exported by plugin or catalog.
             from archive import restore_backup
             result = {"ok": True, "result": restore_backup(*sys.argv[2:])}
-        elif command in ("call", "approve", "review") and len(sys.argv) == 3:
+        elif command in ("call", "approve", "review", "review-delivered", "report") and len(sys.argv) == 3:
             arguments = {}
-            if command == "call":
+            if command in ("call", "review-delivered", "report"):
                 raw = sys.stdin.buffer.read(65537)
                 if len(raw) > 65536:
                     raise ValueError("Payroll arguments exceed the allowed size")
                 arguments = json.loads(raw)
             result = execute(command, sys.argv[2], arguments)
         else:
-            raise ValueError("Use catalog, call TOOL, review TOKEN, approve TOKEN, or offline restore-backup BACKUP KEY NEW_DIRECTORY")
+            raise ValueError("Use catalog, call TOOL, native review/confirmation/report, or offline restore-backup BACKUP KEY NEW_DIRECTORY")
     except Exception as error:
         from engine import PayrollError
         if isinstance(error, (BoundaryError, PayrollError)):

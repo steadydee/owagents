@@ -15,7 +15,7 @@ test("actual SDK entry registers authoritative catalog, isolated skill and nativ
   const localDir = dirname(fileURLToPath(import.meta.url));
   mkdirSync(join(dir, "node_modules"), { recursive: true });
   symlinkSync(sdk, join(dir, "node_modules", "openclaw"), "dir");
-  for (const file of ["openclaw-plugin.js", "approval-context.mjs", "tool-bridge.mjs", "openclaw.plugin.json"]) copyFileSync(join(localDir, file), join(dir, file));
+  for (const file of ["openclaw-plugin.js", "approval-context.mjs", "tool-bridge.mjs", "openclaw.plugin.json", "native-ui.mjs", "delivery-journal.mjs"]) copyFileSync(join(localDir, file), join(dir, file));
   const skill = join(root, "skills", "payroll");
   mkdirSync(skill, { recursive: true });
   writeFileSync(join(skill, "SKILL.md"), "Synthetic trusted payroll workflow.");
@@ -24,7 +24,7 @@ if sys.argv[1] == 'catalog':
     print(json.dumps({'nomina_fixture': {'description': 'Synthetic catalog tool.', 'parameters': {'type': 'object', 'additionalProperties': False}}}))
 else:
     args = json.load(sys.stdin)
-    print(json.dumps({'ok': True, 'result': {'trusted': json.loads(os.environ['OWLSWATCH_PAYROLL_TRUSTED_CONTEXT']), 'args': args}, 'summary': 'Confirmación sintética registrada.'}))
+    print(json.dumps({'ok': True, 'result': {'trusted': json.loads(os.environ['OWLSWATCH_PAYROLL_TRUSTED_CONTEXT']), 'args': args, 'already_confirmed': sys.argv[1] == 'review'}, 'summary': 'Confirmación sintética registrada.'}))
 `);
   const script = `
 import { pathToFileURL } from 'node:url';
@@ -66,7 +66,7 @@ console.log(JSON.stringify({
     assert.equal(result.value.result.trusted.sourceEventId, "tool-call:fixture-call-1");
     assert.equal(result.value.result.trusted.authorized, undefined);
     assert.deepEqual(result.command, { name: "confirmar_nomina", requireAuth: true, channels: ["telegram"] });
-    assert.equal(result.confirmed.text, "Confirmación sintética registrada.");
+    assert.match(result.confirmed.text, /No pude guardar el registro/);
     assert.notEqual(result.refused.text, result.confirmed.text);
     assert.notEqual(result.invalidToken.text, result.confirmed.text);
     assert.deepEqual(result.reviewCommand, { name: "revisar_nomina", requireAuth: true, channels: ["telegram"] });

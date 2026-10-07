@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
 import sys
 import tempfile
 import time
@@ -53,6 +54,7 @@ class ServiceJourneyTests(unittest.TestCase):
         review = self.invoke(token, command="review")
         self.assertTrue(review["ok"])
         self.assertIn("/confirmar_nomina " + token, review["summary"])
+        self.invoke(token, {"sha256": review["sha256"], "message_ids": ["100"]}, command="review-delivered")
         return self.invoke(token, command="approve")
 
     def payee(self, payee_id="sample-a", salary=1750905, allowance=249095, kind="employee", health=35018):
@@ -84,6 +86,16 @@ class ServiceJourneyTests(unittest.TestCase):
         reviewed = self.invoke(token, command="review")
         self.assertIn("SYNTHETIC-ACCOUNT-1234", reviewed["summary"])
         self.assertNotIn("preview", reviewed["result"])
+        with self.assertRaises(PayrollError) as caught:
+            self.invoke(token, command="approve")
+        self.assertEqual(caught.exception.code, "REVIEW_REQUIRED")
+        with self.assertRaises(PayrollError):
+            self.invoke(token, {"sha256": "0" * 64, "message_ids": ["100"]}, command="review-delivered")
+        self.invoke(token, {"sha256": reviewed["sha256"], "message_ids": ["100"]}, command="review-delivered")
+        with sqlite3.connect(self.root / "state/payroll.sqlite3") as db:
+            audit = json.loads(db.execute("SELECT data FROM audit WHERE kind='action_reviewed' ORDER BY created_at DESC LIMIT 1").fetchone()[0])
+        self.assertEqual(audit["telegram_message_ids"], ["100"])
+        self.assertEqual(audit["delivered_sha256"], reviewed["sha256"])
         approved = self.invoke(token, command="approve")
         self.assertTrue(approved["ok"])
         self.assertNotIn("SYNTHETIC-ACCOUNT-1234", json.dumps(approved))
@@ -118,6 +130,16 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(len(exported), 1)
         self.assertIn("SYNTHETIC-ACCOUNT-1234", exported[0].read_text())
         self.assertEqual(exported[0].stat().st_mode & 0o777, 0o600)
+        model_export = self.invoke("nomina_export", {"run_id": run["run_id"]})
+        self.assertEqual(model_export["result"]["download_commands"]["csv"], "/informe_nomina " + run["run_id"] + " csv")
+        with patch.dict(os.environ, {"OWLSWATCH_PAYROLL_TRUSTED_CONTEXT": json.dumps(self.actor)}):
+            with self.assertRaises(BoundaryError):
+                server.execute("report", run["run_id"], {"format": "csv"})
+        report = self.invoke(run["run_id"], {"format": "csv"}, command="report")
+        self.assertTrue(Path(report["result"]["media_path"]).is_file())
+        self.assertTrue(Path(report["result"]["media_path"]).is_relative_to(self.root.resolve() / "exports"))
+        with self.assertRaises(BoundaryError):
+            self.invoke("../../payroll-config", {"format": "csv"}, command="report")
         payment = self.invoke("nomina_prepare_paid", {"run_id": run["run_id"], "expected_revision": run["revision"],
                              "payee_ids": ["sample-b"], "request_id": "pay-contractor"})
         paid = self.confirmed(payment)

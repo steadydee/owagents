@@ -217,29 +217,103 @@ Allowed model tools:
   inspect/retry configuration-bound archive delivery independently of payroll.
 
 The trusted native `/revisar_nomina TOKEN` command renders the exact saved action
-and records a human review; only its subsequent `/confirmar_nomina TOKEN` applies
-permanent changes. Both require authenticated host authorization, the same
+without recording review yet. The host verifies its hash and requires a complete
+durable Telegram send with valid platform receipts before the internal
+`review-delivered` call may revalidate the actor, version and hash and record
+review. Only then is a separate **Confirmar** button offered. A **Revisar** button
+may be derived from a server-issued review command in the final reply; plain
+agreement or model-written confirmation text cannot create approval authority.
+Partial, failed, suppressed or receipt-less review delivery does not pass the
+gate. Delivery evidence does not prove that a human read the text.
+Only the subsequent `/confirmar_nomina TOKEN` applies permanent changes.
+Both user commands require authenticated host authorization, the same
 preparing sender and route/session, a live token and unchanged prepared state.
 Confirmation is single-use and requires that exact native review.
 User text, model-supplied approval fields and forwarded commands cannot approve.
 Finalization reserves loans; human acknowledgment of completed payments posts
 repayments. No bank payment or reversal is executed. SQL transactions, revisions,
 stable request IDs and unique business identities enforce retry boundaries.
-The SDK currently does not expose source Telegram message IDs; tool-call audit
-IDs must not be described as complete source-message deduplication.
+The SDK tool context currently does not expose source Telegram message IDs;
+tool-call audit IDs must not be described as complete source-message deduplication.
 
 Amounts, rounding, allocations and approved payment destinations are resolved by
 code. Normal model-tool replies mask banking details. Full payment destinations
 appear only in the authenticated native review, restricted local reports and
 explicitly configured private Drive files.
+
+`nomina_export` can return exact `/informe_nomina RUN_ID csv` and
+`/informe_nomina RUN_ID html` download commands, shown as native download buttons.
+The native command requires host authorization and local allowlist checks,
+exports a persisted non-draft run and sends only the server-selected, contained
+CSV/HTML document to that authorized route. It accepts neither arbitrary paths
+nor alternate recipients. Backup/key/config files and JSON are not native
+download options. Private document delivery works without Drive; an export or
+local path alone is not proof of a sent attachment. These native sends do not
+grant the model an arbitrary messaging tool or any payment authority.
+
 Archive upload IDs are journaled before provider creation; unknown outcomes retry
-the same identity. Encrypted backups use SQLite's online-backup API and exclude
-keys/configuration. Failed delivery never repeats a payroll mutation.
+the same identity. The required private archive boundary pins
+`archive.drive_folder_id`, a dedicated credential file in
+`archive.google_credentials_file`, and explicit `archive.allowed_reader_emails`.
+Every direct/inherited folder permission must be an identifiable individual user
+on that allowlist; groups, domains, public/anyone, unlisted users, missing
+allowlists and incomplete inspection fail closed. These are access checks, not
+permission-changing tools. Credentials may be `service_account` or dedicated
+`authorized_user` OAuth. Personal Drive requires the dedicated OAuth app and a
+folder created/authorized for it under `drive.file`; a service account uses an
+appropriate Shared Drive. No other agent's credentials, consent or token files
+may be shared, and inaccessible folders never justify broadening scopes. Verify
+this boundary in the integrated release before any live activation.
+Encrypted backups use SQLite's online-backup API and exclude
+keys/configuration. Upload workers serialize with a process lock and each attempt
+is bounded to one backup plus at most three reports. Status separates local and
+uploaded versions, exposes the last completed upload time/age and at most 30
+already-uploaded report links, never backup links or new public permissions.
+Restore is offline/operator-only into a new private directory after bundle,
+manifest, database/version and foreign-key validation. Private off-machine setup
+remains pending the user's destination/access/key-custody choices; synthetic
+restore and fake-provider tests are not evidence of active backup or live recovery.
+
+The private delivery journal hashes inbound identity and reply text, but retains
+route, sender, session/run identifiers, timestamps and statuses. It stores no
+financial message bodies or raw provider errors; hashes do not make the retained
+metadata anonymous or encrypted. Inbound entries require trusted host message
+and session IDs. Outbound hooks lack source/run IDs, so text equality is not proof.
+The source-bound final hook may take sole delivery ownership via the public SDK
+durable sender, record receipts against that exact inbound ID, and suppress a
+second core send even after uncertainty. No arbitrary recipient/model messaging
+tool is added. Missing host metadata falls back to core delivery without a receipt
+claim. Native confirmation requests are journaled before execution and their
+results are sent durably. The review gate verifies normalized effective text as
+well as delivery receipts; altered text cannot authorize a change.
+Generation success is not proof of delivery. Journal observations do not replace
+the native review gate or deduplicate financial execution. There is no automatic
+journal-row retention limit and no automatic replay of failed/uncertain requests.
+
+An operator-owned, separately enabled maintenance LaunchAgent may run independent
+archive retries, read-only health probes and fixed operational notices. This is
+not a model scheduling grant. Its workspace enable file and isolated profile
+checks gate execution; a process lock and private maintenance SQLite state bound
+overlap, backoff and notice duplication. It attempts at most two archive jobs and
+one notice per run, warns about unverified deliveries after 10 minutes (grouped
+at most hourly) and channel failures after 15 minutes. Notice delivery is limited
+to one pinned route on the default account with matching allowlists, no financial
+payload or arbitrary recipient. Unknown sends are not resent; explicit 429s get
+at most three total attempts, at least an hour apart. The channel may be unable
+to carry its own outage notice. Failed delivery never repeats a payroll mutation.
+
+Maintenance never restarts the gateway. OpenClaw and the dedicated gateway's
+launchd `RunAtLoad`/`KeepAlive` settings own liveness. The installer preserves that
+gateway's environment and private stderr, and requires a separate gateway reload.
+Both services are GUI-user LaunchAgents: reboot recovery requires login, not a
+pre-login daemon. Scoped log rotation does not constitute lossless audit storage
+or delivery-journal pruning. These source capabilities are not deployment claims.
 
 Forbidden: model finalization/payment authority, bank transfers, employee or
 arbitrary Telegram messages, public archive sharing, tax-rule inference,
 Operations writes, arbitrary paths, secrets in prompts, broad shell/file/web/
-browser tools and autonomous schedules. Configuration starts disabled with
+browser tools and model-owned or automatic financial schedules. Configuration
+starts disabled with
 unusable numeric placeholders and no production data. Runtime state is preserved
 across isolated source deployments. The shared runtime guard is loaded for this
 profile only; deployment does not modify other agents or watchdogs.

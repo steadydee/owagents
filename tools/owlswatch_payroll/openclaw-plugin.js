@@ -1,10 +1,13 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/core";
+import { sendDurableMessageBatch } from "openclaw/plugin-sdk/channel-outbound";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hostContext, confirmationToken, confirmationReply, reviewReply } from "./approval-context.mjs";
+import { hostContext } from "./approval-context.mjs";
 import { callPython, trustedEnvironment, toolTimeout } from "./tool-bridge.mjs";
+import { nativeHandlers, addReviewButtons, addReportButtons } from "./native-ui.mjs";
+import { registerDeliveryHooks, deliverFinalReply } from "./delivery-journal.mjs";
 
 const TOOL_DIR = dirname(fileURLToPath(import.meta.url));
 const SERVER = resolve(TOOL_DIR, "server.py");
@@ -34,6 +37,27 @@ export default definePluginEntry({
     api.on("before_prompt_build", (_event, ctx) => ctx.agentId === "nomina"
       ? { prependSystemContext: `Follow this trusted Nómina workflow for every payroll request:\n${skill}` }
       : undefined);
+    const journal = registerDeliveryHooks(api, WORKSPACE);
+    api.on("reply_payload_sending", async (event, ctx) => {
+      if (!String(event.sessionKey ?? ctx.sessionKey ?? "").startsWith("agent:nomina:") || event.kind !== "final") return;
+      const payload = addReportButtons(addReviewButtons(event.payload));
+      return deliverFinalReply({ ...event, payload }, ctx, journal, (trusted, final) => sendDurableMessageBatch({
+        cfg: api.config, channel: "telegram", to: trusted.chatId, accountId: trusted.accountId,
+        threadId: trusted.threadId || undefined,
+        replyToId: trusted.messageId, session: { key: trusted.sessionKey, agentId: "nomina" },
+        payloads: [final], durability: "required",
+      }));
+    });
+    const handlers = nativeHandlers({ workspace: WORKSPACE,
+      call: (command, name, args, trusted) => callPython({ server: SERVER, env: ENV, python: PYTHON, command, name, args, trusted }),
+      observe: journal.native,
+      send: (ctx, trusted, payload, options = {}) => sendDurableMessageBatch({
+        cfg: ctx.config, channel: "telegram", to: trusted.chatId, accountId: trusted.accountId,
+        threadId: trusted.threadId || undefined, session: { key: trusted.sessionKey, agentId: "nomina" },
+        payloads: [payload], durability: "required", forceDocument: Boolean(payload.mediaUrl),
+        onPayload: options.onPayload,
+      }),
+    });
     for (const [name, spec] of Object.entries(catalog)) {
       if (!/^nomina_[a-z_]+$/.test(name) || typeof spec.description !== "string" || !spec.parameters) throw new Error("Invalid Nómina tool catalog.");
       api.registerTool(ctx => {
@@ -52,26 +76,16 @@ export default definePluginEntry({
     api.registerCommand({
       name: "confirmar_nomina", description: "Confirma la revisión exacta de nómina desde la misma cuenta y conversación.",
       channels: ["telegram"], acceptsArgs: true, requireAuth: true,
-      handler: async ctx => {
-        const trusted = hostContext(ctx, { command: true });
-        const token = confirmationToken(ctx.args);
-        if (!trusted || !token) return { text: "No pude verificar esta confirmación. Usa el comando exacto de la revisión preparada, desde la misma cuenta y conversación de Nómina." };
-        return { text: confirmationReply(await callPython({
-          server: SERVER, env: ENV, python: PYTHON, command: "approve", name: token, trusted,
-        })) };
-      },
+      handler: handlers.confirm,
     });
     api.registerCommand({
       name: "revisar_nomina", description: "Muestra la revisión exacta antes de confirmar una operación de nómina.",
       channels: ["telegram"], acceptsArgs: true, requireAuth: true,
-      handler: async ctx => {
-        const trusted = hostContext(ctx, { command: true });
-        const token = confirmationToken(ctx.args);
-        if (!trusted || !token) return { text: "No pude verificar esta revisión. Usa la referencia exacta desde la misma cuenta y conversación de Nómina." };
-        return { text: reviewReply(await callPython({
-          server: SERVER, env: ENV, python: PYTHON, command: "review", name: token, trusted,
-        })) };
-      },
+      handler: handlers.review,
+    });
+    api.registerCommand({
+      name: "informe_nomina", description: "Descarga un informe privado de una nómina finalizada.",
+      channels: ["telegram"], acceptsArgs: true, requireAuth: true, handler: handlers.report,
     });
   },
 });
