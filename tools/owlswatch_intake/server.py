@@ -237,8 +237,11 @@ def validate_openclaw_media_path(value: Any) -> Path:
     if not isinstance(value, str) or not value:
         raise ToolError("invalid_input", "openclaw_media_path must be a string.")
     path = Path(value).expanduser().resolve()
-    root = MEDIA_INBOUND.resolve()
-    if root not in path.parents:
+    # Current OpenClaw stages receipts inside the configured agent workspace;
+    # older versions supply the profile state's inbound path directly. Resolve
+    # both the file and these fixed roots so a symlink cannot escape them.
+    roots = [MEDIA_INBOUND.resolve(), (WORKSPACE / "media" / "inbound").resolve()]
+    if not any(root in path.parents for root in roots):
         raise ToolError("invalid_input", "OpenClaw media path must be inside the inbound media directory.")
     if not path.is_file():
         raise ToolError("not_found", "OpenClaw inbound media file was not found.")

@@ -86,7 +86,7 @@ export default definePluginEntry({
   name: "Owl's Watch Intake Tools",
   description: "Narrow first-class tools for Cuenta receipt intake.",
   register(api) {
-    api.on("before_prompt_build", createReceiptPromptHook(BASE_ENV.OWLSWATCH_WORKSPACE));
+    api.on("before_prompt_build", createReceiptPromptHook(BASE_ENV.OWLSWATCH_WORKSPACE, api.config));
     for (const [name, spec] of Object.entries(toolSchemas)) {
       api.registerTool({
         name,

@@ -18,6 +18,12 @@ for file in AGENTS.md TOOLS.md IDENTITY.md SOUL.md README.md; do
 done
 rsync -a "$ROOT/openclaw/agents/cuenta/skills/intake-receipt/" "$WORKSPACE/skills/intake-receipt/"
 rsync -a --delete --exclude '__pycache__' --exclude '.pytest_cache' "$ROOT/tools/owlswatch_intake/" "$WORKSPACE/tools/owlswatch_intake/"
+# rsync replaces the plugin directory, including its runtime-only SDK link.
+# Restore the installed SDK before the existing gateway reloads the plugin.
+OPENCLAW_GLOBAL_PACKAGE="${OPENCLAW_GLOBAL_PACKAGE:-$(npm root -g 2>/dev/null)/openclaw}"
+test -d "$OPENCLAW_GLOBAL_PACKAGE" || { echo "OpenClaw SDK is missing" >&2; exit 1; }
+mkdir -p "$WORKSPACE/tools/owlswatch_intake/node_modules"
+ln -sfn "$OPENCLAW_GLOBAL_PACKAGE" "$WORKSPACE/tools/owlswatch_intake/node_modules/openclaw"
 python3 -m py_compile "$WORKSPACE/tools/owlswatch_intake/server.py"
 node --input-type=module - "$WORKSPACE" <<'JS'
 import { pathToFileURL } from "node:url";

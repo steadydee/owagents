@@ -299,7 +299,11 @@
             "<receipts_topic_id>": {
               "agentId": "cuenta",
               "requireMention": false,
-              "groupPolicy": "open",
+              "groupPolicy": "allowlist",
+              "allowFrom": [
+                "<dennis_chat_id>",
+                "<adriana_chat_id>"
+              ],
               "ingest": true
             },
             "<cobros_topic_id>": {
