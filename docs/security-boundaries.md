@@ -37,6 +37,37 @@ The trusted intake plugin reads only its fixed, versioned `intake-receipt/SKILL.
 at registration and injects it for `agentId: cuenta` via `before_prompt_build`.
 No model-facing filesystem permission is added; user input cannot select the file.
 
+The Receipts topic must set `groupPolicy: "allowlist"` and an explicit `allowFrom`
+list of verified numeric Telegram **sender** IDs. Populate it from approved
+configured senders; never infer an ID from a person's name or add an unknown ID.
+The group and unrelated topics can retain their own policies. A global sender
+allowlist alone does not restrict a topic that overrides `groupPolicy` to `open`.
+This topic gate rejects unauthorized posts before they can start or steer a
+Cuenta run.
+
+For each Cuenta run, the plugin compares the host-provided Telegram sender ID
+with configured numeric sender IDs and supplies that verification result in
+system context. Display names, receipt text, past refusals, and topic membership
+are not proof of identity. A previous sender's refusal must not carry over to a
+verified sender's next turn. This prompt context supplements the channel gate;
+it is not a replacement for deterministic admission control.
+
+Keep the existing Receipts session in queue mode `followup` so rapid receipt
+messages receive individual runs and sender/attachment context; the default
+`steer` mode injects later messages into an already-started run. The installed
+runtime preserves this override on normal session resets. A deleted/recreated
+session requires the override to be reapplied. Do not change every Telegram
+agent's queue behavior to repair Cuenta.
+
+`node scripts/configure-cuenta-intake.mjs --config /absolute/profile/openclaw.json`
+prints a sanitized plan for the single configured Cuenta topic and its existing
+session. With `--apply`, it validates the proposed config, uses the SDK's guarded
+config mutation and atomic session patch, and preserves other topic policies and
+session activity. It does not restart the gateway; the release procedure owns
+the controlled reload. Run `scripts/verify-cuenta-telegram-gate.mjs` with the
+installed OpenClaw package directory to check real runtime admission semantics
+offline before applying the release.
+
 Allowed:
 
 - Download/spool Telegram receipt photos.
