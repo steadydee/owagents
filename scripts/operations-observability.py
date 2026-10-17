@@ -93,7 +93,6 @@ def report_profile(directory, now, days, rates):
         group["responseObservationCoverage"] += isinstance(item.get("responseCompleted"), bool)
         if ok and item.get("responseCompleted") is True:
             group["completedResponses"] += 1
-        if ok:
             group["durationsMs"].append(health.count(item.get("durationMs")))
     for item in usage.values():
         group = row(item.get("agent"))

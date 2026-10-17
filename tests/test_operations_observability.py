@@ -29,6 +29,40 @@ class ObservabilityTests(unittest.TestCase):
             self.assertEqual(result["usageAttempts"], 1)
             self.assertEqual(result["estimatedCostPerVerifiedOutcomeUsdRange"], [.001, .002])
 
+    def test_response_latency_excludes_unobserved_and_failed_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "health").mkdir()
+            base = {"at": "2026-10-17T10:00:00Z", "agent": "cuenta", "kind": "run_end", "success": True}
+            rows = [
+                {**base, "runKey": "a" * 24, "responseCompleted": True, "durationMs": 2000},
+                {**base, "runKey": "b" * 24, "responseCompleted": True, "durationMs": 4000},
+                {**base, "runKey": "c" * 24, "durationMs": 600000},
+                {**base, "runKey": "d" * 24, "responseCompleted": False, "durationMs": 900000},
+                {**base, "runKey": "e" * 24, "success": False, "code": "transport", "responseCompleted": True, "durationMs": 1000000},
+            ]
+            (root / "health/runs.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
+            result = monitor.report_profile(root, monitor.health.timestamp(base["at"]) + 60, 1, {})["agents"]["cuenta"]
+            self.assertEqual(result["completedRuns"], 4)
+            self.assertEqual(result["completedResponses"], 2)
+            self.assertEqual(result["failedRuns"], 1)
+            self.assertEqual(result["responseP50Seconds"], 4)
+            self.assertEqual(result["responseP95Seconds"], 4)
+
+    def test_response_latency_is_unknown_without_observed_responses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "health").mkdir()
+            base = {"at": "2026-10-17T10:00:00Z", "agent": "cuenta", "kind": "run_end", "success": True, "durationMs": 2000}
+            rows = [{**base, "runKey": "a" * 24},
+                    {**base, "runKey": "b" * 24, "responseCompleted": False}]
+            (root / "health/runs.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
+            result = monitor.report_profile(root, monitor.health.timestamp(base["at"]) + 60, 1, {})["agents"]["cuenta"]
+            self.assertEqual(result["completedRuns"], 2)
+            self.assertEqual(result["completedResponses"], 0)
+            self.assertIsNone(result["responseP50Seconds"])
+            self.assertIsNone(result["responseP95Seconds"])
+
     def test_unknown_prices_are_not_free(self):
         self.assertIsNone(monitor.estimate({"provider": "legacy", "model": "unknown", "tokens": 9999}, {}))
 
