@@ -54,8 +54,11 @@ model judgment; this is not a claim that an acknowledged classification is
 factually correct. A small rotating Gmail sweep reconciles old local records
 only when the latest meaningful message is a confirmed SENT reply. Draft
 messages are excluded. An explicit source message must be present before the
-confirmed reply in that thread. Records without verified source linkage stay
-open and are identified separately from verified pending external replies.
+confirmed reply in that thread; source-less legacy records stay open even when
+that thread contains sent mail. Explicit waits for quotes, payment, availability
+or information also stay open because a reply does not prove the business
+dependency completed. These records expose the verified sent message separately
+from their unresolved handoff state.
 
 State is written atomically under `tasks/email_runtime/`: `checkpoint.json`,
 `active.json`, `processed.json`, per-scan `runs/`, `schedule-status.json`, and

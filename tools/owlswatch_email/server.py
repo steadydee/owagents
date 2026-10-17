@@ -775,7 +775,7 @@ def tool_email_upsert_task(args: dict[str, Any]) -> dict[str, Any]:
         priority = payload.get("priority") or existing.get("priority") or "normal"
         if priority not in {"low", "normal", "high", "urgent"}:
             raise ToolError("invalid_priority", "Unknown priority.")
-        protected = {"owner", "ownerSource", "nextActionAt", "deadlineSource", "lastReconciledAt", "reconciliationState", "lastVerifiedMessageId", "gmailHasDraft", "resolvedAt", "resolutionSource", "resolutionMessageId", "createdAt"}
+        protected = {"owner", "ownerSource", "nextActionAt", "deadlineSource", "lastReconciledAt", "reconciliationState", "lastVerifiedMessageId", "lastVerifiedSentMessageId", "gmailHasDraft", "resolvedAt", "resolutionSource", "resolutionMessageId", "createdAt"}
         payload = {key: value for key, value in payload.items() if key not in protected}
         task = {**existing, **payload, "taskId": task_id, "status": status, "priority": priority,
                 "updatedAt": now_iso(), "createdAt": existing.get("createdAt") or now_iso()}

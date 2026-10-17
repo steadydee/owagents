@@ -88,22 +88,29 @@ def snapshot(server, raw_thread, account):
 
 
 def closure_verified(task, evidence):
+    # A sent email does not prove payment, availability, quote work, or another
+    # business dependency completed. Those handoffs remain explicitly open.
+    if recovery.canonical_status(task.get("status")) not in {"proposed", "draft_ready", "needs_human", "error"}:
+        return False
     source = task.get("sourceMessageId")
     ids = evidence.get("messageIds", [])
     reply = evidence.get("sentReplyMessageId")
     if not reply or reply not in ids:
         return False
-    if source:
-        return source in ids and ids.index(source) < ids.index(reply)
-    return bool(evidence.get("latestExternalMessageId"))
+    return bool(source and source in ids and ids.index(source) < ids.index(reply))
 
 
 def evidence_fields(task, evidence):
     state = evidence["state"]
     if task.get("sourceMessageId") and task["sourceMessageId"] not in evidence.get("messageIds", []):
         state = "source_not_found"
+    elif evidence.get("sentReplyMessageId") and not task.get("sourceMessageId"):
+        state = "source_message_unverified"
+    elif evidence.get("sentReplyMessageId") and recovery.canonical_status(task.get("status")) in {"needs_info", "waiting_for_payment", "waiting_for_availability", "waiting_for_quote"}:
+        state = "business_outcome_unverified"
     return {"lastReconciledAt": evidence["checkedAt"], "reconciliationState": state,
             "lastVerifiedMessageId": evidence.get("latestMessageId"),
+            "lastVerifiedSentMessageId": evidence.get("sentReplyMessageId"),
             **({"gmailHasDraft": evidence["gmailHasDraft"]} if "gmailHasDraft" in evidence else {})}
 
 

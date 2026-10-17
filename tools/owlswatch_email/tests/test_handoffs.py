@@ -50,6 +50,19 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(task["status"], "needs_human")
         self.assertEqual(task["reconciliationState"], "source_not_found")
 
+    def test_legacy_missing_source_and_business_waits_do_not_close_from_sent_mail(self):
+        for status in ["draft_ready", "waiting_for_quote", "waiting_for_payment", "waiting_for_availability", "needs_info"]:
+            task = {"taskId": status, "gmailThreadId": "thread1", "status": status}
+            if status != "draft_ready":
+                task["sourceMessageId"] = "message1"
+            server.write_task(task)
+        self.gmail.messages.append(message("sent", "info@owlswatch.com", ["SENT"]))
+        self.assertEqual(recovery.reconcile_tasks(server, "thread1", server.thread_messages({"messages": self.gmail.messages}), "info@owlswatch.com"), 0)
+        self.assertEqual(server.read_task(server.task_path("draft_ready"))["reconciliationState"], "source_message_unverified")
+        self.assertEqual(server.read_task(server.task_path("waiting_for_quote"))["reconciliationState"], "business_outcome_unverified")
+        for status in ["draft_ready", "waiting_for_quote", "waiting_for_payment", "waiting_for_availability", "needs_info"]:
+            self.assertEqual(server.read_task(server.task_path(status))["status"], status)
+
     def test_plan_reads_but_does_not_mutate_tasks_then_apply_closes_with_proof(self):
         server.tool_email_upsert_task({"task": {"taskId": "one", "gmailThreadId": "thread1", "sourceMessageId": "message1", "status": "needs_human"}})
         self.gmail.messages.append(message("sent", "info@owlswatch.com", ["SENT"]))
