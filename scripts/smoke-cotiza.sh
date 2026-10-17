@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$ROOT/tools/owlswatch_quotes/server.py"
+TEST_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/cotiza-smoke.XXXXXX")"
+trap 'rm -rf "$TEST_WORKSPACE"' EXIT
+export OWLSWATCH_COTIZA_WORKSPACE="$TEST_WORKSPACE"
 
 python3 -m py_compile "$SERVER"
 ROOT="$ROOT" python3 - <<'PY'
@@ -38,9 +41,8 @@ if failures:
     raise SystemExit(1)
 print(f"Ran {count} Cotiza test functions.")
 PY
-printf '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n' | python3 "$SERVER" >/tmp/owlswatch-cotiza-tools.json
-grep -q 'owlswatch_quote_create_draft' /tmp/owlswatch-cotiza-tools.json
-grep -q 'owlswatch_quote_revise_draft' /tmp/owlswatch-cotiza-tools.json
-rm -f /tmp/owlswatch-cotiza-tools.json
+printf '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n' | python3 "$SERVER" >"$TEST_WORKSPACE/tools.json"
+grep -q 'owlswatch_quote_create_draft' "$TEST_WORKSPACE/tools.json"
+grep -q 'owlswatch_quote_revise_draft' "$TEST_WORKSPACE/tools.json"
 
 echo "Cotiza smoke passed."
