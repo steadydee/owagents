@@ -22,6 +22,33 @@ function terminalError(message) {
   if (!message || message.role !== "assistant" || !["error", "aborted"].includes(message.stopReason)) return null;
   return errorClass(message.errorMessage || message.errorCode || message.stopReason);
 }
+function hasAssistantText(message) {
+  return message?.role === "assistant" && !terminalError(message) &&
+    (typeof message.content === "string" ? Boolean(message.content.trim()) :
+      Array.isArray(message.content) && message.content.some(part => part?.type === "text" && typeof part.text === "string" && part.text.trim()));
+}
+
+// Count only provider/tool-confirmed business records, never the model's prose.
+export function verifiedBusinessOutcome(event) {
+  if (event.error || event.result?.isError) return null;
+  let result = event.result?.details?.structuredContent || event.result?.structuredContent;
+  if (!result) {
+    const text = event.result?.content?.find(part => part.type === "text")?.text;
+    if (typeof text !== "string" || text.length > 1000000) return null;
+    try { result = JSON.parse(text); } catch { return null; }
+  }
+  if (!result || result.ok !== true) return null;
+  const types = {
+    owlswatch_operations_create_expense_draft: ["expense_draft_created", result.expense_id || result.expenseId],
+    owlswatch_quote_create_draft: ["quote_draft_created", result.quoteId || result.quote_id || result.id],
+    owlswatch_cobros_create_gmail_draft: ["billing_draft_created", result.gmailDraftId],
+    hotel_pms_create_reservation: ["reservation_created", result.reservation?.reservationId || result.reservation?.id],
+    owlswatch_email_acknowledge_item: ["email_intake_processed", result.scanId && result.acknowledged ? `${result.scanId}:${result.acknowledged}` : null],
+  };
+  const match = types[event.toolName];
+  if (!match || typeof match[1] !== "string" || !match[1] || match[1].length > 500) return null;
+  return { outcome: match[0], taskKey: digest(`${match[0]}:${match[1]}`) };
+}
 
 export function createGuard({ now = Date.now, record = () => {}, readCircuit = () => ({}), writeCircuit = () => {} } = {}) {
   const runs = new Map();
@@ -34,7 +61,7 @@ export function createGuard({ now = Date.now, record = () => {}, readCircuit = (
       for (const [id, old] of runs) if (now() - old.updated > 3600000) runs.delete(id);
       if (runs.size >= 2000) runs.delete(runs.keys().next().value);
       runs.set(key, { runKey: digest(key), agent: "unknown", started: now(), updated: now(), calls: 0, searches: 0, tokens: 0,
-        modelRequests: 0, modelErrors: 0, usageEvents: 0, callIds: new Set(), repeats: new Map(), blocked: null, terminalCode: null, ended: null, revision: 0 });
+        modelRequests: 0, modelErrors: 0, usageEvents: 0, responseCompleted: false, callIds: new Set(), repeats: new Map(), blocked: null, terminalCode: null, ended: null, revision: 0 });
     }
     const run = runs.get(key);
     run.updated = now();
@@ -51,13 +78,14 @@ export function createGuard({ now = Date.now, record = () => {}, readCircuit = (
     const code = run.blocked || run.terminalCode || run.ended.code || (run.ended.success === true ? null : "run_failed");
     emit(run, { kind: "run_end", revision: ++run.revision, startedAt: new Date(run.started).toISOString(), endedAt: run.ended.at,
       success: run.ended.success === true && !code, code, durationMs: run.ended.durationMs ?? now() - run.started,
+      responseCompleted: run.ended.success === true && !code && run.responseCompleted,
       calls: run.calls, searches: run.searches, tokens: run.tokens, modelRequests: run.modelRequests, modelErrors: run.modelErrors });
   }
   return {
     beforeRun(event, ctx) {
       const run = getRun(event, ctx);
       // A provider retry can reuse runId. Preserve tool budgets across attempts.
-      if (run.ended) { run.ended = null; run.terminalCode = null; }
+      if (run.ended) { run.ended = null; run.terminalCode = null; run.responseCompleted = false; }
       emit(run, { kind: "run_start", startedAt: new Date(run.started).toISOString() });
       const circuit = readCircuit();
       if (circuit.until > now() && (!run.provider || circuit.provider === "unknown" || circuit.provider === run.provider)) {
@@ -98,8 +126,15 @@ export function createGuard({ now = Date.now, record = () => {}, readCircuit = (
       // assistant/error metadata in end/output.
       snapshot(run);
     },
+    afterTool(event, ctx) {
+      const verified = verifiedBusinessOutcome(event);
+      if (!verified) return;
+      const run = getRun(event, ctx);
+      emit(run, { kind: "business_outcome", ...verified });
+    },
     output(event, ctx) {
       const run = getRun(event, ctx);
+      if (hasAssistantText(event.lastAssistant) || event.assistantTexts?.some(text => typeof text === "string" && text.trim())) run.responseCompleted = true;
       const usage = event.usage || {};
       const input = finiteCount(usage.input), output = finiteCount(usage.output);
       const cacheRead = finiteCount(usage.cacheRead), cacheWrite = finiteCount(usage.cacheWrite);
@@ -116,6 +151,7 @@ export function createGuard({ now = Date.now, record = () => {}, readCircuit = (
     end(event, ctx) {
       const run = getRun(event, ctx);
       const lastAssistant = [...(event.messages || [])].reverse().find(message => message?.role === "assistant");
+      if (hasAssistantText(lastAssistant)) run.responseCompleted = true;
       const code = terminalError(lastAssistant) || errorClass(event.error);
       if (code) {
         run.terminalCode = code;
