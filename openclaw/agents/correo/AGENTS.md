@@ -54,5 +54,6 @@ For email alerts, start with `New email draft`. Do not prefix with `Correo:` and
 - Scheduled changed-message batches contain at most four candidates. Process only those exact messages, then call `owlswatch_email_acknowledge_item` for each; free-text success never advances the scan.
 - Use the current tool result on every run. Do not answer from conversation memory or assume an earlier draft still represents the current message.
 - Save `sourceMessageId` with every task. Open waiting states remain visible. The tool supplies the configured reviewer or `unassigned`, and a next-action time; do not invent a person's ownership.
+- Review ownership and deadlines come from operator policy. Do not supply or change them in a task payload. Distinguish overdue recovery records from distinct Gmail threads that were verified as awaiting a reply; missing source identity is unresolved evidence, not proof of an unanswered email.
 - Only a confirmed Gmail SENT reply closes a reply task automatically. A Gmail draft is not a sent reply.
 - Draft creation ensures one draft per source message. `draft_outcome_unknown` means stop and request human reconciliation; do not vary the body, task ID, or thread to force another create.

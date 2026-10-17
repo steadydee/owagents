@@ -14,6 +14,7 @@ import uuid
 from zoneinfo import ZoneInfo
 import recovery
 import server
+import handoffs
 
 
 def schedule_day(now):
@@ -52,8 +53,18 @@ def daily_digest(mode):
     unassigned = sum(not t.get("owner") or t.get("owner") == "unassigned" for t in tasks)
     if unassigned:
         lines.append(f"Unassigned: {unassigned}")
+    overdue = [task for task in tasks if handoffs.overview(server, task)["overdue"]]
+    lines.append(f"Overdue local records: {len(overdue)}")
+    owners = collections.Counter(task.get("owner") or "unassigned" for task in tasks)
+    lines.extend(f"Owner {owner}: {count}" for owner, count in sorted(owners.items()))
+    verified = {recovery.thread_id(task) for task in tasks if task.get("reconciliationState") == "external_reply_pending" and recovery.thread_id(task)}
+    lines.append(f"Threads with a verified pending external reply at last check: {len(verified)}")
+    missing = sum(task.get("reconciliationState") == "source_identity_missing" or not recovery.thread_id(task) for task in tasks)
+    if missing:
+        lines.append(f"Legacy records without verified source linkage: {missing}")
     if mode != "daily_summary":
         lines.append("Older records may need Gmail reconciliation; do not treat this count as confirmed unanswered email.")
+    tasks.sort(key=lambda task: task.get("nextActionAt") or "")
     identifiers = list(dict.fromkeys(recovery.thread_id(t) for t in tasks if recovery.thread_id(t)))[:8]
     lines.extend(server.gmail_source_url(identifier) for identifier in identifiers)
     return server.tool_email_send_telegram_message({"text": "\n".join(lines), "dedupeKey": f"{mode}-{schedule_day(now)}", "dedupeHours": 24})

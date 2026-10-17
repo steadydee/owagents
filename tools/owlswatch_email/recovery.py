@@ -59,7 +59,7 @@ def lock(server, name="state"):
 
 
 def thread_id(task):
-    return task.get("gmailThreadId") or task.get("threadId") or (task.get("gmail") or {}).get("threadId") or (task.get("thread") or {}).get("gmailThreadId") or (task.get("thread") or {}).get("threadId")
+    return task.get("gmailThreadId") or task.get("threadId") or (task.get("gmail") or {}).get("threadId") or (task.get("gmail") or {}).get("gmailThreadId") or (task.get("thread") or {}).get("gmailThreadId") or (task.get("thread") or {}).get("threadId")
 
 
 def canonical_status(status):
@@ -80,16 +80,23 @@ def confirmed_staff_reply(server, messages, account):
 
 
 def reconcile_tasks(server, thread, messages, account):
+    import handoffs
     reply = confirmed_staff_reply(server, messages, account)
-    if not reply:
-        return 0
+    external = server.latest_external_message(messages, account)
+    latest = server.latest_meaningful_message(messages)
+    evidence = {"checkedAt": server.now_iso(), "messageIds": [row["id"] for row in messages],
+                "latestMessageId": (latest or {}).get("id"), "latestExternalMessageId": (external or {}).get("id"),
+                "sentReplyMessageId": (reply or {}).get("id"),
+                "state": "sent_reply_verified" if reply else "external_reply_pending" if external and latest and external["id"] == latest["id"] else "no_actionable_source_verified"}
     count = 0
     for path in server.TASK_DIR.glob("*.json"):
         task = server.read_task(path)
         if task and thread_id(task) == thread and canonical_status(task.get("status")) in OPEN_STATUSES:
-            task.update(status="resolved", resolvedAt=server.now_iso(), resolutionSource="gmail_sent_reply", resolutionMessageId=reply["id"], updatedAt=server.now_iso())
+            task.update(handoffs.metadata(server, task, task), **handoffs.evidence_fields(task, evidence))
+            if handoffs.closure_verified(task, evidence):
+                task.update(status="resolved", resolvedAt=server.now_iso(), resolutionSource="gmail_sent_reply", resolutionMessageId=reply["id"], updatedAt=server.now_iso())
+                count += 1
             atomic_json(path, task)
-            count += 1
     return count
 
 
