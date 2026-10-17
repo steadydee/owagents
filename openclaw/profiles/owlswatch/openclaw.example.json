@@ -347,7 +347,7 @@
           "OPENCLAW_CONFIG_PATH": "~/.openclaw-owlswatch/openclaw.json",
           "OPERATIONS_API_BASE_URL": "https://operations.owlswatch.com",
           "EXPENSE_INTAKE_API_TOKEN": "<runtime-only>",
-          "OWLSWATCH_VISION_MODEL": "gpt-4o-mini",
+          "OWLSWATCH_VISION_MODEL": "gpt-4.1-mini",
           "OPENAI_API_KEY": "<runtime-only>"
         },
         "enabled": false

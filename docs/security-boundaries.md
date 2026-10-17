@@ -5,7 +5,7 @@ Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegr
 ## Agent Authority
 
 - `main`: conductor only. No business side-effect tools.
-- `cuenta`: creates expense drafts only.
+- `cuenta`: submits expense intake only. Operations may auto-record under its own policy; Cuenta cannot approve or modify existing expenses.
 - `cotiza`: creates quote drafts and Drive quote sheets only.
 - `correo`: creates local review records and Gmail drafts only. Gmail is the human review interface. It does not send final emails.
 - `cobros`: creates cuenta de cobro Drive Doc/PDF packets, Gmail drafts with attached PDFs, and Email Desk review tasks only. It does not send final emails.
@@ -73,7 +73,8 @@ Allowed:
 - Download/spool Telegram receipt photos.
 - Upload attachments to Operations expense intake.
 - Extract receipt fields using the configured vision provider.
-- Create expense drafts.
+- Submit expense intake using the original idempotency key. Report the returned status; Operations owns auto-recording and review decisions.
+- Infer a best-fit receipt category and recheck uncertain extraction once; retain evidence and uncertainty flags. No additional business write authority is granted.
 - Send Telegram status replies.
 
 Forbidden:

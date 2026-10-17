@@ -43,11 +43,46 @@ Preferred environment/config names:
 - `OPERATIONS_API_BASE_URL`
 - `OWLSWATCH_VISION_API_KEY`
 - `OWLSWATCH_VISION_ENDPOINT`
-- `OWLSWATCH_VISION_MODEL`
+- `OWLSWATCH_VISION_MODEL` (default `gpt-4.1-mini`)
+- `OWLSWATCH_VISION_RECHECK_MODEL` (default `gpt-4.1-mini`)
 
 OpenClaw passes these through `mcp.servers.owlswatch_intake.env` or `env.vars`.
 
+Native OpenAI extraction requests high-detail images with system instructions
+separate from the untrusted caption. It chooses a best-fit category from the
+purchased items and marks that inference in `flags`; categories do not require
+a caption. Dates require verbatim printed evidence and deterministic validation. Explicit
+two-digit years may be expanded only within the current and previous four years,
+with an inference flag. The tool never replaces a different printed year or an
+unreadable year with the current year, and never calculates a missing total from
+guessed values. Grand totals also require printed evidence: recognized currency markers
+must agree, and separator normalization can only reinterpret the same digits
+(for example, COP `24.000` is 24,000 pesos). Different digits trigger rereading.
+Native confidence uses an integer percentage; 1 is never promoted to 100.
+
+Clear receipts use one vision request. A missing vendor, total or date, invalid
+date evidence, confidence below 75%, or a date outside the preceding 90 days
+triggers at most one independent reread using the recheck model. Conflicting
+non-null vendor, date, currency or total values remain unresolved with explicit
+flags and reduced confidence; both date/total readings are retained in
+`vision_verification`. Agreement or a complete reread can fill missing fields.
+The 90-day window triggers a reread; a confirmed older date does not itself
+force a human review. Operations retains its own old-date policy. Superseded
+first-read warnings remain in the verification evidence rather than forcing
+review after a clean reread. The tool saves each extraction in the private
+workspace `spool/vision-extractions` directory and appends reread evidence to
+`raw_ocr_text`, so it survives model handoff.
+A failed reread preserves usable first-read fields. This is a bounded extraction
+check, not expense approval. The existing custom vision endpoint contract is
+unchanged and does not run this native OpenAI reread.
+
 ## Verification
+
+- `scripts/uat-cuenta-vision.py`: opt-in live API checks with three generated,
+  synthetic receipts (Pillow required). No real photos or business writes.
+- `scripts/uat-cuenta-bootstrap.py`: actual OpenClaw/model UAT with offline
+  business tools, including recorded results and unknown-status honesty.
+
 
 - `scripts/smoke-cuenta.sh`: sender/context, configuration-plan and media-path
   regressions plus the tool catalog.
