@@ -6,8 +6,10 @@ SERVER="$ROOT/tools/owlswatch_quotes/server.py"
 TEST_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/cotiza-smoke.XXXXXX")"
 trap 'rm -rf "$TEST_WORKSPACE"' EXIT
 export OWLSWATCH_COTIZA_WORKSPACE="$TEST_WORKSPACE"
+export PYTHONPYCACHEPREFIX="$TEST_WORKSPACE/pycache"
 
 python3 -m py_compile "$SERVER"
+node --test "$ROOT/tools/owlswatch_quotes/tests/"*.test.mjs
 ROOT="$ROOT" python3 - <<'PY'
 import importlib.util
 import os
