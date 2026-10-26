@@ -95,7 +95,7 @@ with tempfile.TemporaryDirectory(prefix="cuenta-bootstrap-uat-") as tmp:
         "file_id=fixture_photo, sender_name=Fixture Orchard, date=2026-09-18. "
         "Process this receipt."
     )
-    for scenario in ("success", "vision_failure", "stale_refusal", "unauthorized"):
+    for scenario in ("success", "vision_failure", "stale_refusal", "unauthorized", "missing_status"):
         calls = root / f"{scenario}-calls.jsonl"
         if scenario == "stale_refusal":
             # Generate an actual refused turn in this session, then verify the
@@ -139,4 +139,12 @@ with tempfile.TemporaryDirectory(prefix="cuenta-bootstrap-uat-") as tmp:
                 for part in message.get("content", []) if isinstance(message.get("content"), list) else []:
                     assert not (part.get("type") == "toolCall" and part.get("name") == "read"), "Unavailable read regression"
         assert "https://operations.example.test/expenses/test-expense" in result.stdout
-        print(f"PASS {scenario}: verified synthetic sender, preserved photo, one idempotent draft, review link, no read loop", flush=True)
+        response = json.loads(result.stdout)
+        final_text = " ".join(item.get("text", "") for item in response.get("payloads", []))
+        assert final_text, "UAT must inspect the user-visible answer."
+        if scenario in ("success", "stale_refusal"):
+            assert "recorded" in final_text.lower(), final_text
+            assert "review" not in final_text.lower() and "draft" not in final_text.lower(), final_text
+        elif scenario == "missing_status":
+            assert "recorded" not in final_text.lower(), "Unknown status must not be promoted to recorded."
+        print(f"PASS {scenario}: verified sender, preserved photo, one idempotent intake, truthful status, no read loop", flush=True)

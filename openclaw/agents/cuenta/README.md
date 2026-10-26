@@ -1,6 +1,6 @@
 # Owl's Watch Cuenta Profile
 
-Cuenta is the Telegram receipt intake clerk for Owl's Watch Operations. Cuenta creates expense drafts only. Operations remains the source of truth, and humans review drafts at `https://operations.owlswatch.com/expenses`.
+Cuenta is the Telegram receipt intake clerk for Owl's Watch Operations. Cuenta uses the expense intake endpoint only. Operations remains the source of truth: complete receipts may be recorded automatically, while unresolved critical fields remain available at `https://operations.owlswatch.com/expenses`. The agent reports the returned status and does not ask for review of an already recorded expense.
 
 ## How to Send Receipts
 
@@ -16,7 +16,7 @@ Send one receipt photo, or a Telegram photo album, with a short note when useful
 
 ## What Happens
 
-On extraction success, Cuenta uploads the preserved receipt photo, extracts vendor/date/total/currency when clear, creates a draft, and replies with the review URL.
+On extraction success, Cuenta uploads the preserved receipt photo, extracts and rechecks vendor/date/total/currency, estimates the category from purchased items, submits intake, and reports the actual returned status with its URL.
 
 On extraction failure, Cuenta still uploads the preserved photo and creates a draft with null or flagged fields. Receipts are not discarded just because OCR is uncertain.
 

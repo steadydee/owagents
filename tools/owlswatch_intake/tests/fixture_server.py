@@ -19,11 +19,11 @@ results = {
     }]},
     "owlswatch_vision_extract_receipt": {
         "vendor_name": "Test Market", "expense_date": "2026-09-18", "currency": "COP",
-        "total_amount": 33000, "category": "food_groceries", "confidence": 0.98,
-        "flags": [], "raw_ocr_text": "Test Market 2026-09-18 COP 33000",
+        "total_amount": 33000, "category": "food_groceries", "confidence": 98,
+        "flags": ["category_inferred_from_items", "tax_amount_missing"], "raw_ocr_text": "Test Market 2026-09-18 COP 33000",
     },
     "owlswatch_operations_create_expense_draft": {
-        "ok": True, "expense_id": "test-expense", "status": "draft",
+        "ok": True, "expense_id": "test-expense", "status": "recorded",
         "review_url": "https://operations.example.test/expenses/test-expense",
     },
     "owlswatch_memory_log": {"ok": True},
@@ -32,4 +32,7 @@ if os.environ.get("CUENTA_UAT_SCENARIO") == "vision_failure":
     results["owlswatch_vision_extract_receipt"] = {
         "ok": False, "error": {"code": "vision_error", "message": "Test outage", "retryable": True},
     }
+    results["owlswatch_operations_create_expense_draft"]["status"] = "needs_review"
+if os.environ.get("CUENTA_UAT_SCENARIO") == "missing_status":
+    results["owlswatch_operations_create_expense_draft"].pop("status")
 print(json.dumps(results.get(name, {"ok": False, "error": {"code": "unexpected_tool"}})))
