@@ -106,7 +106,13 @@ tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"health": "unhealthy"
 tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"alertKind": "failure"'
 
 run_observer "$TMP/healthy.json"
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"health": "recovering"'
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"alertKind": null'
+run_observer "$TMP/healthy.json"
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"alertKind": null'
+run_observer "$TMP/healthy.json"
 tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"alertKind": "recovery"'
+tail -1 "$TMP/state/logs/telegram-health.jsonl" | grep -q '"scope": "transport"'
 
 if rg -n 'getUpdates|gateway restart|launchctl kickstart' "$ROOT/scripts/observe-telegram-channel.py"; then
   echo "Observer must not poll Telegram or restart OpenClaw" >&2

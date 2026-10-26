@@ -10,9 +10,58 @@ OpenClaw's channel-status probe, journals accepted-message metadata without
 message bodies, and sends transition-only Telegram alerts after an outage has
 remained unhealthy for at least ten minutes. Brief network interruptions
 recover silently. A recovery message is sent only if the matching outage alert
-was successfully delivered. It never calls
+was successfully delivered and three consecutive checks are healthy. A failed
+check or a gap longer than five minutes resets that count. The intermediate
+state is `recovering`; a single good probe never closes an alerted incident.
+It never calls
 Telegram `getUpdates` and never restarts the gateway. OpenClaw remains the only
 poller and recovery owner.
+
+Transport restoration and task results are separate evidence. Notifications
+say when Telegram is restored, when a newer successful agent run is observed,
+or when an operator closes an incident. None of these messages asserts that
+previously pending business work completed. Verify that outcome in the system
+of record. In particular, a successful model run is not a receipt for a prior
+reservation, government submission, email, or payment.
+
+The runtime monitor keeps failed and unfinished runs unresolved after 24 hours.
+The 24-hour window applies only to usage totals; older evidence is marked
+`staleEvidence`. Content-free last-run evidence is retained in
+`monitor/telegram-health-state.json` across telemetry rotation. A newer
+successful run can clear an agent's failure indicator; a new start or an old
+successful run cannot. A missing runtime-health module blocks recovery rather
+than falling back to a channel-only healthy verdict.
+
+An operator can close an incident after reconciling its result outside the
+agent. This is a monitoring disposition, not permission to repeat any business
+operation. Write `health/run-dispositions.json` inside the affected profile,
+with mode `0600`, owned by the service user (or root), and no symlink. Copy the
+exact `agent` and `evidenceId` from the runtime health output:
+
+```json
+{
+  "schemaVersion": 1,
+  "dispositions": [
+    {
+      "agent": "cotiza",
+      "evidenceId": "<exact evidenceId from the incident>",
+      "resolution": "closed_without_retry",
+      "recordedAt": "<current UTC timestamp in ISO 8601 format>"
+    }
+  ]
+}
+```
+
+Use `resolved_externally` when the result was verified and resolved in the
+system of record, or `closed_without_retry` when the operator deliberately
+closes it without retrying. Preserve previous entries when adding a disposition.
+The timestamp must be at or after the incident and cannot be in the future
+(apart from a 60-second clock allowance). A disposition matches only that
+incident; it cannot suppress a later failure. The original run remains failed
+in telemetry and usage totals, with `evidenceState: operator_disposition`.
+Invalid or insecure disposition files do not clear incidents. Removing the
+matching entry reopens retained failure evidence. Never grant an agent a tool
+to edit this file.
 
 Check the live profiles with:
 

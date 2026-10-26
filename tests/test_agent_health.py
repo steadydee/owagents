@@ -13,7 +13,7 @@ spec.loader.exec_module(health)
 class HealthTests(unittest.TestCase):
     NOW = datetime.fromisoformat("2026-09-26T14:00:00+00:00").timestamp()
 
-    def inspect(self, records, *, previous=(), circuit=None):
+    def inspect(self, records, *, previous=(), circuit=None, retained=None, dispositions=None):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "health").mkdir()
@@ -21,7 +21,11 @@ class HealthTests(unittest.TestCase):
                 (root / "health" / filename).write_text("".join(json.dumps(item) + "\n" for item in items))
             if circuit is not None:
                 (root / "health/provider-circuit.json").write_text(json.dumps(circuit))
-            return health.inspect_runtime(root, self.NOW)
+            if dispositions is not None:
+                path = root / "health/run-dispositions.json"
+                path.write_text(json.dumps(dispositions))
+                path.chmod(0o600)
+            return health.inspect_runtime(root, self.NOW, previous=retained)
 
     def event(self, kind, **fields):
         return {"at": "2026-09-26T12:00:00Z", "kind": kind, "agent": "cobros", "runKey": "a" * 24, **fields}
@@ -70,13 +74,14 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(result["last24Hours"]["tokens"], 30)
         self.assertEqual(result["last24Hours"]["modelRequests"], 0)
 
-    def test_old_failure_is_history_and_active_credit_circuit_is_current(self):
+    def test_old_failure_stays_unresolved_outside_usage_window(self):
         old = self.event("run_end", at="2026-09-24T12:00:00Z", success=False, code="transport")
         result = self.inspect([old])
         self.assertFalse(result["agents"]["cobros"]["success"])
         self.assertEqual(result["last24Hours"]["failedRuns"], 0)
-        self.assertEqual(result["reasons"], [])
-        self.assertEqual(self.inspect([old], circuit={"until": (self.NOW + 600) * 1000})["reasons"], ["provider_credit"])
+        self.assertEqual(result["reasons"], ["agent_blocked:cobros:transport"])
+        self.assertTrue(result["agents"]["cobros"]["staleEvidence"])
+        self.assertEqual(self.inspect([old], circuit={"until": (self.NOW + 600) * 1000})["reasons"], ["provider_credit", "agent_blocked:cobros:transport"])
 
     def test_invalid_telemetry_is_safe_and_never_echoes_content(self):
         records = [None, [], "private", {}, self.event("usage", tokens="private"), self.event("usage", tokens=-4),
@@ -93,7 +98,7 @@ class HealthTests(unittest.TestCase):
         record = self.event("run_end", endedAt="2026-09-24T12:00:00Z", success=False, code="context_limit")
         result = self.inspect([record])
         self.assertEqual(result["last24Hours"]["failedRuns"], 0)
-        self.assertEqual(result["reasons"], [])
+        self.assertEqual(result["reasons"], ["agent_blocked:cobros:context_limit"])
 
     def test_legacy_usage_does_not_masquerade_as_model_request_count(self):
         usage = self.event("usage", tokens=77)
@@ -115,7 +120,7 @@ class HealthTests(unittest.TestCase):
         self.assertTrue(result["unfinishedRuns"]["cobros"]["staleRunning"])
         self.assertIn("agent_unfinished:cobros", result["reasons"])
 
-    def test_completed_or_newer_run_supersedes_abandoned_start_and_old_starts_expire(self):
+    def test_only_completed_run_supersedes_abandoned_start_and_old_starts_persist(self):
         start = self.event("run_start")
         end = self.event("run_end", at="2026-09-26T12:10:00Z", success=True)
         self.assertEqual(self.inspect([start, end])["unfinishedRuns"], {})
@@ -123,10 +128,58 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(self.inspect([start, end])["unfinishedRuns"], {})
         new = self.event("run_start", runKey="c" * 24, at="2026-09-26T13:55:00Z")
         result = self.inspect([start, new])
-        self.assertEqual(result["unfinishedRuns"]["cobros"]["currentRunAgeSeconds"], 300)
-        self.assertEqual(result["reasons"], [])
+        self.assertEqual(result["unfinishedRuns"]["cobros"]["currentRunAgeSeconds"], 7200)
+        self.assertEqual(result["reasons"], ["agent_unfinished:cobros"])
         old = self.event("run_start", at="2026-09-24T12:00:00Z")
-        self.assertEqual(self.inspect([old])["unfinishedRuns"], {})
+        self.assertTrue(self.inspect([old])["unfinishedRuns"]["cobros"]["staleEvidence"])
+
+    def test_failure_survives_rotation_and_only_newer_success_resolves_it(self):
+        retained = self.inspect([self.event("run_end", success=False, code="provider_timeout")])
+        result = self.inspect([], retained=retained)
+        self.assertEqual(result["reasons"], ["agent_blocked:cobros:provider_timeout"])
+        self.assertEqual(result["last24Hours"]["failedRuns"], 0)  # not counted again from retained evidence
+        older = self.event("run_end", at="2026-09-25T12:00:00Z", success=True, runKey="b" * 24)
+        self.assertEqual(self.inspect([older], retained=retained)["reasons"], result["reasons"])
+        newer = self.event("run_end", at="2026-09-26T13:00:00Z", success=True, runKey="c" * 24)
+        self.assertEqual(self.inspect([newer], retained=retained)["reasons"], [])
+
+    def test_operator_disposition_is_exact_incident_bound_and_not_a_success(self):
+        failed = self.event("run_end", success=False, code="provider_timeout")
+        incident = self.inspect([failed])["agents"]["cobros"]["evidenceId"]
+        entry = {"agent": "cobros", "evidenceId": incident, "resolution": "closed_without_retry", "recordedAt": "2026-09-26T13:00:00Z"}
+        def check(value):
+            return self.inspect([failed], dispositions={"schemaVersion": 1, "dispositions": [value]})
+        result = check(entry)
+        self.assertEqual(result["reasons"], [])
+        self.assertFalse(result["agents"]["cobros"]["success"])
+        self.assertEqual(result["agents"]["cobros"]["evidenceState"], "operator_disposition")
+        for changes in ({"agent": "cotiza"}, {"evidenceId": "b" * 24}, {"resolution": []},
+                        {"recordedAt": "2026-09-26T11:00:00Z"}, {"recordedAt": "2026-09-27T11:00:00Z"}):
+            self.assertTrue(check({**entry, **changes})["reasons"])
+        new_failure = {**failed, "at": "2026-09-26T13:30:00Z", "runKey": "b" * 24}
+        self.assertTrue(self.inspect([new_failure], dispositions={"schemaVersion": 1, "dispositions": [entry]})["reasons"])
+
+    def test_unfinished_evidence_survives_rotation(self):
+        retained = self.inspect([self.event("run_start")])
+        result = self.inspect([], retained=retained)
+        self.assertEqual(result["reasons"], ["agent_unfinished:cobros"])
+
+    def test_new_start_with_same_key_is_not_recovery_without_an_end(self):
+        retained = self.inspect([self.event("run_start")])
+        new = self.event("run_start", at="2026-09-26T13:55:00Z")
+        result = self.inspect([new], retained=retained)
+        self.assertEqual(result["reasons"], ["agent_unfinished:cobros"])
+        self.assertEqual(result["unfinishedRuns"]["cobros"]["currentRunAgeSeconds"], 7200)
+
+    def test_operator_closing_old_start_does_not_hide_new_unfinished_attempt(self):
+        old = self.event("run_start", at="2026-09-25T12:00:00Z")
+        incident = self.inspect([old])["unfinishedRuns"]["cobros"]["evidenceId"]
+        entries = {"schemaVersion": 1, "dispositions": [{"agent": "cobros", "evidenceId": incident,
+                   "resolution": "resolved_externally", "recordedAt": "2026-09-26T11:00:00Z"}]}
+        newer = self.event("run_start", at="2026-09-26T13:00:00Z", runKey="b" * 24)
+        result = self.inspect([old, newer], dispositions=entries)
+        self.assertEqual(result["reasons"], ["agent_unfinished:cobros"])
+        self.assertEqual(result["unfinishedRuns"]["cobros"]["runKey"], "b" * 24)
 
     def test_retry_start_after_previous_end_is_still_unfinished(self):
         result = self.inspect([self.event("run_end", success=False, code="transport"),
