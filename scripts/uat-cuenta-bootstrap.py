@@ -5,6 +5,8 @@ Set DEEPSEEK_API_KEY in the process environment. This tests model + OpenClaw +
 plugin instructions, not the real Operations HTTP contract or Telegram ingress.
 The TEMPORARY plugin copy supplies synthetic host sender context because the
 local CLI has no authenticated Telegram sender. Production trust code is intact.
+OPENCLAW_UAT_PROFILE_TEMPLATE may select a legacy or keyed source template.
+OPENCLAW_UAT_AGENT_FORMAT=list|entries overrides local package schema detection.
 """
 import json
 import os
@@ -12,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from config_agents import configured_agents, single_agent_section, uat_agent_format
 
 ROOT = Path(__file__).resolve().parents[1]
 assert os.environ.get("DEEPSEEK_API_KEY"), "Set DEEPSEEK_API_KEY in the environment (never in arguments)."
@@ -52,12 +55,13 @@ with tempfile.TemporaryDirectory(prefix="cuenta-bootstrap-uat-") as tmp:
     plugin_path.write_text(plugin)
     (tool_dir / "node_modules").mkdir(exist_ok=True)
     (tool_dir / "node_modules/openclaw").symlink_to(sdk_root, target_is_directory=True)
-    profile = json.loads((ROOT / "openclaw/profiles/owlswatch/openclaw.example.json").read_text())
-    agent = next(a for a in profile["agents"]["list"] if a["id"] == "cuenta")
+    profile = json.loads(Path(os.environ.get("OPENCLAW_UAT_PROFILE_TEMPLATE", ROOT / "openclaw/profiles/owlswatch/openclaw.example.json")).read_text())
+    agent = configured_agents(profile)["cuenta"]
     agent.update(workspace=str(workspace), agentDir=str(root / "agent"), model="deepseek/deepseek-reasoner", models={})
     config = {
-        "agents": {"defaults": {"model": {"primary": "deepseek/deepseek-reasoner"},
-                                 "timeoutSeconds": 180, "heartbeat": {"every": "0m"}}, "list": [agent]},
+        "agents": single_agent_section("cuenta", agent, {"model": {"primary": "deepseek/deepseek-reasoner"},
+                                  "timeoutSeconds": 180, "heartbeat": {"every": "0m"}},
+                                  uat_agent_format(openclaw, os.environ.get("OPENCLAW_UAT_AGENT_FORMAT"))),
         "gateway": {"mode": "local"},
         "channels": {"telegram": {"enabled": False, "allowFrom": ["101"], "groupAllowFrom": ["101"]}},
         "models": {"providers": {"deepseek": {

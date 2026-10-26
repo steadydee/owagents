@@ -34,9 +34,13 @@ import sys
 from pathlib import Path
 
 root, catalog_path = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / 'scripts'))
+from config_agents import configured_agents
 catalog = json.loads(catalog_path.read_text())
 profile = json.loads((root / 'openclaw/profiles/nomina/openclaw.example.json').read_text())
-agent = profile['agents']['list'][0]
+agents = configured_agents(profile)
+assert set(agents) == {'nomina'}
+agent = agents['nomina']
 allowed = set(agent['tools']['alsoAllow'])
 assert set(catalog) == allowed, 'Payroll catalog and specialist allowlist differ'
 assert all(re.fullmatch(r'nomina_[a-z_]+', name) for name in catalog)
@@ -54,7 +58,7 @@ for name in allowed:
 denies = {'exec', 'browser', 'gateway', 'cron', 'nodes', 'canvas', 'group:fs', 'group:web', 'bundle-mcp', 'message'}
 assert agent['tools']['profile'] == 'minimal'
 assert denies <= set(agent['tools']['deny'])
-assert agent['id'] == 'nomina' and agent['skills'] == ['payroll']
+assert agent['skills'] == ['payroll']
 assert profile['channels']['telegram']['enabled'] is False
 assert profile['channels']['telegram']['dmPolicy'] == 'allowlist'
 assert profile['channels']['telegram']['groupPolicy'] == 'disabled'

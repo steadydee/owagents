@@ -14,13 +14,15 @@ grep -q 'owlswatch_operations_create_expense_draft' /tmp/owlswatch-cuenta-tools.
 grep -q 'owlswatch_album_buffer_check' /tmp/owlswatch-cuenta-tools.json
 rm -f /tmp/owlswatch-cuenta-tools.json
 
-python3 - "$PROFILE" "$SKILL" <<'PY'
+python3 - "$PROFILE" "$SKILL" "$ROOT" <<'PY'
 import json
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[3]) / 'scripts'))
+from config_agents import configured_agents
 
 profile = json.loads(Path(sys.argv[1]).read_text())
-cuenta = next(agent for agent in profile["agents"]["list"] if agent["id"] == "cuenta")
+cuenta = configured_agents(profile)['cuenta']
 allowed = set(cuenta["tools"].get("alsoAllow", []))
 denied = set(cuenta["tools"].get("deny", []))
 skill = Path(sys.argv[2]).read_text()

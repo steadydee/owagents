@@ -30,6 +30,8 @@ from pathlib import Path
 workspace, config_path, profile_path = [Path(value).expanduser() for value in sys.argv[1:4]]
 stage_only = sys.argv[4] == '1'
 root = Path(sys.argv[5])
+sys.path.insert(0, str(root / 'scripts'))
+from config_agents import configured_agents
 def require(condition, message):
     if not condition:
         raise SystemExit(f'Nómina deploy blocked: {message}')
@@ -66,12 +68,12 @@ require(channel.get('dmPolicy') == 'allowlist' and channel.get('groupPolicy') in
 require(set(map(str, channel.get('allowFrom', []))) == set(map(str, senders)), 'Telegram and payroll manager allowlists must match')
 for value in (channel.get('botToken', ''), profile.get('gateway', {}).get('auth', {}).get('token', '')):
     require(isinstance(value, str) and len(value) >= 20 and '<' not in value, 'set bot and gateway tokens locally')
-agents = profile.get('agents', {}).get('list', [])
-require(len(agents) == 1 and agents[0].get('id') == 'nomina', 'use a dedicated profile containing only nomina')
-require(Path(agents[0].get('workspace', '')).expanduser().resolve() == workspace.resolve(), 'agent workspace differs from deployment target')
+agents = configured_agents(profile)
+require(set(agents) == {'nomina'}, 'use a dedicated profile containing only nomina')
+require(Path(agents['nomina'].get('workspace', '')).expanduser().resolve() == workspace.resolve(), 'agent workspace differs from deployment target')
 example = json.loads((root / 'openclaw/profiles/nomina/openclaw.example.json').read_text())
-expected_tools = example['agents']['list'][0]['tools']
-actual_tools = agents[0].get('tools', {})
+expected_tools = configured_agents(example)['nomina']['tools']
+actual_tools = agents['nomina'].get('tools', {})
 require(actual_tools.get('profile') == 'minimal' and set(actual_tools.get('alsoAllow', [])) == set(expected_tools['alsoAllow']) and set(expected_tools['deny']) <= set(actual_tools.get('deny', [])), 'live specialist authority differs from the reviewed catalog/policy')
 require(not profile.get('mcp', {}).get('servers'), 'use only the native plugin transport')
 for plugin in ('owlswatch-payroll', 'owlswatch-runtime-guard'):

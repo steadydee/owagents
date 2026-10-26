@@ -8,7 +8,10 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config_agents import configured_agents
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES = ("owlswatch", "hotel", "finca", "bailey-finance", "nomina")
@@ -31,10 +34,10 @@ def harden(config, guard_path):
     defaults = result.setdefault("agents", {}).setdefault("defaults", {})
     defaults.setdefault("heartbeat", {})["every"] = "0m"
     defaults["timeoutSeconds"] = min(defaults.get("timeoutSeconds", 600), 600)
-    for agent in result["agents"].get("list", []):
+    for identity, agent in configured_agents(result).items():
         if "heartbeat" in agent:
             agent["heartbeat"]["every"] = "0m"
-        if agent.get("id") == "correo":
+        if identity == "correo":
             allowed = agent.get("tools", {}).get("alsoAllow", [])
             if allowed and "owlswatch_email_acknowledge_item" not in allowed:
                 allowed.append("owlswatch_email_acknowledge_item")

@@ -22,7 +22,26 @@ export function planCuentaIntake(config, sessions) {
   if (!telegram || Object.keys(telegram.accounts ?? {}).length) {
     throw new Error("This repair requires one Telegram account configured at the profile level.");
   }
-  if (config.agents?.list?.filter((agent) => agent.id === "cuenta").length !== 1) {
+  const agents = config.agents ?? {};
+  if (Object.hasOwn(agents, "entries") && Object.hasOwn(agents, "list")) {
+    throw new Error("Mixed agents.list and agents.entries is ambiguous.");
+  }
+  let cuenta;
+  if (Object.hasOwn(agents, "entries")) {
+    if (!agents.entries || typeof agents.entries !== "object" || Array.isArray(agents.entries)) {
+      throw new Error("agents.entries must be a keyed object.");
+    }
+    for (const [id, agent] of Object.entries(agents.entries)) {
+      if (!agent || typeof agent !== "object" || Array.isArray(agent) || (Object.hasOwn(agent, "id") && agent.id !== id)) {
+        throw new Error("Keyed agent identity conflicts with its entry key.");
+      }
+    }
+    cuenta = agents.entries.cuenta;
+  } else if (Array.isArray(agents.list)) {
+    const matches = agents.list.filter((agent) => agent?.id === "cuenta");
+    cuenta = matches.length === 1 ? matches[0] : undefined;
+  }
+  if (!cuenta) {
     throw new Error("Expected exactly one configured Cuenta agent.");
   }
   const routes = Object.entries(telegram.groups ?? {}).flatMap(([groupId, group]) =>

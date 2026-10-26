@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Isolated real-model UAT. Offline tools, no Telegram or application writes."""
+"""Isolated real-model UAT. Offline tools, no Telegram or application writes.
+
+OPENCLAW_UAT_PROFILE_TEMPLATE may select a legacy or keyed source template.
+OPENCLAW_UAT_AGENT_FORMAT=list|entries overrides local package schema detection.
+"""
 import json, os, shutil, subprocess, tempfile
 from pathlib import Path
+from config_agents import configured_agents, single_agent_section, uat_agent_format
 ROOT = Path(__file__).resolve().parents[1]
 assert os.environ.get('DEEPSEEK_API_KEY'), 'Provide the model key through environment only.'
+openclaw = shutil.which('openclaw')
+assert openclaw, 'OpenClaw must be installed.'
 with tempfile.TemporaryDirectory(prefix='cobros-recovery-uat-') as tmp:
     root = Path(tmp)
     workspace = root / 'workspace'
@@ -13,10 +20,11 @@ with tempfile.TemporaryDirectory(prefix='cobros-recovery-uat-') as tmp:
     catalog = subprocess.check_output(['python3', str(tool_dir / 'server.py'), 'catalog'], text=True)
     (tool_dir / 'catalog-fixture.json').write_text(catalog)
     shutil.copyfile(tool_dir / 'tests/fixture_server.py', tool_dir / 'server.py')
-    profile = json.loads((ROOT / 'openclaw/profiles/owlswatch/openclaw.example.json').read_text())
-    agent = next(a for a in profile['agents']['list'] if a['id'] == 'cobros')
+    profile = json.loads(Path(os.environ.get('OPENCLAW_UAT_PROFILE_TEMPLATE', ROOT / 'openclaw/profiles/owlswatch/openclaw.example.json')).read_text())
+    agent = configured_agents(profile)['cobros']
     agent.update(workspace=str(workspace), agentDir=str(root / 'agent'), model='deepseek/deepseek-reasoner', models={})
-    config = {'agents': {'defaults': {'model': {'primary': 'deepseek/deepseek-reasoner'}}, 'list': [agent]},
+    config = {'agents': single_agent_section('cobros', agent, {'model': {'primary': 'deepseek/deepseek-reasoner'}},
+                        uat_agent_format(openclaw, os.environ.get('OPENCLAW_UAT_AGENT_FORMAT'))),
         'gateway': {'mode': 'local'},
         'models': {'providers': {'deepseek': {'baseUrl': 'https://api.deepseek.com', 'api': 'openai-completions',
             'apiKey': '${DEEPSEEK_API_KEY}', 'models': [{'id': 'deepseek-reasoner', 'name': 'DeepSeek Reasoner',
@@ -31,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='cobros-recovery-uat-') as tmp:
     for scenario in ('missing_nit', 'lookup_failure'):
         calls = root / (scenario + '.jsonl')
         env.update(COBROS_UAT_CALLS=str(calls), COBROS_UAT_SCENARIO=scenario)
-        result = subprocess.run(['openclaw', 'agent', '--local', '--agent', 'cobros', '--session-key',
+        result = subprocess.run([openclaw, 'agent', '--local', '--agent', 'cobros', '--session-key',
             'agent:cobros:uat-' + scenario, '--message',
             'Necesito cuenta de cobro para Agencia Ejemplo por $390.000, pasadia con guia del 24 de septiembre de 2026. '
             'A nombre de Luz Adriana Valencia Ortiz. No tengo el NIT. Busca en Gmail y dime si falta informacion.',

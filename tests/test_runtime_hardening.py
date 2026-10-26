@@ -27,6 +27,29 @@ class RuntimeHardeningTests(unittest.TestCase):
         result = module.harden({"mcp": {"servers": {"registro_compliance": {"enabled": True}}}}, "/guard")
         self.assertTrue(result["mcp"]["servers"]["registro_compliance"]["enabled"])
 
+    def test_keyed_agents_preserve_identity_and_hardening_is_idempotent(self):
+        guard = "/profile/tools/agent_runtime_guard"
+        before = {"agents": {"entries": {"correo": {"model": "provider/current", "heartbeat": {"every": "15m"},
+                   "tools": {"alsoAllow": ["owlswatch_email_search"]}}, "cuenta": {"workspace": "/private/receipts"}}},
+                  "plugins": {"load": {"paths": [guard, guard + "/openclaw-plugin.js"]}}}
+        after = module.harden(before, guard)
+        self.assertNotIn("list", after["agents"])
+        self.assertEqual(after["agents"]["entries"]["correo"]["heartbeat"]["every"], "0m")
+        self.assertIn("owlswatch_email_acknowledge_item", after["agents"]["entries"]["correo"]["tools"]["alsoAllow"])
+        self.assertNotIn("id", after["agents"]["entries"]["correo"])
+        self.assertNotIn("default", after["agents"]["entries"]["correo"])
+        self.assertEqual(after["agents"]["entries"]["cuenta"], before["agents"]["entries"]["cuenta"])
+        self.assertEqual(after["plugins"]["load"]["paths"], [guard + "/openclaw-plugin.js"])
+        self.assertEqual(module.harden(after, guard), after)
+        self.assertEqual(before["agents"]["entries"]["correo"]["heartbeat"]["every"], "15m")
+
+    def test_ambiguous_identity_does_not_produce_a_hardening_candidate(self):
+        for agents in ({"entries": {"correo": {}}, "list": []},
+                       {"entries": {"correo": {"id": "cuenta"}}},
+                       {"list": [{"id": "correo"}, {"id": "correo"}]}):
+            with self.assertRaises(ValueError):
+                module.harden({"agents": agents}, "/profile/guard")
+
 
 if __name__ == "__main__":
     unittest.main()
