@@ -34,6 +34,13 @@ requests separately from `attemptsWithUsage`, and retains historical failures
 without raising current alerts after 24 hours. Runtime success is not a receipt
 for a successful business action.
 
+`after_tool_call` also records `business_outcome` for explicitly supported,
+successful tools that returned a durable artifact identifier. Only a category
+and hashed identifier enter the journal, never result bodies or raw IDs. The
+local operations report deduplicates these outcomes separately from completed
+responses; a saved draft or processed email intake is not a human approval or
+proof of delivery. See `docs/runbooks/operations-observability-recovery.md`.
+
 The health reader also exposes unfinished run age. A latest start with no end
 warns after 15 minutes; a newer run supersedes it, and starts older than 24 hours
 are historical only. This detects missing completion telemetry, including a

@@ -165,18 +165,18 @@ console.log(JSON.stringify({
                                     check=True, timeout=30)
             return json.loads(result.stdout)
 
-    def test_runtime_registers_all_five_guard_hooks_with_trusted_conversation_access(self):
+    def test_runtime_registers_all_six_guard_hooks_with_trusted_conversation_access(self):
         result = self.load_guard(allow_conversation=True)
         self.assertEqual(result["plugins"], [{"id": hardening.GUARD_ID, "status": "loaded"}])
         self.assertEqual({hook["name"] for hook in result["hooks"]},
-                         {"before_agent_run", "before_tool_call", "model_call_ended", "llm_output", "agent_end"})
+                         {"before_agent_run", "before_tool_call", "after_tool_call", "model_call_ended", "llm_output", "agent_end"})
         self.assertTrue(all(hook["pluginId"] == hardening.GUARD_ID for hook in result["hooks"]))
         self.assertEqual(result["diagnostics"], [])
 
     def test_loaded_status_alone_does_not_prove_conversation_hooks_registered(self):
         result = self.load_guard(allow_conversation=False)
         self.assertEqual(result["plugins"], [{"id": hardening.GUARD_ID, "status": "loaded"}])
-        self.assertEqual({hook["name"] for hook in result["hooks"]}, {"before_tool_call", "model_call_ended"})
+        self.assertEqual({hook["name"] for hook in result["hooks"]}, {"before_tool_call", "after_tool_call", "model_call_ended"})
         blocked = [item for item in result["diagnostics"] if "allowConversationAccess=true" in item.get("message", "")]
         self.assertEqual(len(blocked), 3)
 

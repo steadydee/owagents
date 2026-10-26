@@ -32,6 +32,8 @@ STALE_TRANSPORT_SECONDS = 5 * 60
 STALE_SPOOL_SECONDS = 10 * 60
 REPEAT_ALERT_SECONDS = 6 * 60 * 60
 FAILURE_ALERT_AFTER_SECONDS = 10 * 60
+RECOVERY_HEALTHY_SAMPLES = 3
+RECOVERY_SAMPLE_MAX_GAP_SECONDS = 5 * 60
 
 
 def parse_args() -> argparse.Namespace:
@@ -381,6 +383,80 @@ def send_alert(token: Optional[str], chat_id: Optional[str], message: str, dry_r
         return False
 
 
+def health_transition(state: Dict[str, Any], reasons: List[str], now: float) -> Dict[str, Any]:
+    """Debounce recovery without losing the incident during a brief good sample."""
+    previous_health = state.get("health", "unknown")
+    outage_started_at = float(state.get("outageStartedAtEpoch", 0) or 0)
+    outage_alert_sent = state.get("outageAlertSent") is True
+    last_alert_at = float(state.get("lastAlertAtEpoch", 0) or 0)
+    outage_reasons = state.get("outageReasons", state.get("lastReasons", []))
+    outage_reasons = list(outage_reasons) if isinstance(outage_reasons, list) else []
+    consecutive_failures = int(state.get("consecutiveFailures", 0))
+    healthy_samples = 0
+    alert_kind = None
+    resolved_reasons = []
+    if reasons:
+        if not outage_started_at:
+            outage_started_at = now
+            outage_alert_sent = False
+            outage_reasons = []
+        outage_reasons = sorted(set(outage_reasons + reasons))
+        consecutive_failures += 1
+        current_health = "unhealthy" if now - outage_started_at >= FAILURE_ALERT_AFTER_SECONDS else "suspect"
+        if current_health == "unhealthy" and not outage_alert_sent and (
+            previous_health != "unhealthy" or now - last_alert_at >= REPEAT_ALERT_SECONDS
+        ):
+            alert_kind = "failure"
+    else:
+        consecutive_failures = 0
+        gap = now - float(state.get("lastCheckedAtEpoch", 0) or 0)
+        prior_samples = int(state.get("consecutiveHealthy", 0)) if 0 <= gap <= RECOVERY_SAMPLE_MAX_GAP_SECONDS else 0
+        healthy_samples = min(RECOVERY_HEALTHY_SAMPLES, prior_samples + 1)
+        if outage_started_at or outage_alert_sent:
+            current_health = "recovering" if healthy_samples < RECOVERY_HEALTHY_SAMPLES else "healthy"
+            if current_health == "healthy":
+                resolved_reasons = outage_reasons
+                if outage_alert_sent:
+                    alert_kind = "recovery"
+                outage_started_at, outage_alert_sent, outage_reasons = 0, False, []
+        else:
+            current_health = "healthy"
+    return {"health": current_health, "consecutiveFailures": consecutive_failures,
+            "consecutiveHealthy": healthy_samples, "lastCheckedAtEpoch": now,
+            "outageStartedAtEpoch": outage_started_at, "outageAlertSent": outage_alert_sent,
+            "outageReasons": outage_reasons, "alertKind": alert_kind, "resolvedReasons": resolved_reasons}
+
+
+def recovery_evidence(reasons: List[str], runtime: Dict[str, Any]) -> Dict[str, Any]:
+    agents = sorted({reason.split(":")[1] for reason in reasons if reason.startswith(("agent_blocked:", "agent_unfinished:"))})
+    successes, reviewed = [], []
+    for agent in agents:
+        last = runtime.get("agents", {}).get(agent, {})
+        active = runtime.get("unfinishedRuns", {}).get(agent, {})
+        if last.get("operatorDisposition") or active.get("operatorDisposition"):
+            reviewed.append(agent)
+        elif last.get("success") is True:
+            successes.append(agent)
+    transport = any(reason.startswith(("telegram_", "status_")) for reason in reasons)
+    return {"scope": "mixed" if agents and transport else "runtime" if agents else "transport" if transport else "checks",
+            "newSuccessfulRuns": successes, "operatorDispositions": reviewed,
+            "businessCompletionVerified": False}
+
+
+def recovery_message(profile: str, evidence: Dict[str, Any]) -> str:
+    lines = ["Estado del bot " + profile]
+    if evidence["scope"] in {"transport", "mixed"}:
+        lines.append("Conexion de Telegram restablecida en tres controles consecutivos.")
+    if evidence["newSuccessfulRuns"]:
+        lines.append("Nueva ejecucion exitosa observada: " + ", ".join(evidence["newSuccessfulRuns"]) + ".")
+    if evidence["operatorDispositions"]:
+        lines.append("Incidencia cerrada por el operador: " + ", ".join(evidence["operatorDispositions"]) + ".")
+    if evidence["scope"] == "checks":
+        lines.append("Las alertas de los controles se despejaron en tres muestras consecutivas.")
+    lines.append("Esto no confirma que las tareas pendientes se hayan completado; verifique su resultado en la aplicacion.")
+    return "\n".join(lines)
+
+
 def main() -> int:
     args = parse_args()
     state_dir = Path(os.path.expanduser(args.state_dir)).resolve()
@@ -398,38 +474,27 @@ def main() -> int:
     offset = inspect_offset(state_dir)
     journaled = journal_new_messages(state_dir, state)
     reasons, summary = assess_health(status, status_error, spool, durable_ingress, now_ms)
+    transport_reasons = list(reasons)
     runtime = {}
     health_module = Path(__file__).with_name("agent-health.py")
     if health_module.exists():
-        spec = importlib.util.spec_from_file_location("agent_runtime_health", health_module)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        runtime = module.inspect_runtime(state_dir, now)
-        reasons.extend(runtime.get("reasons", []))
-
-    previous_health = state.get("health", "unknown")
-    consecutive_failures = int(state.get("consecutiveFailures", 0))
-    outage_started_at = float(state.get("outageStartedAtEpoch", 0) or 0)
-    outage_alert_sent = state.get("outageAlertSent") is True
-    last_alert_at = float(state.get("lastAlertAtEpoch", 0) or 0)
-    alert_kind: Optional[str] = None
-
-    if reasons:
-        if not outage_started_at:
-            outage_started_at = now
-            outage_alert_sent = False
-        consecutive_failures += 1
-        outage_age = now - outage_started_at
-        current_health = "unhealthy" if outage_age >= FAILURE_ALERT_AFTER_SECONDS else "suspect"
-        if current_health == "unhealthy" and (
-            not outage_alert_sent and (previous_health != "unhealthy" or now - last_alert_at >= REPEAT_ALERT_SECONDS)
-        ):
-            alert_kind = "failure"
+        try:
+            spec = importlib.util.spec_from_file_location("agent_runtime_health", health_module)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            runtime = module.inspect_runtime(state_dir, now, previous=state.get("runtimeEvidence"))
+            reasons.extend(runtime.get("reasons", []))
+            state["runtimeEvidence"] = {key: runtime[key] for key in ("agents", "unfinishedRuns")}
+        except Exception:
+            reasons.append("runtime_health_unavailable")
     else:
-        consecutive_failures = 0
-        current_health = "healthy"
-        if previous_health == "unhealthy" and outage_alert_sent:
-            alert_kind = "recovery"
+        reasons.append("runtime_health_unavailable")
+
+    transition = health_transition(state, reasons, now)
+    alert_kind = transition.pop("alertKind")
+    recovery = recovery_evidence(transition.pop("resolvedReasons"), runtime) if alert_kind == "recovery" else None
+    state.update(transition)
+    current_health = state["health"]
 
     token, chat_id = resolve_alert_config(state_dir, args.chat_id)
     alert_sent = None
@@ -447,15 +512,15 @@ def main() -> int:
         alert_sent = send_alert(
             token,
             chat_id,
-            "Bot " + args.profile + " recuperado\nLos controles del servicio volvieron a estar saludables.",
+            recovery_message(args.profile, recovery),
             args.dry_run,
         )
 
     if alert_kind == "failure" and alert_sent:
-        outage_alert_sent = True
-        last_alert_at = now
+        state["outageAlertSent"] = True
+        state["lastAlertAtEpoch"] = now
     elif alert_kind == "recovery" and alert_sent:
-        last_alert_at = now
+        state["lastAlertAtEpoch"] = now
 
     snapshot = {
         "observedAt": utc_now(),
@@ -463,7 +528,10 @@ def main() -> int:
         "health": current_health,
         "reasons": reasons,
         "channel": summary,
+        "channelChecks": {"health": "unhealthy" if transport_reasons else "healthy", "reasons": transport_reasons},
         "runtime": runtime,
+        "recoveryEvidence": recovery,
+        "consecutiveHealthy": state["consecutiveHealthy"],
         "spool": spool,
         "durableIngress": durable_ingress,
         "offset": offset,
@@ -476,12 +544,8 @@ def main() -> int:
     state.update(
         {
             "health": current_health,
-            "consecutiveFailures": consecutive_failures,
             "lastCheckedAt": snapshot["observedAt"],
             "lastReasons": reasons,
-            "lastAlertAtEpoch": last_alert_at,
-            "outageStartedAtEpoch": outage_started_at if reasons else 0,
-            "outageAlertSent": outage_alert_sent if reasons else False,
         }
     )
     atomic_write_json(state_path, state)
