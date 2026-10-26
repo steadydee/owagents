@@ -36,10 +36,25 @@ class RuntimeStagingTest(unittest.TestCase):
         (self.package / "package.json").write_text(json.dumps({"version": runtime.OPENCLAW}))
         (self.package / "openclaw.mjs").write_text("// synthetic fixture\n")
         (self.package / "dist/index.js").write_text("// synthetic fixture\n")
+        for name, package_name in (("openai", "@openclaw/openai-provider"), ("telegram", "@openclaw/telegram")):
+            bundled = self.package / "dist/extensions" / name
+            bundled.mkdir(parents=True)
+            (bundled / "package.json").write_text(json.dumps({"name": package_name, "version": runtime.OPENCLAW}))
+            (bundled / "openclaw.plugin.json").write_text(json.dumps({"id": name}))
+            (bundled / "index.js").write_text("// synthetic fixture\n")
         (npm / "package-lock.json").write_text(json.dumps({"packages": {
             "node_modules/openclaw": {"version": runtime.OPENCLAW, "integrity": "sha512-synthetic-fixture"}}}))
         (npm / "node_modules/.bin").mkdir()
         (npm / "node_modules/.bin/openclaw").symlink_to("../openclaw/openclaw.mjs")
+        provider_npm = self.candidate / f"provider-plugins-{runtime.OPENCLAW}"
+        self.provider = provider_npm / "node_modules" / runtime.DEEPSEEK_PACKAGE
+        (self.provider / "dist").mkdir(parents=True)
+        (self.provider / "package.json").write_text(json.dumps({"name": runtime.DEEPSEEK_PACKAGE, "version": runtime.OPENCLAW,
+            "openclaw": {"compat": {"pluginApi": ">=" + runtime.OPENCLAW}}}))
+        (self.provider / "openclaw.plugin.json").write_text('{"id":"deepseek"}')
+        (self.provider / "dist/index.js").write_text("// synthetic provider fixture\n")
+        (provider_npm / "package-lock.json").write_text(json.dumps({"packages": {
+            "node_modules/" + runtime.DEEPSEEK_PACKAGE: {"version": runtime.OPENCLAW, "integrity": runtime.DEEPSEEK_INTEGRITY}}}))
 
     def profile(self, name="owlswatch"):
         state = self.home / f".openclaw-{name}"
@@ -108,6 +123,10 @@ class RuntimeStagingTest(unittest.TestCase):
         self.assertEqual(observer["ProgramArguments"][-1], plan["scopedCli"])
         self.assertEqual(observer["EnvironmentVariables"]["KEEP_EXISTING"], "yes")
         self.assertTrue(any("auth-profiles" in gate for gate in plan["requiredGates"]))
+        self.assertEqual(plan["activeRuntime"], {"schemaVersion": 1, "profile": "owlswatch",
+            "nodePath": str(Path(plan["runtimeRelease"]) / "node/bin/node"),
+            "openclawPackage": str(Path(plan["runtimeRelease"]) / "node_modules/openclaw")})
+        self.assertFalse((state / "runtime/active.json").exists())
 
     def test_hotel_preserves_system_owner_and_does_not_read_or_rewrite_gui_duplicate(self):
         self.profile("hotel")
@@ -191,6 +210,9 @@ class RuntimeStagingTest(unittest.TestCase):
             destination = Path(plan["runtimeRelease"])
             self.assertEqual((destination / "activation-plan.json").stat().st_mode & 0o777, 0o600)
             self.assertEqual((destination / "bin/openclaw-profile").stat().st_mode & 0o777, 0o700)
+            self.assertEqual((destination / "node_modules" / runtime.DEEPSEEK_PACKAGE / "dist/index.js").read_bytes(), (self.provider / "dist/index.js").read_bytes())
+            self.assertEqual(json.loads((destination / "runtime-selection.proposed.json").read_text()), plan["activeRuntime"])
+            self.assertFalse((state / "runtime/active.json").exists())
             self.assertEqual(os.readlink(plugin / "node_modules/openclaw"), str(self.home / ".npm-global/lib/node_modules/openclaw"))
             for operation in plan["operations"]:
                 if operation["kind"].startswith("replace_plist"):
@@ -246,6 +268,36 @@ class RuntimeStagingTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["env"], {"PATH": "/usr/bin:/bin"})
         with patch.object(runtime.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, '["0.0.0","linux","x64"]')):
             with self.assertRaises(runtime.Refusal): runtime.verify_node(Path("/synthetic/node"))
+
+    def test_required_provider_missing_or_wrong_integrity_refuses(self):
+        entry = self.provider / "dist/index.js"
+        entry.unlink()
+        with self.assertRaises(runtime.Refusal): runtime.inspect_candidate(self.candidate)
+        entry.write_text("// synthetic fixture")
+        lock = self.provider.parents[2] / "package-lock.json"
+        data = json.loads(lock.read_text())
+        data["packages"]["node_modules/" + runtime.DEEPSEEK_PACKAGE]["integrity"] = "sha512-unapproved"
+        lock.write_text(json.dumps(data))
+        with self.assertRaises(runtime.Refusal): runtime.inspect_candidate(self.candidate)
+
+    def test_missing_bundled_channel_refuses_incomplete_core(self):
+        (self.package / "dist/extensions/telegram/index.js").unlink()
+        with self.assertRaises(runtime.Refusal): runtime.inspect_candidate(self.candidate)
+
+    def test_existing_active_runtime_metadata_must_be_private_and_in_profile(self):
+        state, _ = self.profile()
+        selected = state / "runtime/active.json"
+        selected.parent.mkdir()
+        selected.write_text('{"synthetic":"previous-selection"}')
+        selected.chmod(0o644)
+        with self.assertRaises(runtime.Refusal): self.plan()
+        selected.chmod(0o600)
+        plan, _, _ = self.plan()
+        operation = next(x for x in plan["operations"] if x["kind"] == "publish_runtime_selection_after_gates")
+        self.assertEqual(operation["beforeSha256"], runtime.sha(selected))
+        selected.unlink()
+        selected.symlink_to(self.root / "other-domain")
+        with self.assertRaises(runtime.Refusal): self.plan()
 
     def test_activate_is_always_refused_without_reading_candidate(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "activate", "--profile", "hotel",

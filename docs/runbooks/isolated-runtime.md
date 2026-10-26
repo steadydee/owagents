@@ -49,7 +49,34 @@ Candidate layout is fixed to:
 <candidate-root>/node-v24.22.1-darwin-arm64/bin/node
 <candidate-root>/openclaw-2026.10.5/package-lock.json
 <candidate-root>/openclaw-2026.10.5/node_modules/openclaw/
+<candidate-root>/provider-plugins-2026.10.5/package-lock.json
+<candidate-root>/provider-plugins-2026.10.5/node_modules/@openclaw/deepseek-provider/
 ```
+
+OpenAI and Telegram are bundled under the core package's
+`dist/extensions/{openai,telegram}`. Their package versions and entrypoints are
+checked during planning. DeepSeek is an official external package in this
+release. Pin `@openclaw/deepseek-provider@2026.10.5`, whose plugin API and peer
+require OpenClaw `>=2026.10.5`; do not install an unpinned newer provider.
+The matching registry tarball integrity is pinned in the staging source.
+The June-dated bundled external-catalog fallback is not a complete inventory:
+consult the installed reference docs and exact official npm metadata as well.
+
+Prepare the external provider in its separate prefix with npm lifecycle scripts
+and automatic peer installation disabled. It has no runtime npm dependencies
+or lifecycle scripts. For disposable canaries only, a sibling
+`provider-plugins-2026.10.5/node_modules/openclaw` link may point to the candidate
+core SDK; never add it inside the provider package. Staging copies the provider
+package into the release's `node_modules/@openclaw/deepseek-provider`, where
+bare SDK imports resolve to that release's own core. It never copies the canary
+SDK link or alters the candidate core. The approved installed-tree hash covers
+both core dependencies and the external provider; the plan also records their
+separate tree hashes and tarball integrities.
+
+The future migrated config must register the external provider's exact staged
+package root through `plugins.load.paths` and preserve explicit `deepseek`
+enablement/allowlisting. Validate discovery of its manifest and compiled runtime
+entry. Installing files alone does not make a model available.
 
 Create the private plan outside git. It contains local paths, service labels,
 hashes, and existing SDK targets; it does not include config values or secrets.
@@ -103,6 +130,21 @@ The staged `snapshots/` directory holds original and proposed plist bytes. It
 may contain environment values, so it is private state and must never enter
 git or a report. This is a preparation snapshot, **not** a full-state backup.
 No credential is copied from one domain to another.
+
+The plan also includes a future atomic publication of the private file
+`~/.openclaw-<profile>/runtime/active.json`. Its schema is:
+
+```json
+{"schemaVersion":1,"profile":"<selected-profile>","nodePath":"<release>/node/bin/node","openclawPackage":"<release>/node_modules/openclaw"}
+```
+
+Monitoring uses this explicit selection for Node and SDK resolution; it must
+not infer a global runtime from PATH. The script writes only a
+`runtime-selection.proposed.json` inside the staged release, never `active.json`.
+Future activation must publish mode 0600 only after verification and preserve
+the exact prior bytes or absence for rollback. New isolated selections omit any
+legacy marker. Until a verified selection exists, balance checks should report
+`runtime_unconfigured` rather than silently load the shared SDK.
 
 ## Activation gates and required future implementation
 

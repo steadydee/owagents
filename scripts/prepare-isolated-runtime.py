@@ -18,6 +18,8 @@ import tempfile
 
 NODE = "24.22.1"
 OPENCLAW = "2026.10.5"
+DEEPSEEK_PACKAGE = "@openclaw/deepseek-provider"
+DEEPSEEK_INTEGRITY = "sha512-m+pf1G9P6UlGj+vMHBESy5fpQSccr9K1/As/jow/qhki9oE9DJOuwA7dcEFqELdLEIpdWsJg1tt9skcXwUef9A=="
 PROFILES = {
     "owlswatch": ("gui", ["", ".telegram-observer", ".email-poll", ".email-daily-summary", ".email-unanswered"],
                   ["workspace-owlswatch", "workspace-owlswatch-main", "workspace-owlswatch-cotiza", "workspace-owlswatch-correo", "workspace-owlswatch-cobros", "workspace-owlswatch-registro"]),
@@ -103,10 +105,41 @@ def inspect_candidate(candidate):
         raise Refusal("Expected exact OpenClaw version and npm integrity record.")
     regular(package / "openclaw.mjs")
     regular(package / "dist/index.js")
+    for name, package_name in (("openai", "@openclaw/openai-provider"), ("telegram", "@openclaw/telegram")):
+        bundled = package / "dist/extensions" / name
+        meta = json.loads(regular(bundled / "package.json").read_text())
+        manifest = json.loads(regular(bundled / "openclaw.plugin.json").read_text())
+        if meta.get("name") != package_name or meta.get("version") != OPENCLAW or manifest.get("id") != name:
+            raise Refusal("Required bundled OpenAI/Telegram plugin metadata differs from the approved release.")
+        regular(bundled / "index.js")
     files = tree_manifest(npm / "node_modules")
+    provider_npm = candidate / f"provider-plugins-{OPENCLAW}"
+    provider = provider_npm / "node_modules" / DEEPSEEK_PACKAGE
+    contained(provider, [candidate])
+    provider_meta = json.loads(regular(provider / "package.json").read_text())
+    provider_manifest = json.loads(regular(provider / "openclaw.plugin.json").read_text())
+    provider_lock = json.loads(regular(provider_npm / "package-lock.json").read_text())
+    provider_locked = provider_lock.get("packages", {}).get("node_modules/" + DEEPSEEK_PACKAGE, {})
+    if (provider_meta.get("name") != DEEPSEEK_PACKAGE or provider_meta.get("version") != OPENCLAW
+            or provider_locked.get("version") != OPENCLAW or provider_locked.get("integrity") != DEEPSEEK_INTEGRITY
+            or provider_manifest.get("id") != "deepseek"
+            or provider_meta.get("openclaw", {}).get("compat", {}).get("pluginApi") != ">=" + OPENCLAW):
+        raise Refusal("External DeepSeek provider does not match the pinned official package/version/integrity.")
+    regular(provider / "dist/index.js")
+    provider_files = tree_manifest(provider)
+    core_digest = manifest_digest(files)
+    if any(key == DEEPSEEK_PACKAGE or key.startswith(DEEPSEEK_PACKAGE + "/") for key in files):
+        raise Refusal("Core bundle already contains an external provider; reconcile package ownership.")
+    for relative, value in provider_files.items():
+        target = DEEPSEEK_PACKAGE + "/" + relative
+        if target in files:
+            raise Refusal("Core bundle already contains an external provider; reconcile package ownership.")
+        files[target] = value
     return {"node": node, "modules": npm / "node_modules", "package": package,
             "nodeSha256": sha(node), "npmTreeSha256": manifest_digest(files), "files": files,
-            "npmIntegrity": locked["integrity"]}
+            "npmIntegrity": locked["integrity"], "coreNpmTreeSha256": core_digest,
+            "provider": provider, "providerTreeSha256": manifest_digest(provider_files),
+            "providerIntegrity": provider_locked["integrity"]}
 
 
 def profile_paths(home, profile):
@@ -164,6 +197,7 @@ def build_plan(home, profile, candidate, system_dir=Path("/Library/LaunchDaemons
     gates = ["Exact source release must be clean main == freshly fetched origin/main.",
              "Verify pinned Node provenance and approved complete npm-tree digest, including npm lifecycle-script availability.",
              "Validate all bundled providers and each configured plugin against this runtime in disposable profile copies.",
+             "Add the pinned external DeepSeek package root to migrated plugins.load.paths and retain explicit provider grants; validate provider discovery.",
              "Migrate disposable config/auth/state and compare routing, tool grants, secrets, queues and schedules before/after.",
              "Quiesce only this profile's jobs and gateway; make an encrypted full-state checkpoint and prove restore to the old runtime.",
              "Record launchd loaded/disabled state; never enable previously disabled jobs or Hotel GUI duplicates.",
@@ -211,9 +245,24 @@ def build_plan(home, profile, candidate, system_dir=Path("/Library/LaunchDaemons
         if link.exists() and not link.is_symlink(): raise Refusal("Plugin contains a real OpenClaw installation; cannot replace it automatically.")
         previous = os.readlink(link) if link.is_symlink() else None
         operations.append({"kind": "replace_sdk_symlink_after_gates", "path": str(link), "beforeTarget": previous, "afterTarget": str(package)})
+    active_path = state / "runtime/active.json"
+    contained(active_path.parent, [state])
+    if active_path.exists() or active_path.is_symlink():
+        regular(active_path)
+        if active_path.stat().st_mode & 0o077:
+            raise Refusal("Existing runtime selection metadata must be private.")
+    active = {"schemaVersion": 1, "profile": profile, "nodePath": str(node), "openclawPackage": str(package)}
+    operations.append({"kind": "publish_runtime_selection_after_gates", "path": str(active_path),
+                       "beforeSha256": sha(active_path) if active_path.exists() else None, "after": active,
+                       "mode": "0600", "rollback": "Restore exact prior bytes or absence; never infer a global runtime."})
     return {"profile": profile, "launchdDomain": domain, "ownerUid": uid, "runtimeRelease": str(release),
             "nodeVersion": NODE, "openclawVersion": OPENCLAW, "nodeSha256": info["nodeSha256"],
             "npmTreeSha256": info["npmTreeSha256"], "npmIntegrity": info["npmIntegrity"],
+            "coreNpmTreeSha256": info["coreNpmTreeSha256"],
+            "externalProviders": [{"name": DEEPSEEK_PACKAGE, "version": OPENCLAW, "integrity": info["providerIntegrity"],
+                                   "treeSha256": info["providerTreeSha256"], "loadPath": str(release / "node_modules" / DEEPSEEK_PACKAGE),
+                                   "entry": str(release / "node_modules" / DEEPSEEK_PACKAGE / "dist/index.js")}],
+            "activeRuntime": active,
             "configSha256": sha(config_path), "activationReady": False, "requiredGates": gates,
             "operations": operations, "scopedCli": str(cli),
             "untouchedHotelGuiPlists": [str(home / "Library/LaunchAgents" / f"ai.openclaw.hotel{s}.plist") for s in suffixes] if profile == "hotel" else [],
@@ -239,6 +288,7 @@ def stage(plan, snapshots, info, *, node_sha256, tree_sha256, npm_integrity):
     generated = {
         "bin/openclaw-profile": (scoped_cli(destination / "node/bin/node", destination / "node_modules/openclaw/openclaw.mjs", state, plan["profile"]), 0o700),
         "activation-plan.json": ((json.dumps(plan, indent=2) + "\n").encode(), 0o600),
+        "runtime-selection.proposed.json": ((json.dumps(plan["activeRuntime"], indent=2) + "\n").encode(), 0o600),
     }
     for label, data in snapshots.items():
         for kind, raw in data.items():
@@ -261,6 +311,9 @@ def stage(plan, snapshots, info, *, node_sha256, tree_sha256, npm_integrity):
         (temporary / "node/bin").mkdir(parents=True)
         shutil.copy2(info["node"], temporary / "node/bin/node")
         shutil.copytree(info["modules"], temporary / "node_modules", symlinks=True)
+        provider_target = temporary / "node_modules" / DEEPSEEK_PACKAGE
+        provider_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(info["provider"], provider_target, symlinks=True)
         if sha(temporary / "node/bin/node") != node_sha256 or manifest_digest(tree_manifest(temporary / "node_modules")) != tree_sha256:
             raise Refusal("Copied runtime failed integrity verification.")
         for relative, (raw, mode) in generated.items():
