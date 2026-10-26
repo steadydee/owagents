@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from maintenance import Maintenance, health_probe, rotate_logs
+from maintenance import Maintenance, health_probe, rotate_logs, validate_maintenance_profile
 from security import BoundaryError
 from store import Store
 
@@ -31,6 +31,29 @@ class MaintenanceTests(unittest.TestCase):
     def restart(self):
         self.worker.close()
         self.worker = Maintenance(self.root, self.config, lambda: self.clock)
+
+    def test_both_profile_formats_require_the_same_isolated_payroll_workspace(self):
+        for section in ({"list": [{"id": "nomina", "workspace": str(self.root)}]},
+                        {"entries": {"nomina": {"workspace": str(self.root)}}}):
+            profile = {"agents": section}
+            before = json.dumps(profile, sort_keys=True)
+            validate_maintenance_profile(profile, self.root)
+            self.assertEqual(json.dumps(profile, sort_keys=True), before)
+            with self.assertRaises(BoundaryError) as error:
+                validate_maintenance_profile(profile, self.root / "other")
+            self.assertEqual(error.exception.code, "WRONG_PROFILE")
+
+    def test_profile_key_cannot_be_spoofed_by_an_id_or_extra_agent(self):
+        entry = {"workspace": str(self.root)}
+        for section in ({"entries": {"nomina": {**entry, "id": "cuenta"}}},
+                        {"entries": {"cuenta": {**entry, "id": "nomina"}}},
+                        {"entries": {"nomina": entry, "cuenta": entry}},
+                        {"entries": {"nomina": entry}, "list": [{**entry, "id": "nomina"}]},
+                        {"list": [{**entry, "id": "nomina"}, {**entry, "id": "nomina"}]},
+                        {"entries": {"nomina": {"workspace": None}}}):
+            with self.subTest(section=section), self.assertRaises(BoundaryError) as error:
+                validate_maintenance_profile({"agents": section}, self.root)
+            self.assertEqual(error.exception.code, "WRONG_PROFILE")
 
     def test_no_payroll_data_does_not_create_a_ledger_or_claim_backup(self):
         self.assertEqual(self.worker.backup()["status"], "no_payroll_data")

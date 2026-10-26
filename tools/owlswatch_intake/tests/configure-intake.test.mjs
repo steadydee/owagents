@@ -50,3 +50,30 @@ test("repair refuses to silently remove additional topic senders or infer accoun
   accounts.channels.telegram.accounts = { other: {} };
   assert.throws(() => planCuentaIntake(accounts, sessions), /one Telegram account/);
 });
+
+test("keyed Cuenta identity repairs the same sender gate without adding retired fields", () => {
+  const config = fixture();
+  config.agents = { entries: { cuenta: { workspace: "/synthetic/receipts" }, correo: {} } };
+  const identities = structuredClone(config.agents);
+  const plan = planCuentaIntake(config, sessions);
+  assert.deepEqual(plan.allowed, ["101", "202"]);
+  applyCuentaTopicPlan(config, plan);
+  assert.deepEqual(config.agents, identities);
+  assert.deepEqual(config.channels.telegram.groups["-200"].topics["2"].allowFrom, ["101", "202"]);
+  config.channels.telegram.allowFrom = ["*"];
+  assert.throws(() => planCuentaIntake(config, sessions), /verified numeric/);
+});
+
+test("mixed or spoofed keyed identity never authorizes a Cuenta repair", () => {
+  for (const agents of [
+    { entries: { cuenta: {} }, list: [{ id: "cuenta" }] },
+    { entries: { cuenta: { id: "correo" } } },
+    { entries: { correo: { id: "cuenta" } } },
+    { entries: { correo: {} } },
+    { list: [{ id: "cuenta" }, { id: "cuenta" }] },
+  ]) {
+    const config = fixture();
+    config.agents = agents;
+    assert.throws(() => planCuentaIntake(config, sessions), /ambiguous|identity|exactly one/);
+  }
+});
