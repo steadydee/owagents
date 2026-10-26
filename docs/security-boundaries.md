@@ -5,7 +5,7 @@ Owl's Watch agents are clerks. Operations, Luna, Gmail, Google Drive, and Telegr
 ## Agent Authority
 
 - `main`: conductor only. No business side-effect tools.
-- `cuenta`: creates expense drafts only.
+- `cuenta`: submits expense intake only. Operations may auto-record under its own policy; Cuenta cannot approve or modify existing expenses.
 - `cotiza`: creates quote drafts and Drive quote sheets only.
 - `correo`: creates local review records and Gmail drafts only. Gmail is the human review interface. It does not send final emails.
 - `cobros`: creates cuenta de cobro Drive Doc/PDF packets, Gmail drafts with attached PDFs, and Email Desk review tasks only. It does not send final emails.
@@ -73,7 +73,8 @@ Allowed:
 - Download/spool Telegram receipt photos.
 - Upload attachments to Operations expense intake.
 - Extract receipt fields using the configured vision provider.
-- Create expense drafts.
+- Submit expense intake using the original idempotency key. Report the returned status; Operations owns auto-recording and review decisions.
+- Infer a best-fit receipt category and recheck uncertain extraction once; retain evidence and uncertainty flags. No additional business write authority is granted.
 - Send Telegram status replies.
 
 Forbidden:
@@ -83,6 +84,14 @@ Forbidden:
 - Expose tokens, receipts, or raw OCR output unnecessarily.
 
 ## Cotiza
+
+The shared `owlswatch_telegram_send_message` tool is granted only to Cotiza.
+Its Python implementation resolves exactly one enabled Cotiza forum topic from
+the trusted profile configuration, pins that group/topic, and rejects a
+different model-selected destination. Missing, disabled, invalid or ambiguous
+routes fail closed. An omitted topic is filled from configuration so a quote
+notification cannot accidentally reach the group's root conversation. Do not
+grant this shared tool to another agent; it is not a general messaging surface.
 
 Allowed:
 

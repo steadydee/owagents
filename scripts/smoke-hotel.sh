@@ -4,8 +4,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$ROOT/tools/hotel_pms/server.py"
 PROFILE="$ROOT/openclaw/profiles/hotel/openclaw.example.json"
+export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/owagents-test-pycache}"
 
 python3 -m py_compile "$SERVER"
+python3 -m unittest discover -s "$ROOT/tools/hotel_pms/tests" -v
+node --test "$ROOT/tools/hotel_pms/tests/approval-context.test.mjs"
+OPENCLAW_PACKAGE="${OPENCLAW_GLOBAL_PACKAGE:-$(npm root -g 2>/dev/null)/openclaw}"
+if [ -f "$OPENCLAW_PACKAGE/dist/plugin-sdk/plugin-runtime.js" ]; then
+  node "$ROOT/scripts/verify-hotel-native-approval.mjs" "$OPENCLAW_PACKAGE"
+else
+  echo "Installed-runtime Hotel integration check unavailable; pass OPENCLAW_GLOBAL_PACKAGE for release validation."
+fi
 python3 -m py_compile "$ROOT/scripts/observe-telegram-channel.py"
 "$ROOT/scripts/test-telegram-observer.sh"
 

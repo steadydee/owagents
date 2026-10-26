@@ -17,10 +17,12 @@ python3 - "$ROOT" "$CONFIG" <<'PY'
 import json, os, sys
 from pathlib import Path
 root, config = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / 'scripts'))
+from config_agents import configured_agents
 data = json.loads(config.read_text())
 example = json.loads((root / 'openclaw/profiles/owlswatch/openclaw.example.json').read_text())
-policy = next(a for a in example['agents']['list'] if a['id'] == 'cobros')['tools']['loopDetection']
-agent = next(a for a in data['agents']['list'] if a['id'] == 'cobros')
+policy = configured_agents(example)['cobros']['tools']['loopDetection']
+agent = configured_agents(data)['cobros']
 agent['tools']['loopDetection'] = policy
 temp = config.with_suffix('.cobros-deploy.tmp')
 fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)

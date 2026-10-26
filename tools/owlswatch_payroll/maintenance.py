@@ -18,6 +18,25 @@ from archive import Archive
 from security import BoundaryError, private_directory, private_file, runtime_config
 
 
+def validate_maintenance_profile(profile, root):
+    """Identity comes from entries' key in 10.5, from id in legacy profiles."""
+    section = profile.get("agents", {})
+    agent = None
+    if isinstance(section, dict):
+        if "entries" in section and "list" not in section:
+            entries = section["entries"]
+            if isinstance(entries, dict) and set(entries) == {"nomina"}:
+                candidate = entries["nomina"]
+                if isinstance(candidate, dict) and candidate.get("id", "nomina") == "nomina":
+                    agent = candidate
+        elif "entries" not in section:
+            entries = section.get("list", [])
+            if isinstance(entries, list) and len(entries) == 1 and isinstance(entries[0], dict) and entries[0].get("id") == "nomina":
+                agent = entries[0]
+    if agent is None or not isinstance(agent.get("workspace"), str) or Path(agent["workspace"]).expanduser().resolve() != Path(root).resolve():
+        raise BoundaryError("WRONG_PROFILE", "Maintenance requires the isolated Nomina profile.")
+
+
 def rotate_logs(profile_dir, limit=5 * 1024 * 1024):
     logs = Path(profile_dir) / "logs"
     if not logs.is_dir():
@@ -233,9 +252,7 @@ def main():
     if profile_path.stat().st_mode & 0o077 or profile_path.stat().st_uid != os.getuid():
         raise BoundaryError("PRIVATE_FILE_REQUIRED", "Private profile configuration required.")
     profile = json.loads(profile_path.read_text())
-    agents = profile.get("agents", {}).get("list", [])
-    if len(agents) != 1 or agents[0].get("id") != "nomina" or Path(agents[0].get("workspace", "")).expanduser().resolve() != root:
-        raise BoundaryError("WRONG_PROFILE", "Maintenance requires the isolated Nomina profile.")
+    validate_maintenance_profile(profile, root)
     state = private_directory(root / "state", root)
     with os.fdopen(os.open(state / "maintenance.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "r+") as lock:
         try:

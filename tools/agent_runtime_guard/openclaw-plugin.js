@@ -19,6 +19,7 @@ export default definePluginEntry({
       chmodSync(path, 0o600);
     };
     const guard = createGuard({
+      config: api.config,
       record,
       readCircuit: () => { try { return JSON.parse(readFileSync(circuitPath, "utf8")); } catch { return {}; } },
       writeCircuit: value => {
@@ -29,6 +30,7 @@ export default definePluginEntry({
     });
     api.on("before_agent_run", (event, ctx) => guard.beforeRun(event, ctx));
     api.on("before_tool_call", (event, ctx) => guard.beforeTool(event, ctx));
+    api.on("after_tool_call", (event, ctx) => guard.afterTool(event, ctx));
     api.on("model_call_ended", (event, ctx) => guard.modelCall(event, ctx));
     api.on("llm_output", (event, ctx) => guard.output(event, ctx));
     api.on("agent_end", (event, ctx) => guard.end(event, ctx));

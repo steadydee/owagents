@@ -2,8 +2,10 @@
 """Read content-free runtime telemetry; no model/provider calls or messages."""
 import argparse
 import datetime as dt
+import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import time
@@ -17,6 +19,7 @@ def load_json(path, default):
 
 
 CODES = {"provider_credit", "context_limit", "provider_timeout", "transport", "provider_rate_limit", "provider_auth", "run_failed", "run_budget"}
+DISPOSITIONS = {"resolved_externally", "closed_without_retry"}
 
 
 def count(value):
@@ -45,10 +48,93 @@ def correlation(value):
     return value if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{24}", value) else None
 
 
-def inspect_runtime(directory, now=None):
+def evidence_id(agent, at, code, run_key):
+    return hashlib.sha256(json.dumps([agent, at, code, run_key]).encode()).hexdigest()[:24]
+
+
+def operator_dispositions(directory):
+    path = directory / "health/run-dispositions.json"
+    try:
+        info = path.stat()
+        if path.is_symlink() or not path.is_file() or info.st_mode & 0o077 or info.st_uid not in (0, os.getuid()):
+            return {}
+    except OSError:
+        return {}
+    return load_json(path, {})
+
+
+def disposition_for(dispositions, agent, evidence, now):
+    """Only an operator's exact incident disposition can close failed evidence."""
+    if not isinstance(dispositions, dict) or dispositions.get("schemaVersion") != 1:
+        return None
+    entries = dispositions.get("dispositions", [])
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        at = timestamp(entry.get("recordedAt"))
+        if (entry.get("agent") == agent and entry.get("evidenceId") == evidence["evidenceId"]
+                and isinstance(entry.get("resolution"), str) and entry["resolution"] in DISPOSITIONS and at is not None
+                and timestamp(evidence["at"]) <= at <= now + 60):
+            return {"resolution": entry["resolution"], "recordedAt": entry["recordedAt"]}
+    return None
+
+
+def inspect_runtime(directory, now=None, previous=None):
     now = time.time() if now is None else now
     latest, latest_times, runs, starts = {}, {}, {}, {}
     observed = False
+    legacy_incidents = {}
+    if previous is None:
+        state = load_json(directory / "monitor/telegram-health-state.json", {})
+        previous = state.get("runtimeEvidence", {}) if isinstance(state, dict) else {}
+        # Upgrade older observers without treating already-rotated incident
+        # evidence as recovery. The retained incident can be reviewed explicitly.
+        if isinstance(state, dict) and not previous:
+            missing = {}
+            incident_at = count(state.get("outageStartedAtEpoch")) or timestamp(state.get("lastCheckedAt")) or now
+            incident_reasons = []
+            for field in ("lastReasons", "outageReasons"):
+                if isinstance(state.get(field), list):
+                    incident_reasons.extend(state[field])
+            for reason in incident_reasons:
+                if not isinstance(reason, str) or not reason.startswith(("agent_blocked:", "agent_unfinished:")):
+                    continue
+                parts = reason.split(":")
+                if len(parts) < 2 or safe_agent(parts[1]) != parts[1]:
+                    continue
+                missing[parts[1]] = {"at": dt.datetime.fromtimestamp(incident_at, dt.timezone.utc).isoformat(),
+                                     "success": False, "code": parts[2] if len(parts) > 2 and parts[2] in CODES else "run_failed"}
+            legacy_incidents = missing
+    previous = previous if isinstance(previous, dict) else {}
+    # Preserve content-free evidence after telemetry rotation. A missing log or
+    # an elapsed reporting window is not a successful retry.
+    cached_agents = previous.get("agents", {})
+    for agent, last in (cached_agents.items() if isinstance(cached_agents, dict) else []):
+        if safe_agent(agent) != agent or not isinstance(last, dict):
+            continue
+        ended = timestamp(last.get("at"))
+        observed_at = timestamp(last.get("observedAt")) or ended
+        if ended is None or ended > now + 60 or observed_at > now + 60:
+            continue
+        success = last.get("success") is True and not last.get("code")
+        latest[agent] = {"at": last["at"], "success": success,
+                         "code": None if success else (last.get("code") if isinstance(last.get("code"), str) and last["code"] in CODES else "run_failed"),
+                         "runKey": correlation(last.get("runKey")),
+                         "observedAt": dt.datetime.fromtimestamp(observed_at, dt.timezone.utc).isoformat(),
+                         "revision": count(last.get("revision"))}
+        latest[agent].update({field: count(last.get(field)) for field in
+                             ("durationMs", "calls", "searches", "tokens", "modelRequests", "modelErrors")})
+        latest_times[agent] = (ended, (observed_at, count(last.get("revision"))))
+    cached_starts = previous.get("unfinishedRuns", {})
+    for agent, active in (cached_starts.items() if isinstance(cached_starts, dict) else []):
+        if safe_agent(agent) != agent or not isinstance(active, dict):
+            continue
+        at, started = timestamp(active.get("observedAt")), timestamp(active.get("startedAt"))
+        key = correlation(active.get("runKey"))
+        if key and at is not None and started is not None and started <= at <= now + 60:
+            starts[(key, at)] = (at, started, agent)
     seen_calls, seen_usage = set(), set()
     totals = {"modelRequests": 0, "modelErrors": 0, "tokens": 0, "attemptsWithUsage": 0, "failedRuns": 0, "completedRuns": 0}
     for path in [directory / "health/runs.jsonl.previous", directory / "health/runs.jsonl"]:
@@ -80,7 +166,7 @@ def inspect_runtime(directory, now=None):
                     started = timestamp(item.get("startedAt"))
                     if started is None or started > at:
                         started = at
-                    starts[run_key] = (at, started, safe_agent(item.get("agent")))
+                    starts[(run_key, at)] = (at, started, safe_agent(item.get("agent")))
                 if kind == "run_end":
                     ended = timestamp(item.get("endedAt")) or at
                     if ended > now + 60:
@@ -92,7 +178,8 @@ def inspect_runtime(directory, now=None):
                     code = item.get("code")
                     success = item.get("success") is True and not code
                     safe = {"at": dt.datetime.fromtimestamp(ended, dt.timezone.utc).isoformat(), "success": success,
-                            "code": None if success else (code if isinstance(code, str) and code in CODES else "run_failed")}
+                            "code": None if success else (code if isinstance(code, str) and code in CODES else "run_failed"),
+                            "runKey": run_key, "observedAt": item["at"], "revision": revision}
                     safe.update({field: count(item.get(field)) for field in ("durationMs", "calls", "searches", "tokens", "modelRequests", "modelErrors")})
                     runs[identity] = (ordering, ended, safe_agent(item.get("agent")), safe)
                 if now - at > 86400:
@@ -119,31 +206,49 @@ def inspect_runtime(directory, now=None):
             latest_times[agent] = (ended, ordering)
         if now - ended <= 86400:
             totals["completedRuns" if safe["success"] else "failedRuns"] += 1
+    for agent, incident in legacy_incidents.items():
+        at = timestamp(incident["at"])
+        # Prefer real failed evidence. An older success cannot close an
+        # incident whose failed telemetry has already rotated away.
+        last = latest.get(agent)
+        if last is None or (last["success"] and latest_times[agent][1][0] < at):
+            latest[agent] = {**incident, "runKey": None, "observedAt": incident["at"], "revision": 0}
+            latest_times[agent] = (at, (at, 0))
     circuit = load_json(directory / "health/provider-circuit.json", {})
     reasons = []
     if isinstance(circuit, dict) and count(circuit.get("until")) / 1000 > now:
         reasons.append("provider_credit")
+    dispositions = operator_dispositions(directory)
     for agent, last in latest.items():
-        # Old failures remain visible as history but do not keep a healthy
-        # gateway's observer in an outage state indefinitely.
-        if last["success"] is False and now - latest_times[agent][0] <= 86400:
-            reasons.append(f"agent_blocked:{agent}:{last.get('code') or 'run_failed'}")
-    unfinished, latest_starts = {}, {}
-    for run_key, (at, started, agent) in starts.items():
-        if now - at > 86400 or at < latest_starts.get(agent, float("-inf")):
-            continue
-        latest_starts[agent] = at
-        unfinished.pop(agent, None)
-        # A later completed/new run supersedes an abandoned run. A new attempt
-        # with the same ID can follow a previous end and is still unfinished.
+        last["evidenceAgeSeconds"] = max(0, int(now - latest_times[agent][0]))
+        last["staleEvidence"] = last["evidenceAgeSeconds"] > 86400
+        last["evidenceState"] = "successful_run" if last["success"] else "unresolved_failure"
+        if last["success"] is False:
+            last["evidenceId"] = evidence_id(agent, last["at"], last["code"], last["runKey"])
+            last["operatorDisposition"] = disposition_for(dispositions, agent, last, now)
+            if last["operatorDisposition"]:
+                last["evidenceState"] = "operator_disposition"
+            else:
+                reasons.append(f"agent_blocked:{agent}:{last.get('code') or 'run_failed'}")
+    unfinished = {}
+    for (run_key, _), (at, started, agent) in sorted(starts.items(), key=lambda item: item[1][0]):
+        # A new start is not recovery evidence. Keep the earliest unresolved
+        # attempt until an end arrives or an operator disposes of that incident.
         if (run_key in runs and runs[run_key][1] >= at) or latest_times.get(agent, (float("-inf"),))[0] >= at:
             continue
         age = max(0, int(now - started))
-        unfinished[agent] = {"startedAt": dt.datetime.fromtimestamp(started, dt.timezone.utc).isoformat(),
-                             "currentRunAgeSeconds": age, "staleRunning": age > 900}
+        active = {"startedAt": dt.datetime.fromtimestamp(started, dt.timezone.utc).isoformat(),
+                             "observedAt": dt.datetime.fromtimestamp(at, dt.timezone.utc).isoformat(),
+                             "runKey": run_key, "currentRunAgeSeconds": age, "staleRunning": age > 900,
+                             "staleEvidence": now - at > 86400,
+                             "evidenceId": evidence_id(agent, str(at), "unfinished", run_key)}
+        active["operatorDisposition"] = disposition_for(dispositions, agent, {**active, "at": active["observedAt"]}, now)
+        if agent not in unfinished or (unfinished[agent]["operatorDisposition"] and not active["operatorDisposition"]):
+            unfinished[agent] = active
     for agent, active in unfinished.items():
         if active["staleRunning"]:
-            reasons.append(f"agent_unfinished:{agent}")
+            if not active["operatorDisposition"]:
+                reasons.append(f"agent_unfinished:{agent}")
     return {"instrumented": observed, "agents": latest, "unfinishedRuns": unfinished, "last24Hours": totals, "reasons": reasons}
 
 
