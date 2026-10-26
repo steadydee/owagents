@@ -127,7 +127,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertIsNotNone(saved["nextActionAt"])
         self.assertEqual(server.tool_email_list_open_tasks({})["tasks"][0]["status"], "waiting_for_quote")
     def test_only_confirmed_sent_reply_closes_task(self):
-        server.tool_email_upsert_task({"task": {"taskId": "one", "gmailThreadId": "thread1", "status": "needs_human"}})
+        server.tool_email_upsert_task({"task": {"taskId": "one", "gmailThreadId": "thread1", "sourceMessageId": "message1", "status": "needs_human"}})
         self.gmail.messages.append(message("draft", "info@owlswatch.com", ["DRAFT"]))
         scan = recovery.preflight(server)
         self.assertEqual(len(scan["candidates"]), 1)

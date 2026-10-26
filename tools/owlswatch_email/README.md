@@ -53,7 +53,12 @@ model's final text cannot clear pending work. Classification itself remains a
 model judgment; this is not a claim that an acknowledged classification is
 factually correct. A small rotating Gmail sweep reconciles old local records
 only when the latest meaningful message is a confirmed SENT reply. Draft
-messages are excluded. Records lacking a thread ID require human cleanup.
+messages are excluded. An explicit source message must be present before the
+confirmed reply in that thread; source-less legacy records stay open even when
+that thread contains sent mail. Explicit waits for quotes, payment, availability
+or information also stay open because a reply does not prove the business
+dependency completed. These records expose the verified sent message separately
+from their unresolved handoff state.
 
 State is written atomically under `tasks/email_runtime/`: `checkpoint.json`,
 `active.json`, `processed.json`, per-scan `runs/`, `schedule-status.json`, and
@@ -64,13 +69,37 @@ search Gmail for that operation and fail closed if no match is confirmed.
 Never delete an unknown operation to force retry; inspect Gmail first. Existing
 human edits to a confirmed draft are preserved.
 
-Open tasks include all waiting states. New records get `owner` from
-`OWLSWATCH_EMAIL_REVIEW_OWNER`, otherwise `unassigned`; default next action is
-2 hours for urgent, 8 for high, and 24 for normal/low. A caller can explicitly
-supply a valid `nextActionAt`. Scheduled daily/follow-up summaries are generated
-deterministically from local metadata, identify unresolved/unassigned work, and
-remain separate from new-message processing. They do not claim stale local
-records prove a thread is still unanswered.
+Open tasks include all waiting states. The operator sets the default reviewer
+in runtime `review-policy.json` (fallback: `OWLSWATCH_EMAIL_REVIEW_OWNER`, then
+`unassigned`). Existing assigned owners are preserved. Due times are 2 hours
+for urgent, 8 for high, and 48 for normal/low; the normal deadline is configurable
+from 1–168 hours. Model payloads cannot assign reviewers, postpone deadlines or
+forge reconciliation proof. A new source message starts a new deadline; repeated
+updates to the same work do not reset it. Daily/follow-up summaries show owners,
+overdue records, missing source linkage and distinct threads whose most recent
+Gmail check found a pending external reply. Stale local records are never
+presented as counts of unanswered email.
+
+The operator-only `review_backlog.py` command reads at most 30 Gmail threads per
+invocation by default, writes a private content-free evidence inventory, and
+never sends messages or mutates Gmail. Literal legacy provider IDs and explicit
+task references are candidates until Gmail confirms their identity. Generated
+task hashes and historical notes are not evidence. `--apply` backfills owner and
+deadline metadata and closes only tasks with a fresh confirmed SENT reply;
+missing sources, provider errors and unverified outcomes remain visible. Apply
+requires an inspected plan with the same policy, skips any task changed since
+that plan, refreshes Gmail immediately before every potential closure, and
+persists complete rollback records before writing local state. It retains a
+before/after change journal. For example, on the deployed tool package:
+
+```sh
+python3 review_backlog.py --read-gmail --limit 30 --owner '<reviewer>'
+# Repeat bounded reads until remainingThreadChecks is zero; inspect inventory.
+python3 review_backlog.py --apply --owner '<reviewer>' --sla-hours 48
+```
+
+Evidence older than 24 hours cannot close tasks. Runtime inventories and policy
+files contain private business context and must never enter source control.
 
 Telegram destination and optional topic are fixed by runtime configuration.
 Destination arguments are rejected. Gmail draft recipients must match the

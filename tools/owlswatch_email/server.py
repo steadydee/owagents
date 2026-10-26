@@ -30,6 +30,7 @@ from typing import Any, Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import recovery
 import draft_journal
+import handoffs
 
 WORKSPACE = Path(os.environ.get("OWLSWATCH_EMAIL_WORKSPACE", "~/.openclaw/workspace-owlswatch-correo")).expanduser()
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-owlswatch/openclaw.json")).expanduser()
@@ -774,15 +775,11 @@ def tool_email_upsert_task(args: dict[str, Any]) -> dict[str, Any]:
         priority = payload.get("priority") or existing.get("priority") or "normal"
         if priority not in {"low", "normal", "high", "urgent"}:
             raise ToolError("invalid_priority", "Unknown priority.")
-        next_action = payload.get("nextActionAt") or existing.get("nextActionAt")
-        if next_action and not parse_iso_datetime(next_action):
-            raise ToolError("invalid_input", "nextActionAt must be an ISO timestamp.")
-        if not next_action:
-            hours = 2 if priority == "urgent" else 8 if priority == "high" else 24
-            next_action = (now_utc() + dt.timedelta(hours=hours)).isoformat()
+        protected = {"owner", "ownerSource", "nextActionAt", "deadlineSource", "lastReconciledAt", "reconciliationState", "lastVerifiedMessageId", "lastVerifiedSentMessageId", "gmailHasDraft", "resolvedAt", "resolutionSource", "resolutionMessageId", "createdAt"}
+        payload = {key: value for key, value in payload.items() if key not in protected}
         task = {**existing, **payload, "taskId": task_id, "status": status, "priority": priority,
-                "owner": existing.get("owner") or cfg_env(config, "OWLSWATCH_EMAIL_REVIEW_OWNER") or "unassigned",
-                "nextActionAt": next_action, "updatedAt": now_iso(), "createdAt": existing.get("createdAt") or now_iso()}
+                "updatedAt": now_iso(), "createdAt": existing.get("createdAt") or now_iso()}
+        task.update(handoffs.metadata(sys.modules[__name__], task, existing))
         if status == "draft_ready":
             thread = recovery.thread_id(task)
             source_id = task.get("sourceMessageId")
@@ -821,7 +818,7 @@ def tool_email_list_open_tasks(args: dict[str, Any]) -> dict[str, Any]:
             relevant_time = message_time or fallback_time
             if not relevant_time or relevant_time < cutoff:
                 continue
-        tasks.append(recovery.compact_task(task))
+        tasks.append(handoffs.overview(sys.modules[__name__], task))
         if len(tasks) >= limit:
             break
     return {"ok": True, "tasks": tasks}

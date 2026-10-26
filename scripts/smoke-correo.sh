@@ -27,11 +27,13 @@ import datetime as dt
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 
 server_path = Path(os.environ["SERVER_PATH"])
 spec = importlib.util.spec_from_file_location("owlswatch_email_server", server_path)
 server = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = server
 assert spec.loader
 spec.loader.exec_module(server)
 

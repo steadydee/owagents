@@ -165,3 +165,13 @@ Verification: `python3 -m unittest discover -s tools/hotel_pms/tests` and
 `node --test tools/hotel_pms/tests/*.test.mjs`. Tests use synthetic data and
 fake I/O, including a killed process after a simulated provider write, concurrent
 claims, receipt-only recovery, forged approvals and destination overrides.
+# Native approval integration validation
+
+`node scripts/verify-hotel-native-approval.mjs /path/to/openclaw` runs the installed
+OpenClaw command registry/dispatcher through the real Hotel plugin and Python
+approval guard, with a network-disabled fake PMS transport. It verifies rejected
+model approval, unauthenticated commands, wrong sender/topic/session/account,
+successful human-command creation, repeated confirmation, and a provider write
+whose response is lost. Only synthetic temporary records are used. The Hotel
+smoke suite runs this check when the installed runtime is available, alongside
+the reservation/government crash and receipt-recovery tests.
