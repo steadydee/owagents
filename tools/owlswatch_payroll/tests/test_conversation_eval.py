@@ -386,7 +386,7 @@ class ProviderTests(EvalCase):
         request = opener.open.call_args.args[0]
         body = json.loads(request.data)
         self.assertEqual(request.full_url, "https://api.deepseek.com/chat/completions")
-        self.assertEqual(body["model"], "deepseek-reasoner")
+        self.assertEqual(body["model"], "deepseek-flash")
         self.assertEqual(body["messages"][-1]["reasoning_content"], "Synthetic provider reasoning")
         self.assertNotIn("synthetic-runtime-key", request.data.decode())
 

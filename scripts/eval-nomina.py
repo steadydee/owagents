@@ -15,7 +15,7 @@ Exit codes: 0 deterministic checks passed, 1 scenario/provider failure, 2 config
 Offline success verifies the harness, NOT the live model or subjective quality.
 
 The fixed model deliberately has no fallback. A retired/unavailable
-deepseek-reasoner is an evaluation failure, never a silent model substitution.
+deepseek-flash is an evaluation failure, never a silent model substitution.
 The client preserves reasoning_content through tool rounds per the provider's
 https://api-docs.deepseek.com/guides/thinking_mode/ contract.
 """
@@ -47,7 +47,7 @@ sys.path.insert(0, str(PACKAGE))
 from catalog import TOOLS, validate_call
 from engine import PayrollEngine
 
-MODEL = "deepseek-reasoner"
+MODEL = "deepseek-flash"
 ENDPOINT = "https://api.deepseek.com/chat/completions"
 MAX_TOOL_CALLS = 40
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
