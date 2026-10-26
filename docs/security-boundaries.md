@@ -84,6 +84,14 @@ Forbidden:
 
 ## Cotiza
 
+The shared `owlswatch_telegram_send_message` tool is granted only to Cotiza.
+Its Python implementation resolves exactly one enabled Cotiza forum topic from
+the trusted profile configuration, pins that group/topic, and rejects a
+different model-selected destination. Missing, disabled, invalid or ambiguous
+routes fail closed. An omitted topic is filled from configuration so a quote
+notification cannot accidentally reach the group's root conversation. Do not
+grant this shared tool to another agent; it is not a general messaging surface.
+
 Allowed:
 
 - Search/read Owl's Watch Gmail for quote requests.

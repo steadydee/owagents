@@ -701,15 +701,50 @@ def tool_vision_extract_receipt(args: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def telegram_id(value, *, topic=False):
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    text = str(value)
+    pattern = r"[1-9]\d{0,19}" if topic else r"-?[1-9]\d{0,19}"
+    return text if re.fullmatch(pattern, text) else None
+
+
+def quote_notification_destination(config, args):
+    """Fail closed unless exactly one enabled, numeric Cotiza route is pinned.
+
+    This shared tool is granted only to Cotiza by the agent policy. Neither its
+    destination nor the identity used to select that route comes from the model.
+    """
+    telegram = config.get("channels", {}).get("telegram", {})
+    routes = []
+    if telegram.get("enabled") is not False:
+        for chat_id, group in telegram.get("groups", {}).items():
+            if not isinstance(group, dict) or group.get("enabled") is False:
+                continue
+            for thread_id, topic in group.get("topics", {}).items():
+                if not isinstance(topic, dict) or topic.get("enabled") is False or topic.get("agentId") != "cotiza":
+                    continue
+                chat = telegram_id(chat_id)
+                thread = telegram_id(thread_id, topic=True)
+                if chat is None or thread is None:
+                    raise ToolError("notification_route_invalid", "Cotiza notification routing needs valid numeric group and topic IDs.")
+                routes.append((chat, thread))
+    if len(routes) != 1:
+        raise ToolError("notification_route_unavailable", "Cotiza notifications require exactly one enabled, configured quote topic.")
+    chat, thread = routes[0]
+    if telegram_id(args.get("chat_id")) != chat:
+        raise ToolError("destination_not_allowed", "Quote notifications must stay in the configured Cotiza group.")
+    if args.get("message_thread_id") is not None and telegram_id(args["message_thread_id"], topic=True) != thread:
+        raise ToolError("destination_not_allowed", "Quote notifications must stay in the configured Cotiza topic.")
+    return chat, thread
+
+
 def tool_telegram_send_message(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
-    chat_id = validate_safe_id("chat_id", args.get("chat_id"))
+    chat_id, message_thread_id = quote_notification_destination(config, args)
     text = validate_text("text", args.get("text"), required=True)
     reply_to = args.get("reply_to_message_id")
-    message_thread_id = args.get("message_thread_id")
-    params: dict[str, Any] = {"chat_id": chat_id, "text": text}
-    if message_thread_id is not None:
-        params["message_thread_id"] = validate_safe_id("message_thread_id", message_thread_id)
+    params: dict[str, Any] = {"chat_id": chat_id, "text": text, "message_thread_id": message_thread_id}
     if reply_to is not None:
         params["reply_to_message_id"] = validate_safe_id("reply_to_message_id", reply_to)
     result = telegram_api("sendMessage", params, config)
