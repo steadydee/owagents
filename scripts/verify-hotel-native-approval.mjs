@@ -69,6 +69,11 @@ try {
   assert.equal(calls().length, 2, "Uncertain write must not be replayed");
   console.log(`OpenClaw ${JSON.parse(readFileSync(resolve(packageRoot, "package.json"))).version}: native Hotel auth, binding, one-write confirmation and uncertain-outcome replay checks passed offline.`);
 } finally {
-  runtime.clearPluginCommandsForPlugin("hotel-pms");
-  rmSync(temp, { recursive: true, force: true });
+  try {
+    if (typeof runtime.clearPluginCommandsForPlugin === "function") runtime.clearPluginCommandsForPlugin("hotel-pms");
+    // This standalone test owns every registered command in its process.
+    else runtime.clearPluginCommands();
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
 }
