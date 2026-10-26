@@ -33,10 +33,27 @@ opened/resolved transitions (bounded to 2,000); unchanged conditions stay quiet.
 Provider balance failure means **unknown**, never zero. Low-balance detection
 uses the provider's availability flag or a USD balance under $5. CNY balances
 remain visible without inventing an exchange-rate threshold. The helper uses
-OpenClaw's installed `resolveApiKeyForProvider` and calls the documented
+the selected profile runtime's `resolveApiKeyForProvider` and calls the documented
 [`GET /user/balance`](https://api-docs.deepseek.com/api/get-user-balance/) endpoint
 with a ten-second fetch timeout and a fifteen-second process bound. It does not
 print credentials, error bodies, chat messages or financial document content.
+
+Balance checks require an explicit private runtime selection at
+`~/.openclaw-<profile>/runtime/active.json`. Activation writes this mode-0600
+regular file atomically only after the selected runtime passes its migration
+checks; staging must not write it. Its fields are `schemaVersion: 1`, `profile`,
+`nodePath` and `openclawPackage`. The Node binary and SDK package must belong to
+the same generation under that profile's `runtime/releases/`. Rollback restores
+the prior selection along with the runtime. The monitor never searches `PATH`
+for OpenClaw or infers activation from a staged release.
+
+An intentionally retained legacy runtime can be recorded with `legacy: true`,
+an explicit absolute Node binary and the service owner's
+`~/.npm-global/lib/node_modules/openclaw` package. Both legacy `agents.list` and
+keyed `agents.entries` configs are supported; the key is authoritative in the
+new format. Missing metadata reports `runtime_unconfigured`; invalid, mixed or
+cross-profile runtime metadata reports an unverified balance. Neither case
+launches a fallback runtime or claims the provider balance is zero.
 
 ## What the measurements prove
 
@@ -92,6 +109,11 @@ normal read-only mode are read as immutable only when no WAL, SHM or rollback
 journal exists and the source remains unchanged during capture. Regular files changing during capture fail the
 snapshot rather than silently mixing versions. There is no atomic transaction
 across all files, databases and external services.
+
+Workspace discovery supports both legacy lists and keyed agent entries,
+including an inherited `agents.defaults.workspace`. Empty or ambiguous agent
+inventories fail the backup rather than silently omitting workspaces. Every
+workspace must remain inside that profile's approved workspace namespace.
 
 Every backup is immediately decrypted into an owner-only temporary directory,
 restored as files under a new isolated tree, and checked against an authenticated

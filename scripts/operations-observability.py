@@ -122,17 +122,78 @@ def report_profile(directory, now, days, rates):
             "costBasis": "Configured rate ranges; missing rates are unknown, never zero. Excludes external tool fees and human review."}
 
 
-def check_balance(profile, state, now, runner=subprocess.run):
+def balance_runtime(profile, home=None):
+    """Only activation may select the runtime; staged releases are not active."""
+    if profile not in PROFILES:
+        raise ValueError("Invalid profile")
+    home = Path(home) if home is not None else Path.home()
+    directory = home / (".openclaw-" + profile)
+    runtime = directory / "runtime"
+    path = runtime / "active.json"
+    if not path.exists():
+        if path.is_symlink():
+            raise ValueError("Invalid runtime metadata")
+        return None
+    if any(p.is_symlink() for p in (directory, runtime, path)) or not path.is_file():
+        raise ValueError("Invalid runtime metadata")
+    metadata = path.stat()
+    if metadata.st_mode & 0o077 or metadata.st_uid != os.getuid() or metadata.st_size > 16384:
+        raise ValueError("Private runtime metadata required")
+    record = json.loads(path.read_text())
+    if not isinstance(record, dict) or record.get("schemaVersion") != 1 or record.get("profile") != profile:
+        raise ValueError("Runtime profile mismatch")
+    for name in ("nodePath", "openclawPackage"):
+        if not isinstance(record.get(name), str) or not Path(record[name]).is_absolute():
+            raise ValueError("Absolute runtime paths required")
+    node, package = (Path(record[name]).resolve() for name in ("nodePath", "openclawPackage"))
+    if record.get("legacy") is True:
+        if package != (home / ".npm-global/lib/node_modules/openclaw").resolve():
+            raise ValueError("Unreviewed legacy runtime")
+        if any(part.startswith(".openclaw") for part in node.parts):
+            raise ValueError("Legacy Node belongs to a profile")
+    else:
+        releases = (runtime / "releases").resolve()
+        if not node.is_relative_to(releases) or not package.is_relative_to(releases):
+            raise ValueError("Runtime escapes selected profile")
+        if node.parent.name != "bin" or node.parent.parent.name != "node" or package.parent.name != "node_modules":
+            raise ValueError("Unknown runtime layout")
+        if node.parents[2] != package.parents[1]:
+            raise ValueError("Runtime generation mismatch")
+    if not node.is_file() or not os.access(node, os.X_OK) or not package.is_dir():
+        raise ValueError("Runtime files missing")
+    package_metadata = json.loads((package / "package.json").read_text())
+    if not isinstance(package_metadata, dict) or package_metadata.get("name") != "openclaw":
+        raise ValueError("Wrong SDK package")
+    if not (package / "dist/plugin-sdk/provider-auth-runtime.js").is_file():
+        raise ValueError("Auth SDK missing")
+    return {"nodePath": str(node), "openclawPackage": str(package)}
+
+
+def check_balance(profile, state, now, runner=subprocess.run, home=None):
     previous = state.get("balances", {}).get(profile, {})
     if now < previous.get("nextCheckAt", 0):
         return previous
     try:
-        output = runner(["node", str(HERE / "check-deepseek-balance.mjs"), profile], capture_output=True, text=True, timeout=15)
-        value = json.loads(output.stdout) if output.returncode == 0 else {"status": "helper_failed"}
-        if not isinstance(value, dict) or value.get("status") not in {"ok", "credential_unavailable", "provider_error", "check_failed", "helper_failed"}:
-            raise ValueError()
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        value = {"status": "check_failed"}
+        runtime = balance_runtime(profile, home)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        runtime = None
+        value = {"status": "runtime_invalid"}
+    else:
+        value = {"status": "runtime_unconfigured"}
+    if runtime:
+        try:
+            env = dict(os.environ)
+            for name in ("NODE_OPTIONS", "NODE_PATH"):
+                env.pop(name, None)
+            if home is not None:
+                env["HOME"] = str(home)
+            output = runner([runtime["nodePath"], str(HERE / "check-deepseek-balance.mjs"), profile,
+                             "--sdk-root", runtime["openclawPackage"]], env=env, capture_output=True, text=True, timeout=15)
+            value = json.loads(output.stdout) if output.returncode == 0 else {"status": "helper_failed"}
+            if not isinstance(value, dict) or value.get("status") not in {"ok", "credential_unavailable", "provider_error", "check_failed", "helper_failed", "runtime_unconfigured"}:
+                raise ValueError()
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            value = {"status": "check_failed"}
     return {**value, "checkedAt": now, "nextCheckAt": now + 3600}
 
 

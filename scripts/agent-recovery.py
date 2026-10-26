@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import secrets
 import sqlite3
 import stat
@@ -43,6 +44,39 @@ def read_key(helper):
     return result.stdout
 
 
+def configured_workspaces(config):
+    if not isinstance(config, dict) or not isinstance(config.get("agents"), dict):
+        raise RecoveryError("INVALID_AGENT_INVENTORY")
+    section = config["agents"]
+    if "entries" in section:
+        entries = section["entries"]
+        if "list" in section or not isinstance(entries, dict):
+            raise RecoveryError("INVALID_AGENT_INVENTORY")
+        rows = list(entries.items())
+    else:
+        entries = section.get("list")
+        if not isinstance(entries, list) or not all(isinstance(agent, dict) for agent in entries):
+            raise RecoveryError("INVALID_AGENT_INVENTORY")
+        rows = [(agent.get("id"), agent) for agent in entries]
+    if not rows:
+        raise RecoveryError("EMPTY_AGENT_INVENTORY")
+    defaults = section.get("defaults", {})
+    if not isinstance(defaults, dict):
+        raise RecoveryError("INVALID_AGENT_INVENTORY")
+    seen, workspaces = set(), []
+    for identity, agent in rows:
+        if not isinstance(identity, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", identity) or identity in seen:
+            raise RecoveryError("INVALID_AGENT_INVENTORY")
+        if not isinstance(agent, dict) or agent.get("id", identity) != identity:
+            raise RecoveryError("INVALID_AGENT_INVENTORY")
+        seen.add(identity)
+        workspace = agent.get("workspace", defaults.get("workspace"))
+        if not isinstance(workspace, str) or not workspace:
+            raise RecoveryError("WORKSPACE_UNAVAILABLE")
+        workspaces.append(workspace)
+    return workspaces
+
+
 def configured_roots(home, profiles):
     roots = {}
     prefixes = {"owlswatch": "workspace-owlswatch", "hotel": "workspace-hotel", "bailey-finance": "workspace-bailey-finance", "nomina": "workspace-nomina"}
@@ -54,12 +88,13 @@ def configured_roots(home, profiles):
             raise RecoveryError("PROFILE_UNAVAILABLE")
         roots["profiles/" + profile] = state.resolve()
         config = json.loads((state / "openclaw.json").read_text())
-        for agent in config.get("agents", {}).get("list", []):
-            workspace = Path(str(agent.get("workspace", ""))).expanduser()
+        for configured in configured_workspaces(config):
+            workspace = Path(str(home / configured[2:]) if configured.startswith("~/") else configured)
             if not workspace.is_absolute() or workspace.is_symlink() or not workspace.is_dir():
                 raise RecoveryError("WORKSPACE_UNAVAILABLE")
             workspace = workspace.resolve()
-            if workspace.parent != (home / ".openclaw").resolve() or not workspace.name.startswith(prefixes[profile]):
+            prefix = prefixes[profile]
+            if (home / ".openclaw").is_symlink() or workspace.parent != (home / ".openclaw").resolve() or not (workspace.name == prefix or workspace.name.startswith(prefix + "-")):
                 raise RecoveryError("WORKSPACE_OUTSIDE_APPROVED_PROFILE")
             roots["workspaces/" + workspace.name] = workspace
     return roots

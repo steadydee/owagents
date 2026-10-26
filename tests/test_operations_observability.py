@@ -1,8 +1,11 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("operations_observability", ROOT / "scripts/operations-observability.py")
@@ -69,12 +72,98 @@ class ObservabilityTests(unittest.TestCase):
     def test_balance_errors_are_rate_limited_and_never_resolve_as_zero(self):
         def failed(*args, **kwargs):
             raise OSError("synthetic")
-        balance = monitor.check_balance("owlswatch", {}, 100, failed)
+        with patch.object(monitor, "balance_runtime", return_value={"nodePath": "/fixture/node", "openclawPackage": "/fixture/sdk"}):
+            balance = monitor.check_balance("owlswatch", {}, 100, failed)
         self.assertEqual(balance["status"], "check_failed")
         self.assertNotIn("balances", balance)
         def must_not_call(*args, **kwargs):
             raise AssertionError("cached check unexpectedly repeated")
         self.assertEqual(monitor.check_balance("owlswatch", {"balances": {"owlswatch": balance}}, 101, must_not_call), balance)
+
+    def runtime_fixture(self, home, profile="hotel"):
+        runtime = home / (".openclaw-" + profile) / "runtime"
+        release = runtime / "releases/generation-one"
+        node = release / "node/bin/node"
+        sdk = release / "node_modules/openclaw"
+        node.parent.mkdir(parents=True)
+        node.write_text("fixture, never executed")
+        node.chmod(0o700)
+        (sdk / "dist/plugin-sdk").mkdir(parents=True)
+        (sdk / "dist/plugin-sdk/provider-auth-runtime.js").touch()
+        (sdk / "package.json").write_text(json.dumps({"name": "openclaw"}))
+        record = {"schemaVersion": 1, "profile": profile, "nodePath": str(node), "openclawPackage": str(sdk)}
+        path = runtime / "active.json"
+        path.write_text(json.dumps(record))
+        path.chmod(0o600)
+        return path, record
+
+    def test_balance_uses_exact_selected_node_and_sdk_without_global_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            _, record = self.runtime_fixture(home)
+            def run(command, **options):
+                self.assertEqual(command[0], record["nodePath"])
+                self.assertEqual(command[2:], ["hotel", "--sdk-root", record["openclawPackage"]])
+                self.assertEqual(options["env"]["HOME"], str(home))
+                self.assertNotIn("NODE_OPTIONS", options["env"])
+                self.assertNotIn("NODE_PATH", options["env"])
+                self.assertEqual(options["timeout"], 15)
+                return subprocess.CompletedProcess(command, 0, '{"status":"credential_unavailable"}')
+            with patch.dict(os.environ, {"NODE_OPTIONS": "untrusted hook", "NODE_PATH": "other SDK"}):
+                result = monitor.check_balance("hotel", {}, 100, run, home)
+            self.assertEqual(result["status"], "credential_unavailable")
+
+    def test_staged_only_runtime_never_selects_itself_or_global_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            path, _ = self.runtime_fixture(home)
+            path.rename(path.with_name("activation-plan.json"))
+            def forbidden(*args, **kwargs):
+                self.fail("No process may run without explicit activation metadata")
+            self.assertEqual(monitor.check_balance("hotel", {}, 100, forbidden, home)["status"], "runtime_unconfigured")
+
+    def test_bad_or_cross_profile_runtime_metadata_fails_before_process_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            path, record = self.runtime_fixture(home)
+            other_path, other = self.runtime_fixture(home, "nomina")
+            cases = [{**record, "profile": "nomina"}, {**record, "nodePath": other["nodePath"]},
+                     {**record, "openclawPackage": other["openclawPackage"]},
+                     {**record, "nodePath": "node"}, {**record, "schemaVersion": 2}]
+            for candidate in cases:
+                path.write_text(json.dumps(candidate))
+                with self.subTest(candidate=candidate), self.assertRaises(ValueError):
+                    monitor.balance_runtime("hotel", home)
+            path.write_text(json.dumps(record))
+            path.chmod(0o644)
+            with self.assertRaises(ValueError):
+                monitor.balance_runtime("hotel", home)
+            path.unlink()
+            path.symlink_to(other_path)
+            with self.assertRaises(ValueError):
+                monitor.balance_runtime("hotel", home)
+
+    def test_legacy_runtime_requires_explicit_selection_and_legacy_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            path, record = self.runtime_fixture(home)
+            sdk = home / ".npm-global/lib/node_modules/openclaw"
+            sdk.parent.mkdir(parents=True)
+            Path(record["openclawPackage"]).rename(sdk)
+            node = home / "legacy-node"
+            Path(record["nodePath"]).rename(node)
+            record.update(nodePath=str(node), openclawPackage=str(sdk))
+            path.write_text(json.dumps(record))
+            with self.assertRaises(ValueError):
+                monitor.balance_runtime("hotel", home)
+            record["legacy"] = True
+            path.write_text(json.dumps(record))
+            self.assertEqual(monitor.balance_runtime("hotel", home), {"nodePath": str(node), "openclawPackage": str(sdk)})
+
+    def test_balance_helper_contract_with_fake_auth_and_http(self):
+        result = subprocess.run(["node", "--test", str(ROOT / "tests/test_balance_helper.test.mjs")],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_alerts_only_emit_on_transition(self):
         self.assertEqual(monitor.transition_alerts(["x"], ["x"], 123), [])

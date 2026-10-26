@@ -15,6 +15,55 @@ spec.loader.exec_module(recovery)
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_keyed_and_legacy_configs_back_up_each_explicit_or_inherited_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            state = home / ".openclaw-owlswatch"
+            state.mkdir()
+            primary = home / ".openclaw/workspace-owlswatch-main"
+            specialist = home / ".openclaw/workspace-owlswatch-cotiza"
+            primary.mkdir(parents=True)
+            specialist.mkdir()
+            (primary / "checkpoint").write_text("synthetic main state")
+            (specialist / "receipt").write_text("synthetic specialist state")
+            for keyed in (False, True):
+                agents = {"defaults": {"workspace": "~/.openclaw/workspace-owlswatch-main"}}
+                if keyed:
+                    agents["entries"] = {"main": {}, "cotiza": {"workspace": str(specialist)}}
+                else:
+                    agents["list"] = [{"id": "main"}, {"id": "cotiza", "workspace": str(specialist)}]
+                (state / "openclaw.json").write_text(json.dumps({"agents": agents}))
+                roots = recovery.configured_roots(home, ["owlswatch"])
+                self.assertEqual(set(roots), {"profiles/owlswatch", "workspaces/workspace-owlswatch-main", "workspaces/workspace-owlswatch-cotiza"})
+                manifest = recovery.archive_snapshot(roots, home / ("keyed.zip" if keyed else "legacy.zip"), home)
+                paths = {item["path"] for item in manifest["files"]}
+                self.assertIn("workspaces/workspace-owlswatch-cotiza/receipt", paths)
+                self.assertIn("workspaces/workspace-owlswatch-main/checkpoint", paths)
+
+    def test_ambiguous_empty_or_spoofed_inventory_cannot_claim_backup_coverage(self):
+        for section in ({"entries": {}}, {"list": []}, {"entries": {"hotel": {}}, "list": []},
+                        {"entries": {"hotel": {"id": "nomina"}}},
+                        {"list": [{"id": "hotel"}, {"id": "hotel"}]},
+                        {"entries": {"../other": {}}}, {"entries": {"hotel": {"workspace": None}}}):
+            with self.subTest(section=section), self.assertRaises(recovery.RecoveryError):
+                recovery.configured_workspaces({"agents": section})
+
+    def test_keyed_workspace_still_cannot_escape_its_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            state = home / ".openclaw-hotel"
+            state.mkdir()
+            for workspace in (home / ".openclaw/workspace-nomina-nomina", home / ".openclaw/workspace-hotelother", home / "outside"):
+                workspace.mkdir(parents=True)
+                (state / "openclaw.json").write_text(json.dumps({"agents": {"entries": {"hotel": {"workspace": str(workspace)}}}}))
+                with self.assertRaisesRegex(recovery.RecoveryError, "OUTSIDE_APPROVED_PROFILE"):
+                    recovery.configured_roots(home, ["hotel"])
+            link = home / ".openclaw/workspace-hotel-ops"
+            link.symlink_to(home / "outside", target_is_directory=True)
+            (state / "openclaw.json").write_text(json.dumps({"agents": {"entries": {"hotel": {"workspace": str(link)}}}}))
+            with self.assertRaisesRegex(recovery.RecoveryError, "WORKSPACE_UNAVAILABLE"):
+                recovery.configured_roots(home, ["hotel"])
+
     def test_encrypted_restore_verifies_live_sqlite_snapshot_and_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
