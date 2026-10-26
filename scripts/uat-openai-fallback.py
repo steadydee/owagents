@@ -28,7 +28,9 @@ def main():
     parser.add_argument('--guard-plugin',type=Path)
     parser.add_argument('--primary-credit-cooldown',action='store_true')
     parser.add_argument('--credential-env',default='OPENAI_FALLBACK_API_KEY')
+    parser.add_argument('--credential-storage',choices=['env','file'],default='env')
     parser.add_argument('--mode',choices=['direct','failover','network-failover','tools'],default='direct')
+    parser.add_argument('--schema', choices=['legacy','2026.10.5'], default='legacy')
     args=parser.parse_args()
     mode=args.mode
     if args.primary_credit_cooldown and (mode!='failover' or not args.guard_plugin):
@@ -78,16 +80,20 @@ def main():
             config['agents']['defaults']['modelPolicy']['allow'].append('canary-primary/unavailable')
             config['models']['providers']['canary-primary']={'baseUrl':f'http://127.0.0.1:{server.server_port}/v1','api':'openai-completions','apiKey':'synthetic-test-key','timeoutSeconds':3,'models':[{'id':'unavailable','name':'Synthetic unavailable primary','contextWindow':8192,'maxTokens':128,'input':['text'],'reasoning':False,'cost':{'input':0,'output':0,'cacheRead':0,'cacheWrite':0}}]}
         if mode=='network-failover':
-            if not args.deepseek_plugin:
+            if args.schema != 'legacy' and not args.deepseek_plugin:
                 raise SystemExit('Network failover requires the isolated official DeepSeek plugin entry.')
-            config['plugins']['load']={'paths':[str(args.deepseek_plugin.expanduser().resolve())]}
-            config['plugins']['allow'].append('deepseek')
-            config['plugins']['entries']['deepseek']={'enabled':True}
+            if args.deepseek_plugin:
+                config['plugins']['load']={'paths':[str(args.deepseek_plugin.expanduser().resolve())]}
+                config['plugins']['allow'].append('deepseek')
+                config['plugins']['entries']['deepseek']={'enabled':True}
             config['agents']['defaults']['model']={'primary':'deepseek/deepseek-flash','fallbacks':['openai/gpt-5.4-mini']}
             config['agents']['defaults']['modelPolicy']['allow'].append('deepseek/deepseek-flash')
             config['models']['providers']['deepseek']={'baseUrl':'https://api.deepseek.com','api':'openai-completions','apiKey':'synthetic-noncredential','timeoutSeconds':5,'models':[]}
-            manifest=json.loads((args.deepseek_plugin.expanduser().resolve()/'openclaw.plugin.json').read_text())
-            row=next(m for m in manifest['modelCatalog']['providers']['deepseek']['models'] if m['id']=='deepseek-flash')
+            if args.deepseek_plugin:
+                manifest=json.loads((args.deepseek_plugin.expanduser().resolve()/'openclaw.plugin.json').read_text())
+                row=next(m for m in manifest['modelCatalog']['providers']['deepseek']['models'] if m['id']=='deepseek-flash')
+            else:
+                row={'id':'deepseek-flash','name':'DeepSeek Flash','reasoning':True,'input':['text','image'],'contextWindow':1000000,'contextTokens':65536,'maxTokens':8192}
             row.pop('compat',None)
             config['models']['providers']['deepseek']['models']=[row]
         if mode=='tools':
@@ -115,9 +121,33 @@ export default {id:'canary-fixture',name:'Synthetic fixture',register(api){api.r
             config['plugins']['entries']['owlswatch-runtime-guard']={'enabled':True,'hooks':{'allowConversationAccess':True}}
             if args.primary_credit_cooldown:
                 atomic(state/'health/provider-circuit.json',{'provider':'canary-primary','until':int(time.time()*1000)+600000,'code':'provider_credit'})
+        if args.schema == 'legacy':
+            defaults=config['agents']['defaults']
+            for ref in defaults.pop('modelPolicy')['allow']:
+                defaults['models'].setdefault(ref,{})
+            defaults['contextTokens']=65536
+            config['agents']['list']=[{'id':name,**entry} for name,entry in config['agents'].pop('entries').items()]
+        config['agents']['defaults']['thinkingDefault']='off'
+        config['models']['providers']['openai']['models']=[{'id':'gpt-5.4-mini','name':'GPT-5.4 mini','reasoning':True,'input':['text','image'],'contextWindow':400000,'contextTokens':65536,'maxTokens':4096,'cost':{'input':0.75,'output':4.5,'cacheRead':0.075,'cacheWrite':0}}]
+        (state/'home').mkdir()
+        if args.credential_storage == 'file':
+            key_path=state/'credential.txt'
+            descriptor=os.open(str(key_path),os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(descriptor,'w') as stream:
+                stream.write(KEY)
+            config['secrets']['providers']={'canary-file':{'source':'file','path':str(key_path),'mode':'singleValue'}}
+            config['models']['providers']['openai']['apiKey']={'source':'file','provider':'canary-file','id':'value'}
         atomic(state/'openclaw.json',config)
         atomic(agent_dir/'settings.json',{'retry':{'provider':{'maxRetries':0}}})
-        env={**os.environ, 'OPENCLAW_STATE_DIR':str(state),'OPENCLAW_CONFIG_PATH':str(state/'openclaw.json'),'OPENAI_CANARY_API_KEY':KEY,'PATH':str(NODE.parent)+os.pathsep+os.environ['PATH']}
+        env={'HOME':str(state/'home'),'OPENCLAW_HOME':str(state/'home'),
+             'OPENCLAW_STATE_DIR':str(state),'OPENCLAW_CONFIG_PATH':str(state/'openclaw.json'),
+             'PATH':str(NODE.parent)+os.pathsep+os.environ.get('PATH','/usr/bin:/bin')}
+        if args.credential_storage == 'env':
+            env['OPENAI_CANARY_API_KEY']=KEY
+        validation=subprocess.run([str(NODE),str(CLI),'config','validate'],env=env,capture_output=True,text=True,timeout=20)
+        (REPORT/f'{tag}-validation.log').write_text((validation.stdout+validation.stderr).replace(KEY,'[REDACTED]'))
+        if validation.returncode:
+            raise SystemExit('Disposable configuration failed validation; no provider request made.')
         if mode=='network-failover':
             catalog=subprocess.run([str(NODE),str(CLI),'models','list','--all','--provider','deepseek','--json'],env=env,capture_output=True,text=True,timeout=20)
             (REPORT/'network-catalog.log').write_text((catalog.stdout+catalog.stderr).replace(KEY,'[REDACTED]'))
@@ -137,7 +167,7 @@ export default {id:'canary-fixture',name:'Synthetic fixture',register(api){api.r
         stdout=stdout.replace(KEY,'[REDACTED]');stderr=stderr.replace(KEY,'[REDACTED]')
         (REPORT/f'{tag}-canary.stdout.log').write_text(stdout)
         (REPORT/f'{tag}-canary.stderr.log').write_text(stderr)
-        result={'mode':mode,'exitCode':code,'seconds':round(time.monotonic()-started,2),'syntheticOnly':True,'channelsEnabled':False,'businessToolsEnabled':False,'liveChanges':False,'runtimeVersion':subprocess.check_output([str(NODE),str(CLI),'--version'],text=True).strip(),'nodeVersion':subprocess.check_output([str(NODE),'--version'],text=True).strip(),'primaryAttempts':len(primary_requests)}
+        result={'mode':mode,'schema':args.schema,'credentialStorage':args.credential_storage,'exitCode':code,'seconds':round(time.monotonic()-started,2),'syntheticOnly':True,'channelsEnabled':False,'businessToolsEnabled':False,'liveChanges':False,'runtimeVersion':subprocess.check_output([str(NODE),str(CLI),'--version'],text=True).strip(),'nodeVersion':subprocess.check_output([str(NODE),'--version'],text=True).strip(),'primaryAttempts':len(primary_requests)}
         try:
             payload=json.loads(stdout[stdout.index('{'):])
             result['result']=payload

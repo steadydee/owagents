@@ -22,6 +22,8 @@ OPENAI_MINI = {"id": "gpt-5.4-mini", "name": "GPT-5.4 mini", "reasoning": True,
                "contextTokens": 65536, "maxTokens": 4096,
                "cost": {"input": 0.75, "output": 4.50, "cacheRead": 0.075, "cacheWrite": 0}}
 SECRET_PROVIDER = "openai-fallback-env"
+FILE_SECRET_PROVIDER = "openai-fallback-file"
+RUNTIME_GENERATIONS = ("legacy", "2026.10.5")
 ALLOWED_AGENTS = {
     "owlswatch": {"main", "cuenta", "cotiza", "correo", "cobros", "registro"},
     "hotel": {"hotel"}, "bailey-finance": {"ledger"}, "nomina": {"nomina"},
@@ -41,21 +43,21 @@ def agent_entries(config):
     return result
 
 
-def add_model(owner, inherited=None):
+def add_model(owner, inherited=None, runtime_generation="legacy"):
     selected = owner.get("model", inherited)
     if not selected:
         raise ValueError("An explicit primary model is required.")
     model = {"primary": selected} if isinstance(selected, str) else copy.deepcopy(selected)
     if not model.get("primary"):
         raise ValueError("An explicit primary model is required.")
-    if model['primary'] in RETIRED_MODELS:
+    if runtime_generation == "2026.10.5" and model['primary'] in RETIRED_MODELS:
         old = model['primary']
         model['primary'] = PRIMARY_MODEL
         settings = owner.setdefault('models', {}).pop(old, {})
         settings.setdefault('params', {})['thinking'] = 'high' if old.endswith('reasoner') else 'off'
         owner['models'].setdefault(PRIMARY_MODEL, settings)
     fallbacks = model.setdefault("fallbacks", [])
-    fallbacks[:] = list(dict.fromkeys(PRIMARY_MODEL if ref in RETIRED_MODELS else ref for ref in fallbacks))
+    fallbacks[:] = list(dict.fromkeys(PRIMARY_MODEL if runtime_generation == "2026.10.5" and ref in RETIRED_MODELS else ref for ref in fallbacks))
     if MODEL not in fallbacks and model["primary"] != MODEL:
         fallbacks.append(MODEL)
     owner["model"] = model
@@ -65,30 +67,57 @@ def add_model(owner, inherited=None):
     params.update({"transport": "sse", "maxTokens": min(params.get('maxTokens') or 4096, 4096), "thinking": "low"})
     policy = owner.get("modelPolicy", {}).get("allow")
     if policy:
-        policy[:] = list(dict.fromkeys(PRIMARY_MODEL if ref in RETIRED_MODELS else ref for ref in policy))
+        policy[:] = list(dict.fromkeys(PRIMARY_MODEL if runtime_generation == "2026.10.5" and ref in RETIRED_MODELS else ref for ref in policy))
     if policy and MODEL not in policy:
         policy.append(MODEL)
 
 
-def prepare(config, profile, env_name="OPENAI_FALLBACK_API_KEY"):
+def credential_file_path(path, profile):
+    candidate = Path(path)
+    root = Path.home() / (".openclaw-" + profile) / "credentials"
+    if (not candidate.is_absolute() or candidate.resolve() != candidate or root.resolve() != root
+            or not candidate.is_relative_to(root) or candidate == root):
+        raise ValueError("Credential file must be a canonical absolute path under this profile's credentials directory.")
+    # Path validation only. Provisioning and SDK owner/mode checks are separate;
+    # never read, create, chmod or copy a credential here.
+    return str(candidate)
+
+
+def prepare(config, profile, env_name="OPENAI_FALLBACK_API_KEY", runtime_generation="legacy", credential_file=None):
+    if runtime_generation not in RUNTIME_GENERATIONS:
+        raise ValueError("Unsupported runtime generation.")
     if profile not in ALLOWED_AGENTS:
         raise ValueError("Profile is outside the authorized non-Luna active fleet.")
     if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", env_name):
         raise ValueError("Credential environment name is invalid.")
+    secret_provider = FILE_SECRET_PROVIDER if credential_file is not None else SECRET_PROVIDER
+    if credential_file is not None:
+        secret = {"source": "file", "path": credential_file_path(credential_file, profile), "mode": "singleValue"}
+        secret_ref = {"source": "file", "provider": secret_provider, "id": "value"}
+    else:
+        secret = {"source": "env", "allowlist": [env_name]}
+        secret_ref = {"source": "env", "provider": secret_provider, "id": env_name}
     result = copy.deepcopy(config)
     entries = agent_entries(result)
     if not entries or set(entries) - ALLOWED_AGENTS[profile]:
         raise ValueError("Unexpected or empty agent inventory; inspect ownership first.")
     defaults = result["agents"].setdefault("defaults", {})
-    add_model(defaults)
+    if runtime_generation == "legacy" and ("entries" in result["agents"] or
+            any("modelPolicy" in owner for owner in [defaults, *entries.values()])):
+        raise ValueError("Legacy preparation requires agents.list and models allowlists; refusing a reverse state/config migration.")
+    add_model(defaults, runtime_generation=runtime_generation)
     defaults.setdefault("heartbeat", {})["every"] = "0m"
     # Preserve tighter existing limits, including Nomina's 180-second budget.
     defaults["timeoutSeconds"] = min(defaults.get("timeoutSeconds") or 600, 600)
     # The 10.5 migration drops the old default context limit. Transfer it to
     # explicit catalog rows, where the new runtime enforces it.
-    context_limit = min(defaults.pop('contextTokens', None) or 65536, 65536)
+    context_limit = min(defaults.get('contextTokens') or 65536, 65536)
+    if runtime_generation == "2026.10.5":
+        defaults.pop('contextTokens', None)
+    else:
+        defaults['contextTokens'] = context_limit
     for agent in entries.values():
-        add_model(agent, defaults["model"])
+        add_model(agent, defaults["model"], runtime_generation)
         if "heartbeat" in agent:
             agent["heartbeat"]["every"] = "0m"
     providers = result.setdefault("models", {}).setdefault("providers", {})
@@ -100,7 +129,7 @@ def prepare(config, profile, env_name="OPENAI_FALLBACK_API_KEY"):
     current.update({"baseUrl": "https://api.openai.com/v1", "api": "openai-responses",
                     "auth": "api-key", "agentRuntime": {"id": "openclaw"},
                     "timeoutSeconds": 60,
-                    "apiKey": {"source": "env", "provider": SECRET_PROVIDER, "id": env_name}})
+                    "apiKey": secret_ref})
     current.setdefault("models", [])
     if not any(row.get('id') == OPENAI_MINI['id'] for row in current['models']):
         current['models'].append(copy.deepcopy(OPENAI_MINI))
@@ -123,22 +152,31 @@ def prepare(config, profile, env_name="OPENAI_FALLBACK_API_KEY"):
     for ref in selected_refs:
         provider, model_id = ref.split('/', 1)
         row = next((r for r in providers.get(provider, {}).get('models', []) if r.get('id') == model_id), None)
+        if row is None and runtime_generation == "legacy" and ref in RETIRED_MODELS:
+            # Preserve the installed runtime's alias and conservative catalog
+            # limits. The provider still accepted reasoner on 2026-10-26.
+            row = {'id': model_id, 'name': 'DeepSeek ' + model_id.removeprefix('deepseek-').title(),
+                   'reasoning': model_id == 'deepseek-reasoner', 'input': ['text'],
+                   'contextWindow': 128000, 'maxTokens': 8192,
+                   'cost': copy.deepcopy(DEEPSEEK_FLASH['cost'])}
+            providers[provider].setdefault('models', []).append(row)
         if row is None:
             raise ValueError('An explicit catalog row is required to preserve the context limit for ' + ref)
         row['contextTokens'] = min(row.get('contextTokens') or context_limit, context_limit,
                                    row.get('contextWindow') or context_limit)
         if ref == MODEL:
             row['maxTokens'] = min(row.get('maxTokens') or 4096, 4096)
-        elif ref == PRIMARY_MODEL:
+        elif ref == PRIMARY_MODEL or ref in RETIRED_MODELS:
             row['maxTokens'] = min(row.get('maxTokens') or 8192, 8192)
+        if runtime_generation == "legacy":
+            defaults.setdefault('models', {}).setdefault(ref, {})
     secrets = result.setdefault("secrets", {}).setdefault("providers", {})
-    secret = {"source": "env", "allowlist": [env_name]}
-    if SECRET_PROVIDER in secrets and secrets[SECRET_PROVIDER] != secret:
+    if secret_provider in secrets and secrets[secret_provider] != secret:
         raise ValueError("Existing fallback secret-provider definition conflicts.")
-    secrets[SECRET_PROVIDER] = secret
+    secrets[secret_provider] = secret
     plugins = result.setdefault("plugins", {})
     plugins.setdefault("entries", {}).setdefault("openai", {})["enabled"] = True
-    if any(a['model']['primary'].startswith('deepseek/') for a in entries.values()):
+    if runtime_generation == "2026.10.5" and any(a['model']['primary'].startswith('deepseek/') for a in entries.values()):
         plugins['entries'].setdefault('deepseek', {})['enabled'] = True
         if isinstance(plugins.get('allow'), list) and 'deepseek' not in plugins['allow']:
             plugins['allow'].append('deepseek')
@@ -191,12 +229,15 @@ def validate_output_dir(path, config):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=ALLOWED_AGENTS, required=True)
-    parser.add_argument("--credential-env", default="OPENAI_FALLBACK_API_KEY")
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument("--credential-env", default="OPENAI_FALLBACK_API_KEY")
+    credentials.add_argument("--credential-file", type=Path)
+    parser.add_argument("--runtime-generation", choices=RUNTIME_GENERATIONS, default="legacy")
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     state = Path.home() / (".openclaw-" + args.profile)
     config = json.loads((state / "openclaw.json").read_text())
-    candidate = prepare(config, args.profile, args.credential_env)
+    candidate = prepare(config, args.profile, args.credential_env, args.runtime_generation, args.credential_file)
     agents = agent_entries(config)
     settings = {}
     for name, agent in agents.items():
@@ -216,11 +257,15 @@ def main():
             write_private(target / name / "settings.candidate.json", value)
     print(json.dumps({"profile": args.profile, "mode": "prepare-only", "model": MODEL,
                       "agents": sorted(agents), "changeRequired": candidate != config,
-                      "credentialEnv": args.credential_env, "credentialPresentInThisProcess": bool(os.environ.get(args.credential_env)),
+                      "credentialStorage": "file" if args.credential_file else "env",
+                      "credentialEnv": None if args.credential_file else args.credential_env,
+                      "credentialPresentInThisProcess": None if args.credential_file else bool(os.environ.get(args.credential_env)),
                       "primaryRequestSeconds": candidate["models"]["providers"].get("deepseek", {}).get("timeoutSeconds"),
                       "backupRequestSeconds": candidate["models"]["providers"]["openai"]["timeoutSeconds"],
                       "agentProviderRetries": {name: value["retry"]["provider"]["maxRetries"] for name, value in settings.items()},
-                      "requiresRuntime": "2026.10.5", "requiresConfigAndStateMigration": True,
+                      "runtimeGeneration": args.runtime_generation,
+                      "requiresRuntime": "2026.7.1-2" if args.runtime_generation == "legacy" else "2026.10.5",
+                      "requiresConfigAndStateMigration": args.runtime_generation != "legacy",
                       "liveChanges": False, "candidateWritten": bool(args.output_dir)}, indent=2))
 
 
