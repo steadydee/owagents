@@ -6,6 +6,7 @@ import http.server
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import tempfile
 import time
@@ -24,10 +25,15 @@ def main():
     parser.add_argument('--openclaw-cli',type=Path,required=True)
     parser.add_argument('--output-dir',type=Path,required=True)
     parser.add_argument('--deepseek-plugin',type=Path)
+    parser.add_argument('--guard-plugin',type=Path)
+    parser.add_argument('--primary-credit-cooldown',action='store_true')
     parser.add_argument('--credential-env',default='OPENAI_FALLBACK_API_KEY')
     parser.add_argument('--mode',choices=['direct','failover','network-failover','tools'],default='direct')
     args=parser.parse_args()
     mode=args.mode
+    if args.primary_credit_cooldown and (mode!='failover' or not args.guard_plugin):
+        raise SystemExit('Credit-cooldown UAT requires failover mode and the candidate guard plugin.')
+    tag=mode+('-guarded' if args.guard_plugin else '')
     NODE=args.node.expanduser().resolve()
     CLI=args.openclaw_cli.expanduser().resolve()
     REPORT=args.output_dir.expanduser().resolve()
@@ -98,6 +104,17 @@ export default {id:'canary-fixture',name:'Synthetic fixture',register(api){api.r
             config['agents']['entries']['canary']['tools']={'profile':'minimal','alsoAllow':['fixture_lookup'],'deny':['session_status']}
             config['tools']={}
             prompt='Call fixture_lookup once with id test, then reply only with its deliveryToken. This is a synthetic tool test; no other actions.'
+        if args.guard_plugin:
+            guard=state/'guard-plugin';guard.mkdir()
+            for name in ['openclaw-plugin.js','guard.mjs','openclaw.plugin.json']:
+                shutil.copy2(args.guard_plugin.expanduser().resolve()/name,guard/name)
+            (guard/'node_modules').mkdir()
+            (guard/'node_modules/openclaw').symlink_to(CLI.parent,target_is_directory=True)
+            config['plugins'].setdefault('load',{}).setdefault('paths',[]).append(str(guard/'openclaw-plugin.js'))
+            config['plugins']['allow'].append('owlswatch-runtime-guard')
+            config['plugins']['entries']['owlswatch-runtime-guard']={'enabled':True,'hooks':{'allowConversationAccess':True}}
+            if args.primary_credit_cooldown:
+                atomic(state/'health/provider-circuit.json',{'provider':'canary-primary','until':int(time.time()*1000)+600000,'code':'provider_credit'})
         atomic(state/'openclaw.json',config)
         atomic(agent_dir/'settings.json',{'retry':{'provider':{'maxRetries':0}}})
         env={**os.environ, 'OPENCLAW_STATE_DIR':str(state),'OPENCLAW_CONFIG_PATH':str(state/'openclaw.json'),'OPENAI_CANARY_API_KEY':KEY,'PATH':str(NODE.parent)+os.pathsep+os.environ['PATH']}
@@ -118,8 +135,8 @@ export default {id:'canary-fixture',name:'Synthetic fixture',register(api){api.r
                 os.killpg(process.pid,signal.SIGKILL);stdout,stderr=process.communicate()
             code=124
         stdout=stdout.replace(KEY,'[REDACTED]');stderr=stderr.replace(KEY,'[REDACTED]')
-        (REPORT/f'{mode}-canary.stdout.log').write_text(stdout)
-        (REPORT/f'{mode}-canary.stderr.log').write_text(stderr)
+        (REPORT/f'{tag}-canary.stdout.log').write_text(stdout)
+        (REPORT/f'{tag}-canary.stderr.log').write_text(stderr)
         result={'mode':mode,'exitCode':code,'seconds':round(time.monotonic()-started,2),'syntheticOnly':True,'channelsEnabled':False,'businessToolsEnabled':False,'liveChanges':False,'runtimeVersion':subprocess.check_output([str(NODE),str(CLI),'--version'],text=True).strip(),'nodeVersion':subprocess.check_output([str(NODE),'--version'],text=True).strip(),'primaryAttempts':len(primary_requests)}
         try:
             payload=json.loads(stdout[stdout.index('{'):])
@@ -129,9 +146,17 @@ export default {id:'canary-fixture',name:'Synthetic fixture',register(api){api.r
             result['model']=payload.get('meta',{}).get('agentMeta',{}).get('model')
             result['fixtureCalls']=[json.loads(line) for line in (state/'fixture-calls.jsonl').read_text().splitlines()] if (state/'fixture-calls.jsonl').exists() else []
             result['networkFailureObserved']=('candidate=deepseek/deepseek-flash reason=timeout' in stderr or 'candidate=deepseek/deepseek-flash reason=network' in stderr) and 'Unknown model: deepseek/' not in stderr
+            if args.guard_plugin:
+                journal=state/'health/runs.jsonl'
+                events=[json.loads(line) for line in journal.read_text().splitlines()] if journal.exists() else []
+                result['guardCompletedResponse']=any(e.get('kind')=='run_end' and e.get('success') and e.get('responseCompleted') for e in events)
+                result['guardAllowedCreditFallback']=any(e.get('kind')=='provider_credit_fallback_allowed' for e in events)
+                result['guardCreditCircuitPreserved']=(json.loads((state/'health/provider-circuit.json').read_text()).get('provider')=='canary-primary') if args.primary_credit_cooldown else None
             result['passed']=(mode!='network-failover' or result['networkFailureObserved']) and code==0 and result['replyMatches'] and result['provider']=='openai' and (mode!='failover' or len(primary_requests)==1) and (mode!='tools' or len(result['fixtureCalls'])==1)
+            if args.guard_plugin:
+                result['passed']=result['passed'] and result['guardCompletedResponse'] and (not args.primary_credit_cooldown or (result['guardAllowedCreditFallback'] and result['guardCreditCircuitPreserved']))
         except (ValueError, json.JSONDecodeError): result['diagnosticsTail']=(stderr+stdout)[-3500:]
-        atomic(REPORT/f'{mode}-canary.json',result)
+        atomic(REPORT/f'{tag}-canary.json',result)
         print(json.dumps({k:v for k,v in result.items() if k!='result'}))
     server.shutdown();server.server_close()
     if not result.get('passed'):

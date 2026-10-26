@@ -131,3 +131,13 @@ The Nómina direct-provider evaluation harness is updated to the current DeepSee
 primary. Its scripted fixtures validate financial gates; they do not establish
 OpenAI conversation quality. Production backup acceptance still requires the
 real OpenClaw pipeline with synthetic payroll data and human-review gates.
+
+For a balance-cooldown regression test, add
+`--guard-plugin /path/to/candidate/tools/agent_runtime_guard --primary-credit-cooldown`
+to `--mode failover`. The helper copies only the guard source into disposable
+state, links the selected isolated SDK, and preloads a synthetic primary credit
+circuit. Success requires the actual runtime to allow the configured alternate,
+complete an OpenAI response, record completion through the guard, and preserve
+the primary credit circuit. No provider balance or production health file is
+changed. Guarded results use separate filenames so they cannot overwrite the
+unguarded fallback evidence.
