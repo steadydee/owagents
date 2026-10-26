@@ -8,10 +8,17 @@ across provider attempts that reuse a run ID. Healthy input gates return an
 explicit `pass`, as required by the installed OpenClaw hook runner.
 
 Provider credit failures create a durable 30-minute cooldown. Subsequent requests
-receive a deterministic degraded-state explanation. An operator can remove
-`health/provider-circuit.json` after verifying credit recovery. Other explicitly
-identified providers are unaffected. This gate does not stop an already active
-run or replace provider retry handling.
+receive a deterministic degraded-state explanation unless the selected agent's
+trusted configuration contains a different provider that its model policy allows.
+In that case the guard permits OpenClaw to attempt its configured chain, including
+when the run's provider is not known yet. This is not evidence that the alternate
+has valid credentials or is healthy. It neither selects a provider nor clears the
+circuit or run budgets. Aliases, unknown provider attribution and ambiguous agent
+configuration cannot bypass the credit stop. A per-agent primary does not inherit
+default fallbacks; an explicit empty fallback list also disables inheritance.
+Other explicitly identified providers are unaffected. An operator can remove
+`health/provider-circuit.json` after verifying credit recovery. This gate does not
+stop an already active run or replace provider retry handling.
 
 `health/runs.jsonl` contains agent/provider/model, token counters, durations,
 sanitized outcome codes and truncated SHA-256 run/call correlation keys. It
@@ -47,3 +54,6 @@ are historical only. This detects missing completion telemetry, including a
 crash, without claiming the process is still running or restarting it.
 
 Run `node --test tools/agent_runtime_guard/tests/*.test.mjs`.
+
+The OpenClaw 2026.10.5 migration has different built-in loop and health limits;
+see `docs/runbooks/openclaw-10.5-controls.md` for the remaining activation gates.
