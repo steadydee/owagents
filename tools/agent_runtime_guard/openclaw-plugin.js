@@ -19,6 +19,7 @@ export default definePluginEntry({
       chmodSync(path, 0o600);
     };
     const guard = createGuard({
+      config: api.config,
       record,
       readCircuit: () => { try { return JSON.parse(readFileSync(circuitPath, "utf8")); } catch { return {}; } },
       writeCircuit: value => {

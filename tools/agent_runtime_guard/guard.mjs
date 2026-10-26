@@ -28,6 +28,40 @@ function hasAssistantText(message) {
       Array.isArray(message.content) && message.content.some(part => part?.type === "text" && typeof part.text === "string" && part.text.trim()));
 }
 
+// Only literal provider/model references from trusted configuration count as an
+// alternate. Alias resolution, auth eligibility and actual failover stay with
+// OpenClaw; uncertainty here must retain the existing credit stop.
+function configuredProviders(config, agentId) {
+  const agents = config?.agents;
+  if (!agents || !agentId || (Object.hasOwn(agents, "entries") && Object.hasOwn(agents, "list"))) return [];
+  let agent;
+  if (agents.entries && typeof agents.entries === "object" && !Array.isArray(agents.entries)) {
+    if (Object.hasOwn(agents.entries, agentId)) agent = agents.entries[agentId];
+  } else if (Array.isArray(agents.list)) {
+    const matches = agents.list.filter(item => item?.id === agentId);
+    if (matches.length === 1) agent = matches[0];
+  }
+  if (!agent || typeof agent !== "object" || Array.isArray(agent)) return [];
+  const defaults = agents.defaults || {};
+  const selected = agent.model ?? defaults.model;
+  const defaultPrimary = typeof defaults.model === "string" ? defaults.model : defaults.model?.primary;
+  let refs;
+  if (typeof selected === "string") refs = [selected];
+  else if (selected && typeof selected === "object" && !Array.isArray(selected)) {
+    if (Object.hasOwn(selected, "fallbacks") && !Array.isArray(selected.fallbacks)) return [];
+    // A per-agent primary (including a string) does not inherit default
+    // fallbacks. An explicit [] also disables default fallbacks in OpenClaw.
+    refs = [selected.primary ?? defaultPrimary, ...(selected.fallbacks || [])];
+  } else return [];
+  const policy = agent.modelPolicy && Object.hasOwn(agent.modelPolicy, "allow") ? agent.modelPolicy : defaults.modelPolicy;
+  const allow = policy?.allow;
+  if (allow !== undefined && !Array.isArray(allow)) return [];
+  return [...new Set(refs.filter(ref => typeof ref === "string" && /^[a-z0-9][a-z0-9_-]*\/\S+$/.test(ref) &&
+    (!allow?.length || allow.some(rule => typeof rule === "string" &&
+      (rule === ref || (rule.endsWith("/*") && ref.startsWith(rule.slice(0, -1)))))))
+    .map(ref => ref.slice(0, ref.indexOf("/"))))];
+}
+
 // Count only provider/tool-confirmed business records, never the model's prose.
 export function verifiedBusinessOutcome(event) {
   if (event.error || event.result?.isError) return null;
@@ -50,7 +84,7 @@ export function verifiedBusinessOutcome(event) {
   return { outcome: match[0], taskKey: digest(`${match[0]}:${match[1]}`) };
 }
 
-export function createGuard({ now = Date.now, record = () => {}, readCircuit = () => ({}), writeCircuit = () => {} } = {}) {
+export function createGuard({ config, now = Date.now, record = () => {}, readCircuit = () => ({}), writeCircuit = () => {} } = {}) {
   const runs = new Map();
   // model_call_ended has runId but no agentId in the installed runtime. Key
   // exclusively by trusted run identity, then learn agent/provider from hooks.
@@ -89,8 +123,15 @@ export function createGuard({ now = Date.now, record = () => {}, readCircuit = (
       emit(run, { kind: "run_start", startedAt: new Date(run.started).toISOString() });
       const circuit = readCircuit();
       if (circuit.until > now() && (!run.provider || circuit.provider === "unknown" || circuit.provider === run.provider)) {
-        run.blocked = "provider_credit";
-        return { outcome: "block", category: "provider_credit", reason: "provider_credit_cooldown", message: "El proveedor de IA reportó saldo insuficiente. El trabajo queda pendiente; revise el saldo y vuelva a solicitarlo cuando se haya recuperado." };
+        const alternate = typeof circuit.provider === "string" && /^[a-z0-9][a-z0-9_-]*$/.test(circuit.provider) && circuit.provider !== "unknown" &&
+          configuredProviders(config, run.agent).some(provider => provider !== circuit.provider);
+        if (!alternate) {
+          if (!run.blocked) run.blocked = "provider_credit";
+          return { outcome: "block", category: "provider_credit", reason: "provider_credit_cooldown", message: "El proveedor de IA reportó saldo insuficiente. El trabajo queda pendiente; revise el saldo y vuelva a solicitarlo cuando se haya recuperado." };
+        }
+        // This is permission to attempt the configured chain, not evidence of
+        // provider health. Do not clear the durable circuit or any run budget.
+        emit(run, { kind: "provider_credit_fallback_allowed", provider: circuit.provider });
       }
       if (run.blocked === "provider_credit") run.blocked = null;
       // OpenClaw's gate treats undefined as an invalid/block decision.
