@@ -7,7 +7,7 @@ import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const PROFILES = ["owlswatch", "hotel", "bailey-finance", "nomina"];
+const PROFILES = ["owlswatch", "hotel", "bailey-finance"];
 
 export function configuredAgents(cfg) {
   const section = cfg.agents ?? {};

@@ -16,13 +16,15 @@ import stat
 import time
 import uuid
 
-PROFILES = ("owlswatch", "hotel", "bailey-finance", "nomina")
+PROFILES = ("owlswatch", "hotel", "bailey-finance")
+# Paused profiles cannot reserve; their historical attempts still consume quota.
+HISTORICAL_PROFILES = ("owlswatch", "hotel", "bailey-finance", "nomina")
 CATEGORIES = ("balance", "recovery", "owner_alert")
 POLICY = "quiet-monitor-v1"
 DAY = 86_400_000
 LIMITS = {
-    "balance_24h": ("balance", DAY, 4), "recovery_24h": ("recovery", DAY, 2),
-    "diagnostic_24h": ("diagnostic", DAY, 6), "diagnostic_30d": ("diagnostic", 30 * DAY, 180),
+    "balance_24h": ("balance", DAY, 3), "recovery_24h": ("recovery", DAY, 2),
+    "diagnostic_24h": ("diagnostic", DAY, 5), "diagnostic_30d": ("diagnostic", 30 * DAY, 150),
     "owner_alert_24h": ("owner_alert", DAY, 2), "owner_alert_30d": ("owner_alert", 30 * DAY, 60),
 }
 
@@ -114,7 +116,7 @@ def validate(db, now):
         raise BudgetError("state_invalid")
     previous = created
     for index, (seq, category, profile, at) in enumerate(events, 1):
-        if seq != index or category not in CATEGORIES or profile not in PROFILES or type(at) is not int or not previous <= at <= seen:
+        if seq != index or category not in CATEGORIES or profile not in HISTORICAL_PROFILES or type(at) is not int or not previous <= at <= seen:
             raise BudgetError("state_invalid")
         previous = at
     if now < seen:

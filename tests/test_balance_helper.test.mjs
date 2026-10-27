@@ -86,12 +86,12 @@ function options(f, profile = "hotel") {
     reserveBudget: () => reserveBalanceBudget({ budgetState: f.budgetState, budgetPython: python, profile }) };
 }
 
-test("actual Python ledger reserves before HTTP across four profiles; fifth attempt is blocked", async () => {
+test("actual Python ledger reserves before HTTP across three profiles; fourth attempt is blocked", async () => {
   const f = fixture();
   try {
     assert.equal(f.run("init").status, "initialized");
     let requests = 0;
-    for (const profile of ["owlswatch", "hotel", "nomina", "bailey-finance"]) {
+    for (const profile of ["owlswatch", "hotel", "bailey-finance"]) {
       const result = await checkBalance(cfg, { ...options(f, profile), fetchBalance: async (_url, request) => {
         assert.equal(f.run("status").used.balance_24h, requests + 1);
         requests++;
@@ -103,7 +103,7 @@ test("actual Python ledger reserves before HTTP across four profiles; fifth atte
     }
     const denied = await checkBalance(cfg, { ...options(f), fetchBalance: () => assert.fail("exhausted budget must block HTTP") });
     assert.equal(denied.status, "budget_exhausted");
-    assert.equal(requests, 4);
+    assert.equal(requests, 3);
   } finally { f.clean(); }
 });
 
@@ -142,4 +142,19 @@ test("CLI refuses missing shared budget configuration before SDK/profile access"
       { env: { HOME: home, PATH: "/no-binaries" }, encoding: "utf8" });
     assert.deepEqual(JSON.parse(output), { status: "budget_unconfigured" });
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+
+test("paused Nomina cannot reserve or access profile/SDK via CLI", async () => {
+  const f = fixture();
+  try {
+    f.run("init");
+    assert.equal((await reserveBalanceBudget({ budgetState: f.budgetState, budgetPython: python, profile: "nomina" })).status, "budget_unconfigured");
+    const script = new URL("../scripts/check-deepseek-balance.mjs", import.meta.url).pathname;
+    assert.throws(() => execFileSync(process.execPath, [script, "nomina", "--sdk-root", join(f.dir, "no-sdk"),
+      "--budget-state", f.budgetState, "--budget-python", python], {
+      env: { HOME: f.dir, PATH: "/no-binaries" }, encoding: "utf8",
+    }), error => error.status === 2 && JSON.parse(error.stdout).status === "invalid_profile");
+    assert.equal(f.run("status").used.balance_24h, 0);
+  } finally { f.clean(); }
 });

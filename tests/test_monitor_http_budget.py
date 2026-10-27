@@ -44,7 +44,7 @@ class MonitorBudgetTests(unittest.TestCase):
         self.assertEqual(before, self.path.read_bytes())
         again = budget.initialize(self.path, now_ms=T + 1)
         self.assertFalse(again["created"])
-        self.assertEqual(again["remaining"]["balance_24h"], 3)
+        self.assertEqual(again["remaining"]["balance_24h"], 2)
         self.assertEqual(before, self.path.read_bytes())
 
     def test_100_concurrent_callers_share_one_fleet_budget(self):
@@ -52,34 +52,34 @@ class MonitorBudgetTests(unittest.TestCase):
         barrier = threading.Barrier(100)
         def attempt(index):
             barrier.wait(timeout=20)
-            return self.reserve(budget.CATEGORIES[index % 3], profile=budget.PROFILES[index % 4])
+            return self.reserve(budget.CATEGORIES[index % 3], profile=budget.PROFILES[index % len(budget.PROFILES)])
         with concurrent.futures.ThreadPoolExecutor(max_workers=100) as pool:
             results = list(pool.map(attempt, range(100)))
         granted = [x for x in results if x["status"] == "reserved"]
-        self.assertEqual(len(granted), 8)
-        self.assertEqual(len({x["reservationId"] for x in granted}), 8)
+        self.assertEqual(len(granted), 7)
+        self.assertEqual(len({x["reservationId"] for x in granted}), 7)
         self.assertTrue(all(x["status"] in ("reserved", "budget_exhausted", "budget_unavailable") for x in results))
         used = budget.inspect(self.path, now_ms=T)["used"]
-        self.assertEqual(used, {"balance_24h": 4, "recovery_24h": 2, "diagnostic_24h": 6,
-                               "diagnostic_30d": 6, "owner_alert_24h": 2, "owner_alert_30d": 2})
+        self.assertEqual(used, {"balance_24h": 3, "recovery_24h": 2, "diagnostic_24h": 5,
+                               "diagnostic_30d": 5, "owner_alert_24h": 2, "owner_alert_30d": 2})
 
     def test_rolling_boundaries_do_not_reset_at_midnight(self):
         self.init()
-        for _ in range(4):
+        for _ in range(3):
             self.assertEqual(self.reserve()["status"], "reserved")
         denied = self.reserve(now=T + budget.DAY - 1)
         self.assertEqual(denied["status"], "budget_exhausted")
         self.assertEqual(denied["retryAt"], (T + budget.DAY) / 1000)
         self.assertEqual(self.reserve(now=T + budget.DAY)["status"], "reserved")
-        self.assertEqual(budget.inspect(self.path, now_ms=T + budget.DAY)["used"]["diagnostic_30d"], 5)
+        self.assertEqual(budget.inspect(self.path, now_ms=T + budget.DAY)["used"]["diagnostic_30d"], 4)
 
     def test_thirty_days_preserve_separate_diagnostic_and_alert_counts(self):
         self.init()
         for day in range(30):
-            for category in ("balance",) * 4 + ("recovery",) * 2 + ("owner_alert",) * 2:
+            for category in ("balance",) * 3 + ("recovery",) * 2 + ("owner_alert",) * 2:
                 self.assertEqual(self.reserve(category, T + day * budget.DAY)["status"], "reserved")
         status = budget.inspect(self.path, now_ms=T + 29 * budget.DAY)
-        self.assertEqual(status["used"]["diagnostic_30d"], 180)
+        self.assertEqual(status["used"]["diagnostic_30d"], 150)
         self.assertEqual(status["used"]["owner_alert_30d"], 60)
         self.assertIn("diagnostic_30d", self.reserve(now=T + 29 * budget.DAY)["limits"])
         self.assertIn("owner_alert_30d", self.reserve("owner_alert", T + 29 * budget.DAY)["limits"])
@@ -89,8 +89,8 @@ class MonitorBudgetTests(unittest.TestCase):
         self.init()
         with sqlite3.connect(self.path) as db:
             db.executemany("INSERT INTO reservations VALUES(?,?,?,?,?)",
-                [(i + 1, str(i), "balance", "hotel", T) for i in range(180)])
-            db.execute("UPDATE metadata SET event_count=180")
+                [(i + 1, str(i), "balance", "hotel", T) for i in range(150)])
+            db.execute("UPDATE metadata SET event_count=150")
         denied = self.reserve(now=T + 2 * budget.DAY)
         self.assertEqual(denied["limits"], ["diagnostic_30d"])
         self.assertEqual(denied["retryAt"], (T + 30 * budget.DAY) / 1000)
@@ -113,7 +113,7 @@ r=m.reserve(sys.argv[2],'balance','hotel'); os._exit(73 if r['status']=='reserve
         for action in (lambda: self.reserve(now=T), lambda: budget.inspect(self.path, now_ms=T),
                        lambda: budget.initialize(self.path, now_ms=T)):
             self.assertEqual(action(), {"status": "budget_unavailable", "reason": "clock_rollback"})
-        self.assertEqual(self.reserve(now=T + 1000)["remaining"]["balance_24h"], 2)
+        self.assertEqual(self.reserve(now=T + 1000)["remaining"]["balance_24h"], 1)
 
     def test_corrupt_empty_or_partially_deleted_state_never_resets(self):
         for contents in (b"", b"invalid SQLite fixture"):
@@ -161,6 +161,30 @@ r=m.reserve(sys.argv[2],'balance','hotel'); os._exit(73 if r['status']=='reserve
         self.assertEqual(budget.reserve(alias, "balance", "hotel", now_ms=T)["status"], "budget_unavailable")
         self.path.chmod(0o644)
         self.assertEqual(self.reserve()["status"], "budget_unavailable")
+
+    def test_paused_nomina_denied_but_historical_attempts_remain_counted(self):
+        self.init()
+        for category in budget.CATEGORIES:
+            self.assertEqual(self.reserve(category, profile="nomina")["reason"], "scope_invalid")
+        self.assertEqual(budget.inspect(self.path, now_ms=T)["used"]["diagnostic_24h"], 0)
+        # Prior policy allowed four daily balances. Preserve that history after
+        # a pause/cap reduction; do not erase it or grant a fresh allowance.
+        with sqlite3.connect(self.path) as db:
+            db.executemany("INSERT INTO reservations VALUES(?,?,?,?,?)",
+                [(i + 1, str(i), "balance", "nomina", T) for i in range(4)])
+            db.execute("UPDATE metadata SET event_count=4")
+        before = self.path.read_bytes()
+        status = budget.inspect(self.path, now_ms=T)
+        self.assertEqual(status["status"], "ok")
+        self.assertEqual(status["used"]["balance_24h"], 4)
+        self.assertEqual(status["remaining"]["balance_24h"], 0)
+        self.assertEqual(budget.initialize(self.path, now_ms=T)["used"]["balance_24h"], 4)
+        self.assertEqual(before, self.path.read_bytes())
+        self.assertEqual(self.reserve()["status"], "budget_exhausted")
+        self.assertEqual(self.reserve("recovery")["status"], "reserved")
+        self.assertIn("diagnostic_24h", self.reserve("recovery")["limits"])
+        self.assertEqual(self.reserve(now=T + budget.DAY)["status"], "reserved")
+        self.assertEqual(budget.inspect(self.path, now_ms=T + budget.DAY)["used"]["diagnostic_30d"], 6)
 
     def test_unexpected_trigger_or_identity_cannot_bypass_budget(self):
         self.init()
