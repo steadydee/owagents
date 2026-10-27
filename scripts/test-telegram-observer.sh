@@ -52,6 +52,15 @@ db.close()
 PY
 
 run_observer() {
+  python3 - "$1" <<'PYFIXTURE'
+import json, sys, time
+path = sys.argv[1]
+with open(path) as handle:
+    fixture = json.load(handle)
+fixture["ts"] = time.time() * 1000
+with open(path, "w") as handle:
+    json.dump(fixture, handle)
+PYFIXTURE
   "$ROOT/scripts/observe-telegram-channel.py" \
     --profile hotel \
     --state-dir "$TMP/state" \
@@ -69,6 +78,7 @@ path, age = sys.argv[1], float(sys.argv[2])
 with open(path, encoding="utf-8") as handle:
     state = json.load(handle)
 state["outageStartedAtEpoch"] = time.time() - age
+state["failureStreakStartedAtEpoch"] = time.time() - age
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(state, handle)
     handle.write("\n")

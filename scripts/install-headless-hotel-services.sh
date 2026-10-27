@@ -18,11 +18,12 @@ LABELS=(
 
 usage() {
   cat <<'EOF'
-Usage: install-headless-hotel-services.sh [render|install|uninstall|status]
+Usage: install-headless-hotel-services.sh [render|install|uninstall|quiet-observer|status]
 
 render     Render and validate LaunchDaemons without loading them.
 install    Install boot-level Hotel services. Run with sudo.
 uninstall  Remove boot-level services and restore user LaunchAgents. Run with sudo.
+quiet-observer  Disable only the external observer in both domains. Run with sudo.
 status     Show system and user service state.
 EOF
 }
@@ -91,6 +92,11 @@ disable_user_service() {
 enable_user_service() {
   local label="$1"
   local source="$SOURCE_DIR/$label.plist"
+  if [ "$label" = "ai.openclaw.hotel.telegram-observer" ]; then
+    # Quiet mode survives headless migration and rollback to GUI ownership.
+    launchctl disable "gui/$TARGET_UID/$label"
+    return
+  fi
   launchctl enable "gui/$TARGET_UID/$label" >/dev/null 2>&1 || true
   if launchctl print "gui/$TARGET_UID" >/dev/null 2>&1 && [ -f "$source" ]; then
     launchctl bootstrap "gui/$TARGET_UID" "$source" >/dev/null 2>&1 || true
@@ -106,6 +112,10 @@ install_all() {
     disable_user_service "$label"
     destination="$DAEMON_DIR/$label.plist"
     launchctl bootout "system/$label" >/dev/null 2>&1 || true
+    if [ "$label" = "ai.openclaw.hotel.telegram-observer" ]; then
+      launchctl disable "system/$label"
+      continue
+    fi
     launchctl enable "system/$label"
     launchctl bootstrap system "$destination"
   done
@@ -145,6 +155,17 @@ show_status() {
   done
 }
 
+quiet_observer() {
+  require_root
+  local label="ai.openclaw.hotel.telegram-observer"
+  disable_user_service "$label"
+  launchctl disable "system/$label"
+  if launchctl print "system/$label" >/dev/null 2>&1; then
+    launchctl bootout "system/$label"
+  fi
+  echo "Hotel external observer disabled; gateway and business schedules untouched."
+}
+
 case "$ACTION" in
   render)
     render_all
@@ -157,6 +178,9 @@ case "$ACTION" in
     ;;
   status)
     show_status
+    ;;
+  quiet-observer)
+    quiet_observer
     ;;
   -h|--help|help)
     usage

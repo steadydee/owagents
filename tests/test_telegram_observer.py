@@ -39,6 +39,8 @@ class ObserverTests(unittest.TestCase):
 
     def run_sample(self, now, status=HEALTHY):
         args = argparse.Namespace(profile="owlswatch", state_dir=str(self.root), dry_run=True, chat_id=None)
+        if status is not None:
+            status = {"observedAt": datetime.fromtimestamp(now).astimezone().isoformat(), **status}
         with patch.object(observer, "parse_args", return_value=args), \
              patch.object(observer, "get_status", return_value=(status, None)), \
              patch.object(observer, "resolve_alert_config", return_value=(None, None)), \
@@ -53,28 +55,30 @@ class ObserverTests(unittest.TestCase):
         (self.root / "health/runs.jsonl").write_text(json.dumps(failure) + "\n")
         return failure
 
-    def test_cotiza_24h_timeout_cannot_become_recovery_without_new_success(self):
+    def test_channel_availability_and_unresolved_failure_are_independent(self):
         failure = self.write_failure()
         self.state_path.write_text(json.dumps(self.alerted(["agent_blocked:cotiza:provider_timeout"])))
         before = self.run_sample(self.NOW - 120)
         self.assertFalse(before["runtime"]["agents"]["cotiza"]["staleEvidence"])
         after = self.run_sample(self.NOW)
         self.assertTrue(after["runtime"]["agents"]["cotiza"]["staleEvidence"])
-        self.assertEqual(after["health"], "unhealthy")
+        self.assertEqual(after["health"], "healthy")
+        self.assertEqual(after["taskHealth"]["state"], "pending_review")
         self.assertIsNone(after["alertKind"])
         self.assertEqual(self.messages, [])
         # Both telemetry files can rotate out without clearing the incident.
         (self.root / "health/runs.jsonl").write_text("")
-        self.assertIn("agent_blocked:cotiza:provider_timeout", self.run_sample(self.NOW + 120)["reasons"])
+        self.assertIn("task_pending_review:cotiza", self.run_sample(self.NOW + 120)["outcomeReasons"])
         successful = {**failure, "at": "2026-10-25T23:06:59Z", "runKey": "b" * 24, "success": True, "code": None}
         (self.root / "health/runs.jsonl").write_text(json.dumps(successful) + "\n")
-        self.assertEqual(self.run_sample(self.NOW + 240)["health"], "recovering")
-        self.assertIsNone(self.run_sample(self.NOW + 360)["alertKind"])
-        recovered = self.run_sample(self.NOW + 480)
-        self.assertEqual(recovered["alertKind"], "recovery")
-        self.assertEqual(recovered["recoveryEvidence"]["newSuccessfulRuns"], ["cotiza"])
-        self.assertFalse(recovered["recoveryEvidence"]["businessCompletionVerified"])
-        self.assertNotIn("recuperado", self.messages[-1])
+        for offset in (240, 360, 480):
+            sample = self.run_sample(self.NOW + offset)
+            self.assertEqual(sample["health"], "healthy")
+            self.assertEqual(sample["taskHealth"]["state"], "pending_review")
+            self.assertIsNone(sample["alertKind"])
+        self.assertEqual(self.messages, [])
+        self.assertTrue(sample["runtime"]["agents"]["cotiza"]["success"])
+        self.assertEqual(sample["taskHealth"]["pendingReviewCount"], 1)
 
     def test_flapping_resets_consecutive_health_and_preserves_outage(self):
         state = self.alerted(["telegram_not_connected"])
@@ -125,16 +129,18 @@ class ObserverTests(unittest.TestCase):
         path.chmod(0o600)
         for offset in (120, 240, 360):
             result = self.run_sample(self.NOW + offset)
-        self.assertEqual(result["recoveryEvidence"]["operatorDispositions"], ["cotiza"])
-        self.assertEqual(result["recoveryEvidence"]["newSuccessfulRuns"], [])
+        self.assertEqual(result["taskHealth"]["pendingReviewCount"], 0)
+        self.assertEqual(result["taskHealth"]["state"], "unknown")
+        self.assertEqual(result["taskHealth"]["resolvedEvidenceCount"], 1)
         self.assertFalse(result["runtime"]["agents"]["cotiza"]["success"])
-        self.assertIn("Incidencia cerrada por el operador", self.messages[-1])
+        self.assertEqual(self.messages, [])
 
     def test_legacy_outage_with_missing_telemetry_is_retained_on_upgrade(self):
         self.state_path.write_text(json.dumps(self.alerted(["agent_blocked:cotiza:provider_timeout"])))
         for offset in (0, 120, 240):
             result = self.run_sample(self.NOW + offset)
-        self.assertEqual(result["health"], "unhealthy")
+        self.assertEqual(result["health"], "healthy")
+        self.assertEqual(result["taskHealth"]["state"], "pending_review")
         self.assertIsNone(result["alertKind"])
         self.assertEqual(self.messages, [])
 
@@ -142,18 +148,20 @@ class ObserverTests(unittest.TestCase):
         self.state_path.write_text(json.dumps(self.alerted(["agent_blocked:cotiza:provider_timeout"])))
         with patch.object(observer, "__file__", str(self.root / "observe-telegram-channel.py")):
             unavailable = self.run_sample(self.NOW)
-        self.assertIn("runtime_health_unavailable", unavailable["reasons"])
+        self.assertEqual(unavailable["taskHealth"]["state"], "unknown")
+        self.assertTrue(unavailable["taskHealth"]["evidenceUnavailable"])
         for offset in (120, 240, 360):
             result = self.run_sample(self.NOW + offset)
-        self.assertEqual(result["health"], "unhealthy")
-        self.assertIn("agent_blocked:cotiza:provider_timeout", result["reasons"])
+        self.assertEqual(result["health"], "healthy")
+        self.assertEqual(result["taskHealth"]["state"], "pending_review")
+        self.assertIn("task_pending_review:cotiza", result["outcomeReasons"])
         self.assertEqual(self.messages, [])
 
     def test_legacy_failure_cannot_be_closed_by_an_older_success(self):
         self.state_path.write_text(json.dumps(self.alerted(["agent_blocked:cotiza:provider_timeout"])))
         (self.root / "health/runs.jsonl").write_text(json.dumps({"kind": "run_end", "agent": "cotiza",
             "runKey": "c" * 24, "at": "2026-10-23T23:02:02Z", "success": True}) + "\n")
-        self.assertIn("agent_blocked:cotiza:provider_timeout", self.run_sample(self.NOW)["reasons"])
+        self.assertIn("task_pending_review:cotiza", self.run_sample(self.NOW)["outcomeReasons"])
 
     def test_world_readable_disposition_does_not_close_incident(self):
         self.write_failure()
@@ -163,7 +171,98 @@ class ObserverTests(unittest.TestCase):
                         "evidenceId": first["runtime"]["agents"]["cotiza"]["evidenceId"],
                         "resolution": "resolved_externally", "recordedAt": "2026-10-25T23:02:59Z"}]}))
         path.chmod(0o644)
-        self.assertIn("agent_blocked:cotiza:provider_timeout", self.run_sample(self.NOW + 120)["reasons"])
+        self.assertIn("task_pending_review:cotiza", self.run_sample(self.NOW + 120)["outcomeReasons"])
+
+    def test_stale_positive_and_negative_channel_snapshots_are_unknown(self):
+        for connected in (True, False):
+            status = {**HEALTHY, "observedAt": "2026-10-25T20:00:00Z",
+                      "channelAccounts": {"telegram": [{"connected": connected}]}}
+            result = self.run_sample(self.NOW, status)
+            self.assertEqual(result["health"], "unknown")
+            self.assertEqual(result["channelChecks"]["health"], "unknown")
+            self.assertEqual(result["reasons"], ["status_evidence_stale"])
+            self.assertIsNone(result["alertKind"])
+        self.assertEqual(self.messages, [])
+
+    def test_repeated_frozen_status_cannot_count_as_three_recovery_samples(self):
+        self.state_path.write_text(json.dumps(self.alerted(["telegram_not_connected"])))
+        status = {**HEALTHY, "ts": self.NOW * 1000, "observedAt": "2026-10-25T23:02:59+00:00"}
+        first = self.run_sample(self.NOW, status)
+        self.assertEqual(first["health"], "recovering")
+        for offset in (120, 240):
+            result = self.run_sample(self.NOW + offset, status)
+            self.assertEqual(result["health"], "unknown")
+            self.assertEqual(result["reasons"], ["status_evidence_repeated"])
+            self.assertIsNone(result["alertKind"])
+        self.assertEqual(self.messages, [])
+
+    def test_missing_status_timestamp_and_command_failure_do_not_prove_outage(self):
+        reasons, summary = observer.assess_health(HEALTHY, None, {"count": 0}, {}, int(self.NOW * 1000))
+        self.assertEqual(reasons, ["status_evidence_missing"])
+        self.assertEqual(summary["health"], "unknown")
+        result = self.run_sample(self.NOW, None)
+        self.assertEqual(result["health"], "unknown")
+        self.assertIsNone(result["alertKind"])
+
+    def test_task_resolution_evidence_never_uses_unrelated_latest_success(self):
+        evidence = observer.recovery_evidence(["agent_blocked:cotiza:transport"], {"agents": {"cotiza": {"success": True}}})
+        self.assertEqual(evidence["newSuccessfulRuns"], [])
+        self.assertFalse(evidence["businessCompletionVerified"])
+
+    def test_corrupt_retained_state_is_preserved_without_recovery_notice(self):
+        for value in ("{broken", json.dumps({"runtimeEvidence": {"outcomeEvidence": [None]}})):
+            self.state_path.write_text(value)
+            args = argparse.Namespace(profile="owlswatch", state_dir=str(self.root), dry_run=True, chat_id=None)
+            output = io.StringIO()
+            with patch.object(observer, "parse_args", return_value=args), \
+                 patch.object(observer, "get_status", return_value=({**HEALTHY, "ts": self.NOW * 1000}, None)), \
+                 patch.object(observer, "send_alert") as send, \
+                 patch.object(observer.time, "time", return_value=self.NOW), contextlib.redirect_stdout(output):
+                code = observer.main()
+            self.assertEqual(code, 2)
+            self.assertEqual(self.state_path.read_text(), value)
+            self.assertEqual(json.loads(output.getvalue())["health"], "unknown")
+            send.assert_not_called()
+
+    def test_observer_state_write_is_private_and_lock_blocks_parallel_writer(self):
+        self.run_sample(self.NOW)
+        self.assertEqual(self.state_path.stat().st_mode & 0o777, 0o600)
+        before = self.state_path.read_bytes()
+        with (self.root / "monitor/telegram-health.lock").open("a") as lock:
+            observer.fcntl.flock(lock, observer.fcntl.LOCK_EX | observer.fcntl.LOCK_NB)
+            args = argparse.Namespace(profile="owlswatch", state_dir=str(self.root), dry_run=True, chat_id=None)
+            with patch.object(observer, "parse_args", return_value=args), patch.object(observer, "get_status") as probe, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(observer.main(), 2)
+            probe.assert_not_called()
+        self.assertEqual(self.state_path.read_bytes(), before)
+
+    def test_failed_atomic_replace_preserves_original_state(self):
+        self.state_path.write_text('{"existing": true}')
+        with patch.object(observer.os, "replace", side_effect=OSError("fixture")):
+            with self.assertRaises(OSError):
+                observer.atomic_write_json(self.state_path, {"new": True})
+        self.assertEqual(self.state_path.read_text(), '{"existing": true}')
+        self.assertEqual(list(self.state_path.parent.iterdir()), [self.state_path])
+
+    def test_saved_report_validity_never_outlives_source_evidence(self):
+        result = self.run_sample(self.NOW, {**HEALTHY, "observedAt": "2026-10-25T22:58:00+00:00"})
+        self.assertEqual(result["health"], "healthy")
+        self.assertEqual(result["validUntil"], "2026-10-25T23:03:00+00:00")
+        self.assertEqual(result["validUntil"], result["channelChecks"]["validUntil"])
+
+    def test_unknown_gap_does_not_count_toward_first_failure_notice(self):
+        reason = ["telegram_probe_failed"]
+        state = observer.health_transition({}, reason, self.NOW)
+        original_incident = state["outageStartedAtEpoch"]
+        state.update(observer.health_transition(state, ["status_evidence_stale"], self.NOW + 120, evidence_known=False))
+        for offset in (3600, 3720, 3840, 3960, 4080):
+            state.update(observer.health_transition(state, reason, self.NOW + offset))
+            self.assertIsNone(state["alertKind"])
+            self.assertEqual(state["health"], "suspect")
+        self.assertEqual(state["outageStartedAtEpoch"], original_incident)
+        state.update(observer.health_transition(state, reason, self.NOW + 4200))
+        self.assertEqual(state["alertKind"], "failure")
 
 
 if __name__ == "__main__":

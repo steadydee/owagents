@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import fcntl
 import importlib.util
 import hashlib
 import json
@@ -17,6 +18,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -34,6 +36,7 @@ REPEAT_ALERT_SECONDS = 6 * 60 * 60
 FAILURE_ALERT_AFTER_SECONDS = 10 * 60
 RECOVERY_HEALTHY_SAMPLES = 3
 RECOVERY_SAMPLE_MAX_GAP_SECONDS = 5 * 60
+STATUS_EVIDENCE_MAX_AGE_SECONDS = 5 * 60
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,10 +63,23 @@ def load_json(path: Path, default: Any) -> Any:
 
 def atomic_write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(value, ensure_ascii=True, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temp, 0o600)
-    os.replace(temp, path)
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=path.name + ".", delete=False) as handle:
+            temp = Path(handle.name)
+            json.dump(value, handle, ensure_ascii=True, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
 
 
 def append_json_line(path: Path, value: Dict[str, Any], max_lines: int) -> None:
@@ -111,7 +127,11 @@ def get_status(args: argparse.Namespace) -> Tuple[Optional[Dict[str, Any]], Opti
     if result.returncode != 0:
         return None, "status_command_exit:" + str(result.returncode)
     try:
-        return decode_json_output(result.stdout), None
+        value = decode_json_output(result.stdout)
+        # A successful live --probe command is fresh observation. Preserve any
+        # older source timestamp: re-reading a frozen result must not refresh it.
+        value["_commandObservedAt"] = time.time()
+        return value, None
     except ValueError:
         return None, "status_json_missing"
 
@@ -288,6 +308,25 @@ def journal_new_messages(state_dir: Path, state: Dict[str, Any]) -> int:
     return added
 
 
+def status_evidence_time(status):
+    if not isinstance(status, dict):
+        return None
+    for key in ("observedAt", "ts", "_commandObservedAt"):
+        if key not in status:
+            continue
+        value = status[key]
+        try:
+            if key == "observedAt" and isinstance(value, str):
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return parsed.timestamp() if parsed.tzinfo else None
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value) / 1000 if key == "ts" else float(value)
+        except (ValueError, OverflowError, OSError):
+            pass
+        return None
+    return None
+
+
 def assess_health(
     status: Optional[Dict[str, Any]],
     status_error: Optional[str],
@@ -299,7 +338,12 @@ def assess_health(
     summary: Dict[str, Any] = {}
     if status_error or not status:
         reasons.append(status_error or "status_unavailable")
-        return reasons, summary
+        return reasons, {"health": "unknown", "fresh": False}
+
+    observed = status_evidence_time(status)
+    now = now_ms / 1000
+    if observed is None or not 0 <= now - observed + 60 <= STATUS_EVIDENCE_MAX_AGE_SECONDS + 60:
+        return ["status_evidence_stale" if observed is not None else "status_evidence_missing"], {"health": "unknown", "fresh": False}
 
     channel = status.get("channels", {}).get("telegram", {})
     account = first_telegram_account(status)
@@ -337,6 +381,9 @@ def assess_health(
         reasons.append("durable_ingress_failed")
 
     summary = {
+        "health": "unhealthy" if reasons else "healthy", "fresh": True,
+        "observedAt": datetime.fromtimestamp(observed, timezone.utc).isoformat(),
+        "validUntil": datetime.fromtimestamp(observed + STATUS_EVIDENCE_MAX_AGE_SECONDS, timezone.utc).isoformat(),
         "configured": configured,
         "running": running,
         "connected": connected,
@@ -383,7 +430,7 @@ def send_alert(token: Optional[str], chat_id: Optional[str], message: str, dry_r
         return False
 
 
-def health_transition(state: Dict[str, Any], reasons: List[str], now: float) -> Dict[str, Any]:
+def health_transition(state: Dict[str, Any], reasons: List[str], now: float, *, evidence_known: bool = True) -> Dict[str, Any]:
     """Debounce recovery without losing the incident during a brief good sample."""
     previous_health = state.get("health", "unknown")
     outage_started_at = float(state.get("outageStartedAtEpoch", 0) or 0)
@@ -392,17 +439,29 @@ def health_transition(state: Dict[str, Any], reasons: List[str], now: float) -> 
     outage_reasons = state.get("outageReasons", state.get("lastReasons", []))
     outage_reasons = list(outage_reasons) if isinstance(outage_reasons, list) else []
     consecutive_failures = int(state.get("consecutiveFailures", 0))
+    failure_streak_started_at = 0
     healthy_samples = 0
     alert_kind = None
     resolved_reasons = []
-    if reasons:
+    if not evidence_known:
+        # Missing/stale observations do not prove an outage or recovery. Retain
+        # the incident without progressing either notification debounce.
+        current_health = "unknown"
+        consecutive_failures = 0
+    elif reasons:
         if not outage_started_at:
             outage_started_at = now
             outage_alert_sent = False
             outage_reasons = []
         outage_reasons = sorted(set(outage_reasons + reasons))
+        gap = now - float(state.get("lastCheckedAtEpoch", 0) or 0)
+        if consecutive_failures and 0 <= gap <= RECOVERY_SAMPLE_MAX_GAP_SECONDS:
+            failure_streak_started_at = float(state.get("failureStreakStartedAtEpoch", 0) or now)
+        else:
+            consecutive_failures = 0
+            failure_streak_started_at = now
         consecutive_failures += 1
-        current_health = "unhealthy" if now - outage_started_at >= FAILURE_ALERT_AFTER_SECONDS else "suspect"
+        current_health = "unhealthy" if outage_alert_sent or now - failure_streak_started_at >= FAILURE_ALERT_AFTER_SECONDS else "suspect"
         if current_health == "unhealthy" and not outage_alert_sent and (
             previous_health != "unhealthy" or now - last_alert_at >= REPEAT_ALERT_SECONDS
         ):
@@ -422,6 +481,7 @@ def health_transition(state: Dict[str, Any], reasons: List[str], now: float) -> 
         else:
             current_health = "healthy"
     return {"health": current_health, "consecutiveFailures": consecutive_failures,
+            "failureStreakStartedAtEpoch": failure_streak_started_at,
             "consecutiveHealthy": healthy_samples, "lastCheckedAtEpoch": now,
             "outageStartedAtEpoch": outage_started_at, "outageAlertSent": outage_alert_sent,
             "outageReasons": outage_reasons, "alertKind": alert_kind, "resolvedReasons": resolved_reasons}
@@ -431,11 +491,13 @@ def recovery_evidence(reasons: List[str], runtime: Dict[str, Any]) -> Dict[str, 
     agents = sorted({reason.split(":")[1] for reason in reasons if reason.startswith(("agent_blocked:", "agent_unfinished:"))})
     successes, reviewed = [], []
     for agent in agents:
-        last = runtime.get("agents", {}).get(agent, {})
-        active = runtime.get("unfinishedRuns", {}).get(agent, {})
-        if last.get("operatorDisposition") or active.get("operatorDisposition"):
+        entries = [entry for entry in runtime.get("outcomeEvidence", []) if entry.get("agent") == agent]
+        if any(entry.get("state") != "resolved" for entry in entries):
+            continue
+        kinds = {entry.get("resolution", {}).get("kind") for entry in entries}
+        if "operator_disposition" in kinds:
             reviewed.append(agent)
-        elif last.get("success") is True:
+        if "same_run_response" in kinds:
             successes.append(agent)
     transport = any(reason.startswith(("telegram_", "status_")) for reason in reasons)
     return {"scope": "mixed" if agents and transport else "runtime" if agents else "transport" if transport else "checks",
@@ -448,7 +510,7 @@ def recovery_message(profile: str, evidence: Dict[str, Any]) -> str:
     if evidence["scope"] in {"transport", "mixed"}:
         lines.append("Conexion de Telegram restablecida en tres controles consecutivos.")
     if evidence["newSuccessfulRuns"]:
-        lines.append("Nueva ejecucion exitosa observada: " + ", ".join(evidence["newSuccessfulRuns"]) + ".")
+        lines.append("Respuesta completada en el mismo intento: " + ", ".join(evidence["newSuccessfulRuns"]) + ".")
     if evidence["operatorDispositions"]:
         lines.append("Incidencia cerrada por el operador: " + ", ".join(evidence["operatorDispositions"]) + ".")
     if evidence["scope"] == "checks":
@@ -457,13 +519,14 @@ def recovery_message(profile: str, evidence: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
-    args = parse_args()
-    state_dir = Path(os.path.expanduser(args.state_dir)).resolve()
-    monitor_dir = state_dir / "monitor"
-    state_path = monitor_dir / "telegram-health-state.json"
-    state = load_json(state_path, {})
-    if not isinstance(state, dict):
+def observe_once(args, state_dir) -> int:
+    state_path = state_dir / "monitor/telegram-health-state.json"
+    if state_path.exists():
+        # Never reset a corrupt retained incident ledger to an empty state.
+        state = json.loads(state_path.read_text())
+        if not isinstance(state, dict):
+            raise ValueError("observer_state_invalid")
+    else:
         state = {}
 
     now = time.time()
@@ -474,6 +537,12 @@ def main() -> int:
     offset = inspect_offset(state_dir)
     journaled = journal_new_messages(state_dir, state)
     reasons, summary = assess_health(status, status_error, spool, durable_ingress, now_ms)
+    evidence_at = status_evidence_time(status)
+    previous_evidence_at = state.get("lastStatusEvidenceAtEpoch")
+    if summary.get("fresh") and isinstance(previous_evidence_at, (int, float)) and evidence_at <= previous_evidence_at:
+        reasons, summary = ["status_evidence_repeated"], {"health": "unknown", "fresh": False}
+    if summary.get("fresh"):
+        state["lastStatusEvidenceAtEpoch"] = evidence_at
     transport_reasons = list(reasons)
     runtime = {}
     health_module = Path(__file__).with_name("agent-health.py")
@@ -482,15 +551,35 @@ def main() -> int:
             spec = importlib.util.spec_from_file_location("agent_runtime_health", health_module)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            runtime = module.inspect_runtime(state_dir, now, previous=state.get("runtimeEvidence"))
-            reasons.extend(runtime.get("reasons", []))
-            state["runtimeEvidence"] = {key: runtime[key] for key in ("agents", "unfinishedRuns")}
+            retained = state.get("runtimeEvidence")
+            if isinstance(retained, dict) and "outcomeEvidence" in retained and not module.validate_outcome_evidence(retained["outcomeEvidence"], now):
+                raise InvalidOutcomeLedger()
+            runtime = module.inspect_runtime(state_dir, now, previous=retained)
+            state["runtimeEvidence"] = {key: runtime[key] for key in ("agents", "unfinishedRuns", "outcomeEvidence")}
+        except InvalidOutcomeLedger:
+            raise
         except Exception:
-            reasons.append("runtime_health_unavailable")
+            runtime = {"taskHealth": {"state": "unknown", "evidenceUnavailable": True}}
     else:
-        reasons.append("runtime_health_unavailable")
+        runtime = {"taskHealth": {"state": "unknown", "evidenceUnavailable": True}}
 
-    transition = health_transition(state, reasons, now)
+    # Upgrade the old combined alarm without announcing a spurious task
+    # recovery. Runtime incidents remain in outcomeEvidence; this observer's
+    # transition notices concern channel/ingress availability only.
+    old_reasons = state.get("outageReasons", state.get("lastReasons", []))
+    if isinstance(old_reasons, list):
+        if runtime.get("taskHealth", {}).get("evidenceUnavailable"):
+            state["legacyRuntimeReasons"] = sorted(set(state.get("legacyRuntimeReasons", []) + [
+                reason for reason in old_reasons if isinstance(reason, str) and reason.startswith(("agent_blocked:", "agent_unfinished:"))]))
+        else:
+            state.pop("legacyRuntimeReasons", None)
+        channel_reasons = [reason for reason in old_reasons if isinstance(reason, str) and
+                           reason.startswith(("telegram_", "status_", "ingress_", "durable_ingress_"))]
+        if old_reasons and not channel_reasons:
+            for key in ("outageStartedAtEpoch", "outageAlertSent", "consecutiveHealthy", "consecutiveFailures"):
+                state[key] = 0
+        state["outageReasons"] = channel_reasons
+    transition = health_transition(state, reasons, now, evidence_known=summary.get("fresh") is True)
     alert_kind = transition.pop("alertKind")
     recovery = recovery_evidence(transition.pop("resolvedReasons"), runtime) if alert_kind == "recovery" else None
     state.update(transition)
@@ -523,13 +612,17 @@ def main() -> int:
         state["lastAlertAtEpoch"] = now
 
     snapshot = {
-        "observedAt": utc_now(),
+        "observedAt": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+        "validUntil": summary.get("validUntil") or datetime.fromtimestamp(now, timezone.utc).isoformat(),
         "profile": args.profile,
         "health": current_health,
         "reasons": reasons,
         "channel": summary,
-        "channelChecks": {"health": "unhealthy" if transport_reasons else "healthy", "reasons": transport_reasons},
+        "channelChecks": {"health": summary.get("health", "unknown"), "reasons": transport_reasons,
+                          "observedAt": summary.get("observedAt"), "validUntil": summary.get("validUntil")},
         "runtime": runtime,
+        "taskHealth": runtime.get("taskHealth", {"state": "unknown"}),
+        "outcomeReasons": runtime.get("outcomeReasons", []),
         "recoveryEvidence": recovery,
         "consecutiveHealthy": state["consecutiveHealthy"],
         "spool": spool,
@@ -551,6 +644,28 @@ def main() -> int:
     atomic_write_json(state_path, state)
     print(json.dumps(snapshot, ensure_ascii=True, sort_keys=True))
     return 0 if current_health != "unhealthy" else 1
+
+
+class InvalidOutcomeLedger(ValueError):
+    pass
+
+
+def main() -> int:
+    args = parse_args()
+    state_dir = Path(os.path.expanduser(args.state_dir)).resolve()
+    monitor_dir = state_dir / "monitor"
+    try:
+        monitor_dir.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(monitor_dir / "telegram-health.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return observe_once(args, state_dir)
+    except (OSError, ValueError):
+        # Never replace unreadable/invalid evidence with an empty state.
+        # A failed post-rename fsync means durability is unknown, not recovery.
+        print(json.dumps({"profile": args.profile, "health": "unknown", "reasons": ["observer_persistence_unavailable"],
+                          "taskHealth": {"state": "unknown", "evidenceUnavailable": True}}))
+        return 2
 
 
 if __name__ == "__main__":

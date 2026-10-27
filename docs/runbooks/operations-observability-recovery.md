@@ -69,6 +69,49 @@ Completed responses require observed nonempty assistant text and a successful
 run; a successful harness exit alone does not count. This observation still
 does not prove Telegram delivery, and older runs lack it.
 
+### Availability and unresolved run evidence
+
+`agent-health.py` is read-only. Its `agents` map describes the latest observed
+run; a newer successful canary never closes an older failed or unfinished run.
+`availability` reports `response_observed`, `failure_observed`, or `unknown` per
+agent, with `observedAt` and `validUntil`. Evidence older than five minutes is
+unknown for current availability. Neither a response nor a connected Telegram
+channel proves delivery or completion of a business request.
+
+`outcomeEvidence` retains content-free incident identities across journal
+rotation. A failed run becomes resolved only after a later revision of the
+**same agent and run key** records `responseCompleted: true`, or an exact
+operator disposition in the private `health/run-dispositions.json` closes it.
+A matching run ending resolves an unfinished execution; a failed ending still
+leaves its failure incident pending. A tool's artifact receipt alone does not
+close a whole request. Cross-run retries cannot be automatically linked with
+the current journal schema and remain `pending_review` until explicitly
+reconciled. Legacy records with no run key need an exact operator disposition.
+
+`taskHealth.pendingReviewCount` counts incident evidence, not distinct business
+tasks, emails, or customers. `taskHealth.state` is `pending_review` when such
+evidence remains and otherwise `unknown`: absence of a retained failure does
+not prove all business work completed. Resolved incidents remain in the ledger.
+There is currently no automatic pruning: the local ledger grows with incident
+history (including runs first sampled before they ended). Do not truncate it to
+cap size; that can resurrect old failures or discard unresolved work. Any future
+archival must preserve every pending record and exact resolution identity in a
+validated private archive, and teach the reader to consult that archive before
+removing rows from active state. Until then, storage growth is an explicit limit.
+Consumers must persist `outcomeEvidence`, `agents`, and `unfinishedRuns`, then
+pass them as `previous` to `inspect_runtime`. Validate the whole ledger with
+`validate_outcome_evidence` before using it; an invalid row must fail the whole
+load, preserve the old file, and show persistence unavailable. Do not reset the
+ledger to an empty list after a read error.
+
+The Telegram observer persists evidence atomically in a private file under an
+exclusive process lock. Its `health` and recovery notices now refer only to
+fresh channel/ingress checks. `taskHealth` and `outcomeReasons` are separate and
+produce no new outbound task notices. Replayed, missing, or stale status
+samples report unknown and cannot advance recovery. Consumers of saved observer
+snapshots must also honor `validUntil` (or a five-minute `observedAt` age for
+older snapshots); merely reading an old report cannot refresh its evidence.
+
 Latency is the completed-response duration from the guard. Cost estimates can
 be supplied with `--rates /private/approved-rates.json`; the file maps exact
 `provider/model` names to `low` and `high` USD-per-million prices for `input`,
