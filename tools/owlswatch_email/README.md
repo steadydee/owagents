@@ -72,13 +72,38 @@ search Gmail for that operation and fail closed if no match is confirmed.
 Never delete an unknown operation to force retry; inspect Gmail first. Existing
 human edits to a confirmed draft are preserved.
 
-Daily summary (08:00 Bogotá) and follow-up (08:15) are local metadata digests;
-they do not invoke Gmail or a model. Their mode/day locks are separate from
-intake, so an incomplete or still-running batch cannot suppress them. Each
-summary states that it has not freshly verified the mailbox, shows the last
-completed intake batch and any stale/incomplete state, and labels saved records
-as recovery history rather than confirmed unanswered email. This is not evidence
-that the backlog is cleared.
+Daily summary (08:00 Bogotá) and follow-up (08:15) use the same local-only
+selector. They send at most three unique conversations, each with its verified
+subject, a useful saved summary, a concrete next action and an "Open in Gmail"
+link. They send no owner/backlog counts or internal status report. Selection
+requires a protected exact-source pending external reply check within 24 hours,
+a provider-sourced message timestamp within seven days, and meaningful summary
+and action text. Ancient/unlinked records and incomplete content are excluded.
+Only protected evidence of the exact current draft permits a draft-ready item.
+A newer conflicting Gmail read overrides old copies of a task. No new Gmail,
+provider or model call is made to compose a digest.
+
+Both modes share a delivery lock, independent of intake. The private
+`digest-items.json` journal reserves selected business identities before sending.
+Its fingerprints include conversation, source message, status and normalized
+next action; changes to wording of the subject/summary or check timestamps do
+not repeat the same item. Confirmed items are suppressed across modes and days.
+An uncertain delivery blocks that exact conversation/source even if its action
+is edited; a genuinely new source remains independent. Confirmed-not-sent items
+may retry. Positive immediate per-thread handoff receipts also suppress a digest
+for 24 hours when they postdate the provider source message. The receipt does not
+identify task wording, so same-source status/action edits conservatively wait
+for that cooldown; a genuinely newer source can notify immediately. Identical
+task saves cannot bypass this quiet period by advancing a generic update time.
+Corrupt item journals fail closed and are not replaced. Journal entries are
+retained to preserve duplicate/uncertainty history; do not delete them to retry.
+
+When no new qualifying item exists, the mode/date stamp records
+`status: "quiet"`, `reason: "no_new_actionable_items"`, `itemCount: 0`, `mode`,
+`day` and `completedAt`, without a notification receipt. Quiet means no useful
+new digest item, not an empty or fully checked mailbox. Polls can re-evaluate a
+quiet day when new items arrive. A real delivery remains capped at once per
+mode/day. Pending unknown attempts take precedence over quiet observations.
 
 The existing 30-minute poll also checks today's due digests before intake. It
 attempts at most one due mode per invocation and never replays older days.
@@ -88,7 +113,8 @@ per mode/day. `digest-attempts/<mode>-<Bogotá-date>.json` distinguishes `prepar
 counts, timestamps and sanitized error codes. A timeout or lost connection after
 send may have delivered; it is **not** automatically retried. A later poll can
 reconcile the send tool's exact fixed-destination receipt without sending again.
-An uncertain daily summary does not prevent the separately due follow-up.
+An uncertain daily summary does not prevent unrelated new items in the separately
+due follow-up. Its reserved source is never replayed there.
 
 A successful `<mode>-<date>.json` stamp requires `notification.ok: true` and a
 positive Telegram `notification.message_id` matching the send tool's durable
@@ -105,10 +131,10 @@ in runtime `review-policy.json` (fallback: `OWLSWATCH_EMAIL_REVIEW_OWNER`, then
 for urgent, 8 for high, and 48 for normal/low; the normal deadline is configurable
 from 1–168 hours. Model payloads cannot assign reviewers, postpone deadlines or
 forge reconciliation proof. A new source message starts a new deadline; repeated
-updates to the same work do not reset it. Daily/follow-up summaries show owners,
-overdue records, missing source linkage and distinct threads whose most recent
-Gmail check found a pending external reply. Stale local records are never
-presented as counts of unanswered email.
+updates to the same work do not reset it. Ownership, overdue records and missing
+source linkage remain operator diagnostics; they do not appear in daily/follow-up
+notifications. Stale local records are never presented as counts of unanswered
+email.
 
 The operator-only `review_backlog.py` command reads at most 30 Gmail threads per
 invocation by default, writes a private content-free evidence inventory, and

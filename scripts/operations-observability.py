@@ -323,9 +323,9 @@ def recovery_status(directory, now):
 CORREO_INTERVAL = 1800
 CORREO_GRACE = 900  # Includes the 660-second bounded intake run and monitor tick.
 CORREO_DIGESTS = {"daily_summary": (8, 0), "unanswered_7d": (8, 15)}
-CORREO_STATUSES = {"running", "completed", "unchanged", "incomplete", "failed", "disabled", "before_schedule"}
+CORREO_STATUSES = {"running", "completed", "unchanged", "quiet", "incomplete", "failed", "disabled", "before_schedule"}
 CORREO_DELIVERY = {"preparing", "sending", "delivered", "failed_not_sent", "outcome_unknown",
-                   "already_recorded", "attempt_limit", "retry_wait", "unavailable"}
+                   "already_recorded", "quiet", "attempt_limit", "retry_wait", "unavailable"}
 CORREO_ERRORS = {"runtime_missing", "config_missing", "config_invalid", "invalid_input", "http_error",
                  "telegram_error", "digest_outcome_unknown", "notification_not_confirmed", "internal_error"}
 
@@ -476,9 +476,16 @@ def correo_schedule(home, now):
         confirmed = (delivered is not None and dt.datetime.fromtimestamp(delivered, zone).date().isoformat() == day
                      and isinstance(notification, dict) and notification.get("ok") is True
                      and isinstance(message_id, int) and not isinstance(message_id, bool) and message_id > 0)
+        quiet = (delivered is not None and dt.datetime.fromtimestamp(delivered, zone).date().isoformat() == day
+                 and receipt.get("mode") == mode and receipt.get("day") == day
+                 and receipt.get("status") == "quiet" and receipt.get("reason") == "no_new_actionable_items"
+                 and type(receipt.get("itemCount")) is int and receipt["itemCount"] == 0
+                 and "notification" not in receipt)
         row["receiptEvidence"] = receipt_source
         if confirmed:
             row.update(state="delivered", completedAt=health.iso(delivered))
+        elif quiet:
+            row.update(state="quiet", completedAt=health.iso(delivered), reason="no_new_actionable_items")
         elif receipt_source != "missing":
             row["state"] = "delivery_unverified"
         else:
@@ -531,7 +538,7 @@ def correo_schedule(home, now):
             "timeZone": "America/Bogota", "enablement": {"state": enabled, "marker": marker_state,
             "lastObservation": {key: latest[key] for key in ("observedAt", "enabled", "enabledSource") if key in latest} if latest else None},
             "polling": polling, "digests": digests,
-            "coverage": "Attempt completion is not mailbox completeness. Checkpoint age and digest delivery are independent; a delivered digest does not complete intake."}
+            "coverage": "Attempt completion is not mailbox completeness. Quiet means no new verified actionable items qualified for a notice, not an empty inbox or a delivery. Checkpoint age and digest delivery are independent; a delivered digest does not complete intake."}
 
 
 def correo_schedule_alerts(schedule):
@@ -552,7 +559,7 @@ def correo_schedule_alerts(schedule):
     if polling["checkpoint"]["state"] in {"stale", "unknown"}:
         codes.append(prefix + "checkpoint_" + ("stale" if polling["checkpoint"]["state"] == "stale" else "unverified"))
     for mode, row in schedule["digests"].items():
-        if row["state"] not in {"delivered", "awaiting_receipt", "attempt_in_progress"}:
+        if row["state"] not in {"delivered", "quiet", "awaiting_receipt", "attempt_in_progress"}:
             codes.append(prefix + mode + ":" + row["expectedDay"] + ":" + row["state"])
     return codes
 

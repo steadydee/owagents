@@ -79,7 +79,7 @@ def confirmed_staff_reply(server, messages, account):
     return meaningful if meaningful and "SENT" in meaningful.get("labelIds", []) and server.is_staff_sender(meaningful.get("fromEmail", ""), account) else None
 
 
-def reconcile_tasks(server, thread, messages, account):
+def reconcile_tasks(server, thread, messages, account, raw_thread=None):
     import handoffs
     reply = confirmed_staff_reply(server, messages, account)
     external = server.latest_external_message(messages, account)
@@ -88,6 +88,8 @@ def reconcile_tasks(server, thread, messages, account):
                 "latestMessageId": (latest or {}).get("id"), "latestExternalMessageId": (external or {}).get("id"),
                 "sentReplyMessageId": (reply or {}).get("id"),
                 "state": "sent_reply_verified" if reply else "external_reply_pending" if external and latest and external["id"] == latest["id"] else "no_actionable_source_verified"}
+    if raw_thread is not None:
+        evidence = handoffs.remember_thread(server, raw_thread, account)
     count = 0
     for path in server.TASK_DIR.glob("*.json"):
         task = server.read_task(path)
@@ -149,8 +151,9 @@ def reconcile_open_slice(server, service, checkpoint, account):
     errors = []
     for identifier in batch:
         try:
-            messages = server.thread_messages(server.get_thread(service, identifier))
-            count += reconcile_tasks(server, identifier, messages, account)
+            raw = server.get_thread(service, identifier)
+            messages = server.thread_messages(raw)
+            count += reconcile_tasks(server, identifier, messages, account, raw_thread=raw)
         except Exception:
             errors.append({"threadId": identifier, "code": "reconciliation_read_failed"})
     checkpoint["reconciliationErrors"] = errors
@@ -171,8 +174,9 @@ def preflight(server):
                 identifier = candidate["threadId"]
                 if identifier in active.get("receipts", {}):
                     continue
-                messages = server.thread_messages(server.get_thread(service, identifier))
-                active["reconciledCount"] = active.get("reconciledCount", 0) + reconcile_tasks(server, identifier, messages, account)
+                raw = server.get_thread(service, identifier)
+                messages = server.thread_messages(raw)
+                active["reconciledCount"] = active.get("reconciledCount", 0) + reconcile_tasks(server, identifier, messages, account, raw_thread=raw)
                 latest = server.latest_meaningful_message(messages)
                 if not latest or "SENT" in latest.get("labelIds", []) or server.is_low_value_message(latest):
                     active.setdefault("receipts", {})[identifier] = {"messageId": latest["id"] if latest else None, "outcome": "handled_while_pending"}
@@ -190,8 +194,9 @@ def preflight(server):
         receipts = {}
         reconciled = reconcile_open_slice(server, service, checkpoint, account)
         for identifier in ids:
-            messages = server.thread_messages(server.get_thread(service, identifier))
-            reconciled += reconcile_tasks(server, identifier, messages, account)
+            raw = server.get_thread(service, identifier)
+            messages = server.thread_messages(raw)
+            reconciled += reconcile_tasks(server, identifier, messages, account, raw_thread=raw)
             latest = server.latest_meaningful_message(messages)
             if not latest:
                 receipts[identifier] = {"messageId": None, "outcome": "empty"}

@@ -425,6 +425,32 @@ class CorreoScheduleTests(unittest.TestCase):
         self.assertEqual(result["digests"]["daily_summary"]["state"], "legacy_stamp_unverified")
         self.assertNotIn("PRIVATE_MODEL_TEXT", json.dumps(result))
 
+    def test_quiet_digest_is_intentional_silence_not_delivery_or_intake_success(self):
+        self.enable()
+        self.record(status="failed", intakeStatus="failed")
+        quiet = {"mode": "daily_summary", "day": "2026-10-27", "status": "quiet",
+                 "reason": "no_new_actionable_items", "itemCount": 0,
+                 "completedAt": "2026-10-27T13:00:05Z"}
+        path = self.state / "daily_summary-2026-10-27.json"
+        self.put(path, quiet)
+        self.record(mode="daily_summary", status="quiet", intakeStatus="not_requested",
+                    completedAt=monitor.health.iso(self.now - 60), digests={"daily_summary": {"status": "quiet"}})
+        result = self.report()
+        self.assertEqual(result["digests"]["daily_summary"]["state"], "quiet")
+        self.assertEqual(result["digests"]["daily_summary"]["lastScheduleObservation"]["status"], "quiet")
+        self.assertEqual(result["polling"]["state"], "failed")
+        alerts = monitor.correo_schedule_alerts(result)
+        self.assertIn("owlswatch:correo_schedule:poll_failed", alerts)
+        self.assertFalse(any(":daily_summary:" in code for code in alerts))
+        code = "owlswatch:correo_schedule:daily_summary:2026-10-27:delivery_unknown"
+        event = monitor.transition_alerts([code], [], self.now, result)[0]
+        self.assertEqual(event["state"], "evidence_changed")
+        for override in ({"day": "2026-10-26"}, {"mode": "unanswered_7d"}, {"itemCount": False},
+                         {"itemCount": 1}, {"notification": None}, {"reason": "no_mail"},
+                         {"completedAt": "2026-10-26T13:00:05Z"}):
+            self.put(path, {**quiet, **override})
+            self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "delivery_unverified")
+
     def test_retry_wait_unknown_outcome_and_prejournal_failure_remain_visible(self):
         self.enable()
         self.digest_attempt("failed_not_sent", nextRetryAt=monitor.health.iso(self.now + 60), error={"code": "telegram_error"})
