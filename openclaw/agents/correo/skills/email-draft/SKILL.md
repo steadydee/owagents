@@ -331,7 +331,8 @@ The local task should use this shape:
   "detectedLanguage": "en",
   "lastExternalMessageAt": "<iso timestamp>",
   "lastStaffMessageAt": null,
-  "summary": "<short summary>",
+  "summary": "<one sentence stating what the sender needs, grounded in this source message>",
+  "nextAction": "<one concrete next step or decision, without inventing an owner or deadline>",
   "draft": {
     "subject": "Re: <subject>",
     "body": "<draft body>"
@@ -357,6 +358,12 @@ For polling scans, send a Telegram notification only for:
 
 Keep notifications short. Do not paste full email drafts into Telegram.
 
+State the request and concrete next step, not internal task statuses. Use the
+current source message only; never invent an urgency, deadline, price, or owner.
+Store that short request in `summary` and the next step in `nextAction` on the
+task so the scheduled summary can reuse it without another model or Gmail call.
+Recovery counts and technical intake details belong in the internal monitor.
+
 All email drafts require human review, so do not spend a line saying that the draft needs human review. Only mention a review blocker when there is a specific decision needed, such as payment status, availability, complaint sensitivity, or missing information.
 
 Use one Telegram ping per Gmail thread per day by default. `owlswatch_email_send_telegram_message` automatically dedupes Gmail-thread links for 24 hours. Do not set `force: true` for scheduled `polling_30m`, `daily_summary`, or `unanswered_7d` jobs. Use `force: true` only when the user explicitly asks you to resend a notification.
@@ -368,11 +375,13 @@ New email draft
 
 From: Maria Rodriguez
 Subject: July family visit
+Request: A family is asking about a July stay.
+Next: Check the reply in Gmail and send it if correct.
 
 Gmail: {gmailThreadUrl}
 ```
 
-Optional fourth line only when useful:
+Add a short blocker only when useful:
 
 ```text
 Note: availability not confirmed
@@ -398,19 +407,24 @@ From: Maria Rodriguez
 Subject: July family visit
 
 Gmail draft creation failed.
+Next: Reply in Gmail; no draft was created.
 Gmail: {gmailThreadUrl}
 ```
 
 ## Step 12 - Daily Summary
 
-For the daily summary:
+Automatic morning and follow-up summaries are composed by the scheduler from
+existing local Gmail verification evidence; they do not start a model or make
+extra Gmail searches. They contain at most three unique conversations with a
+subject, request, next step, and Gmail link. They omit stale or unverified
+records and repeated unchanged items. An empty selection is silent, not a
+claim that the inbox is empty. Do not send a second summary for a scheduled
+changed-message batch.
+
+For an explicitly requested manual daily summary:
 
 1. call `owlswatch_email_list_open_tasks` with `maxAgeHours: 24` and `requireRecentExternal: true`
-2. group tasks by:
-   - Urgent
-   - Drafts ready
-   - Needs human decision
-   - Waiting on quote/payment/availability
+2. select up to three important conversations with a concrete next step
 3. call `owlswatch_email_search_recent_threads` with `hours: 24`
 4. include only important items from the last 24 hours
 5. exclude older open tasks, old unanswered scan results, no-reply notices, finance notifications, newsletters, promotions, spam, resolved items, and threads that already triggered a same-day Telegram alert
@@ -418,9 +432,14 @@ For the daily summary:
 6. call `owlswatch_email_send_telegram_message`
 7. call `owlswatch_email_memory_log`
 
-The daily summary should be concise.
+Show the subject, what the sender needs, the next step, and a Gmail link for
+each selected conversation. Do not show recovery-record counts, owner totals,
+technical timestamps, generic status lists, or unexplained links. Say a draft
+is ready only when the current Gmail draft has been verified.
 
-If there are no important emails from the last 24 hours, say exactly that. Do not fill the summary with older open tasks.
+If a fresh manual search finds no important emails from the last 24 hours, say
+that briefly. If the search was incomplete, say it was incomplete instead of
+claiming there is no mail. Do not fill the summary with older open tasks.
 
 For a manual Telegram `daily_summary` request, send the same concise summary to
 Telegram with `owlswatch_email_send_telegram_message`. The final OpenClaw chat

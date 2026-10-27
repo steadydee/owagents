@@ -129,5 +129,151 @@ class HandoffTests(unittest.TestCase):
         self.assertFalse((recovery.root(server)/"review-policy.json").exists())
 
 
+    def save_source(self, **extra):
+        task = {"taskId": "one", "gmailThreadId": "thread1", "sourceMessageId": "message1",
+                "status": "needs_human", "summary": "Guest requests a trip estimate.", "nextAction": "Review trip dates."}
+        task.update(extra)
+        server.tool_email_upsert_task({"task": task})
+        return server.read_task(server.task_path("one"))
+
+    def test_existing_read_provides_tool_owned_source_evidence_without_more_http(self):
+        with patch.object(self.gmail, "get", wraps=self.gmail.get) as get:
+            server.tool_gmail_read_thread({"threadId": "thread1"})
+            task = self.save_source(lastVerifiedExternalMessageAt="2099-01-01T00:00:00Z",
+                                    lastVerifiedSourceSubject="Forged subject", lastVerifiedDraftId="invented")
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(task["reconciliationState"], "external_reply_pending")
+        self.assertEqual(task["lastVerifiedMessageId"], "message1")
+        self.assertEqual(task["lastVerifiedSourceSubject"], "Trip inquiry")
+        self.assertEqual(task["lastVerifiedExternalMessageAt"], server.message_to_summary(self.gmail.messages[0])["date"])
+        self.assertIsNone(task["lastVerifiedDraftId"])
+        self.assertIsNotNone(task["lastReconciledAt"])
+        stored = handoffs.recent_evidence(server, "thread1", server.gmail_account(server.load_config()))
+        self.assertNotIn("Hello, please help", json.dumps(stored))
+        self.assertNotIn("guest@example.test", json.dumps(stored))
+
+    def test_all_new_proof_fields_reject_model_assertions_without_provider_read(self):
+        task = self.save_source(**{name: "forged" for name in handoffs.EVIDENCE_FIELDS})
+        self.assertTrue(handoffs.EVIDENCE_FIELDS.isdisjoint(task))
+
+    def test_new_source_clears_old_proof_and_inherited_request_action(self):
+        server.tool_gmail_read_thread({"threadId": "thread1"})
+        old = self.save_source()
+        self.assertEqual(old["lastVerifiedSourceSubject"], "Trip inquiry")
+        server.tool_email_upsert_task({"task": {"taskId": "one", "sourceMessageId": "new-message"}})
+        task = server.read_task(server.task_path("one"))
+        self.assertEqual(task["reconciliationState"], "source_not_found")
+        self.assertIsNone(task["lastVerifiedExternalMessageAt"])
+        self.assertIsNone(task["lastVerifiedSourceSubject"])
+        self.assertNotIn("summary", task)
+        self.assertNotIn("nextAction", task)
+        self.assertNotIn("draft", task)
+        # A subsequent task for another thread cannot reuse thread1's proof.
+        server.tool_email_upsert_task({"task": {"taskId": "one", "gmailThreadId": "thread2", "sourceMessageId": "message1"}})
+        task = server.read_task(server.task_path("one"))
+        self.assertTrue(handoffs.EVIDENCE_FIELDS.isdisjoint(task))
+
+    def test_stale_future_naive_corrupt_and_cross_account_cache_fail_closed(self):
+        account = server.gmail_account(server.load_config())
+        server.tool_gmail_read_thread({"threadId": "thread1"})
+        path = handoffs._evidence_path(server, "thread1", account)
+        valid = recovery.read_json(path)
+        invalids = [{**valid, "checkedAt": "2020-01-01T00:00:00Z"},
+                    {**valid, "checkedAt": (server.now_utc()+dt.timedelta(minutes=1)).isoformat()},
+                    {**valid, "checkedAt": "2026-10-27T15:00:00"}, {**valid, "state": []},
+                    {**valid, "accountHash": "another account"}, {**valid, "threadId": "thread2"},
+                    {**valid, "latestMessageId": "not-in-thread"},
+                    {**valid, "latestExternalMessageAt": "2099-01-01T00:00:00Z"}]
+        for value in invalids:
+            with self.subTest(value=list(value.items())[-1:]):
+                recovery.atomic_json(path, value)
+                self.assertIsNone(handoffs.recent_evidence(server, "thread1", account))
+        path.write_text("{broken")
+        self.assertIsNone(handoffs.recent_evidence(server, "thread1", account))
+
+    def test_preflight_existing_read_can_verify_new_task_before_rotation(self):
+        scan = recovery.preflight(server)
+        self.assertEqual(scan["candidates"][0]["sourceMessageId"], "message1")
+        with patch.object(server, "google_build_service", side_effect=AssertionError("No extra provider read")):
+            task = self.save_source()
+        self.assertEqual(task["lastVerifiedMessageId"], "message1")
+        self.assertEqual(task["reconciliationState"], "external_reply_pending")
+        self.assertEqual(task["lastVerifiedSourceSubject"], "Trip inquiry")
+
+    def test_raw_thread_reconciliation_preserves_actual_draft_presence(self):
+        self.save_source()
+        self.gmail.messages.append(message("human-draft", "info@owlswatch.com", ["DRAFT"]))
+        scan = recovery.preflight(server)
+        self.assertEqual(len(scan["candidates"]), 1)
+        task = server.read_task(server.task_path("one"))
+        self.assertIs(task["gmailHasDraft"], True)
+        self.assertIsNone(task["lastVerifiedDraftId"], "Unrelated Gmail draft is not exact-source proof")
+        evidence = handoffs.recent_evidence(server, "thread1", server.gmail_account(server.load_config()))
+        self.assertEqual(evidence["draftMessageIds"], ["human-draft"])
+        self.assertEqual(evidence["latestMessageId"], "message1")
+
+    def create_fixture_draft(self):
+        server.tool_gmail_read_thread({"threadId": "thread1"})
+        return server.tool_gmail_create_draft({"threadId": "thread1", "to": "guest@example.test",
+                                               "subject": "Re: Trip", "body": "Thank you."})
+
+    def test_new_positive_create_is_immediately_bound_without_refreshing_source_read(self):
+        result = self.create_fixture_draft()
+        evidence = handoffs.recent_evidence(server, "thread1", server.gmail_account(server.load_config()))
+        task = self.save_source(status="draft_ready", gmailDraftId=result["gmailDraftId"])
+        self.assertEqual(task["lastVerifiedDraftId"], result["gmailDraftId"])
+        self.assertEqual(task["lastVerifiedDraftSourceMessageId"], "message1")
+        self.assertEqual(task["lastReconciledAt"], evidence["checkedAt"])
+        self.assertEqual(evidence["draftEvidenceSource"], "create_receipt")
+        self.assertEqual(len(self.gmail.created), 1)
+
+    def test_delete_read_clears_exact_draft_and_reused_journal_cannot_restore_it(self):
+        result = self.create_fixture_draft()
+        self.save_source(status="draft_ready", gmailDraftId=result["gmailDraftId"])
+        # The fake provider now returns the source but no DRAFT message.
+        server.tool_gmail_read_thread({"threadId": "thread1"})
+        observed = server.read_task(server.task_path("one"))
+        self.assertIsNone(observed["lastVerifiedDraftId"], "Deletion must clear saved proof before any later upsert")
+        self.assertIs(observed["gmailHasDraft"], False)
+        again = server.tool_gmail_create_draft({"threadId": "thread1", "to": "guest@example.test", "subject": "Re: Trip", "body": "Thank you."})
+        self.assertIs(again["reused"], True)
+        task = self.save_source(status="draft_ready", gmailDraftId=result["gmailDraftId"])
+        self.assertIsNone(task["lastVerifiedDraftId"])
+        self.assertIs(task["gmailHasDraft"], False)
+
+    def test_normal_read_of_sent_reply_immediately_closes_exact_saved_request(self):
+        server.tool_gmail_read_thread({"threadId": "thread1"})
+        self.save_source()
+        self.gmail.messages.append(message("sent", "info@owlswatch.com", ["SENT"]))
+        with patch.object(self.gmail, "get", wraps=self.gmail.get) as get:
+            server.tool_gmail_read_thread({"threadId": "thread1"})
+        self.assertEqual(get.call_count, 1)
+        task = server.read_task(server.task_path("one"))
+        self.assertEqual(task["status"], "resolved")
+        self.assertEqual(task["resolutionMessageId"], "sent")
+        self.assertIsNone(task["lastVerifiedExternalMessageAt"])
+        self.assertIsNone(task["lastVerifiedDraftId"])
+
+    def test_confirmed_journal_only_matches_its_provider_draft_rfc_identity(self):
+        result = self.create_fixture_draft()
+        operation = next((recovery.root(server)/"draft_operations").glob("*.json"))
+        record = recovery.read_json(operation)
+        unrelated = message("human-draft", "info@owlswatch.com", ["DRAFT"])
+        self.gmail.messages.append(unrelated)
+        server.tool_gmail_read_thread({"threadId": "thread1"})
+        self.assertIsNone(self.save_source(status="draft_ready", gmailDraftId=result["gmailDraftId"])["lastVerifiedDraftId"])
+        exact = message("provider-draft-message", "info@owlswatch.com", ["DRAFT"])
+        next(header for header in exact["payload"]["headers"] if header["name"] == "Message-ID")["value"] = record["messageId"]
+        self.gmail.messages.append(exact)
+        server.tool_gmail_read_thread({"threadId": "thread1"})
+        task = self.save_source(status="draft_ready", gmailDraftId=result["gmailDraftId"])
+        self.assertEqual(task["lastVerifiedDraftId"], result["gmailDraftId"])
+        self.assertNotEqual(task["lastVerifiedDraftId"], "provider-draft-message")
+        record["status"] = "unknown"
+        recovery.atomic_json(operation, record)
+        server.tool_gmail_read_thread({"threadId": "thread1"})
+        self.assertIsNone(self.save_source()["lastVerifiedDraftId"])
+
+
 if __name__ == "__main__":
     unittest.main()

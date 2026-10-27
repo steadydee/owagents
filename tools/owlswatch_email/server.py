@@ -657,6 +657,8 @@ def tool_gmail_read_thread(args: dict[str, Any]) -> dict[str, Any]:
     service = google_build_service(config, ["https://www.googleapis.com/auth/gmail.readonly"])
     thread = get_thread(service, thread_id)
     messages = thread_messages(thread)
+    with recovery.lock(sys.modules[__name__]):
+        recovery.reconcile_tasks(sys.modules[__name__], thread_id, messages, gmail_account(config), raw_thread=thread)
     return {
         "ok": True,
         "thread": {
@@ -775,11 +777,23 @@ def tool_email_upsert_task(args: dict[str, Any]) -> dict[str, Any]:
         priority = payload.get("priority") or existing.get("priority") or "normal"
         if priority not in {"low", "normal", "high", "urgent"}:
             raise ToolError("invalid_priority", "Unknown priority.")
-        protected = {"owner", "ownerSource", "nextActionAt", "deadlineSource", "lastReconciledAt", "reconciliationState", "lastVerifiedMessageId", "lastVerifiedSentMessageId", "gmailHasDraft", "resolvedAt", "resolutionSource", "resolutionMessageId", "createdAt"}
+        protected = {"owner", "ownerSource", "nextActionAt", "deadlineSource", "resolvedAt", "resolutionSource", "resolutionMessageId", "createdAt"} | handoffs.EVIDENCE_FIELDS
         payload = {key: value for key, value in payload.items() if key not in protected}
         task = {**existing, **payload, "taskId": task_id, "status": status, "priority": priority,
                 "updatedAt": now_iso(), "createdAt": existing.get("createdAt") or now_iso()}
+        incoming_thread = recovery.thread_id(payload)
+        if incoming_thread:
+            task["gmailThreadId"] = validate_safe_id("gmailThreadId", incoming_thread)
+        changed_source = bool(existing and (recovery.thread_id(existing) != recovery.thread_id(task)
+                                            or existing.get("sourceMessageId") != task.get("sourceMessageId")))
+        if changed_source:
+            for field in handoffs.EVIDENCE_FIELDS:
+                task.pop(field, None)
+            for field in ("subject", "summary", "nextAction", "lastExternalMessageAt", "gmailDraftId", "draft"):
+                if field not in payload:
+                    task.pop(field, None)
         task.update(handoffs.metadata(sys.modules[__name__], task, existing))
+        handoffs.apply_recent_evidence(sys.modules[__name__], task, gmail_account(config))
         if status == "draft_ready":
             thread = recovery.thread_id(task)
             source_id = task.get("sourceMessageId")
@@ -825,7 +839,9 @@ def tool_email_list_open_tasks(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_gmail_create_draft(args: dict[str, Any]) -> dict[str, Any]:
-    return draft_journal.ensure(sys.modules[__name__], args)
+    result = draft_journal.ensure(sys.modules[__name__], args)
+    handoffs.remember_created_draft(sys.modules[__name__], result, gmail_account(load_config()))
+    return result
 
 
 def tool_email_acknowledge_item(args: dict[str, Any]) -> dict[str, Any]:

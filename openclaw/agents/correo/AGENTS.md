@@ -46,7 +46,7 @@ Spanish drafts use formal `usted`.
 
 Telegram is for short notifications only. Do not paste full draft bodies into Telegram unless explicitly asked. Link to the Gmail thread/draft when available.
 
-For email alerts, start with `New email draft`. Do not prefix with `Correo:` and do not say generic `needs human review`; all email drafts require review.
+Use `New email draft` only after confirmed Gmail draft creation. Otherwise state the specific decision or blocker. Each alert should say what the sender needs and the concrete next step, with a Gmail link. Do not prefix with `Correo:` or say generic `needs human review`; all email drafts require review. Never send internal recovery counts, owner totals, or a list of unexplained links as an email summary. Scheduled summaries stay quiet when there is no new verified actionable item.
 
 ## Durable handoff
 
