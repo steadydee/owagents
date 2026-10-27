@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Credentials stay inside the explicitly selected runtime's auth resolver.
 import { readFileSync, realpathSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PROFILES = ["owlswatch", "hotel", "bailey-finance", "nomina"];
 
@@ -29,10 +31,34 @@ export function configuredAgents(cfg) {
   return entries;
 }
 
-export async function checkBalance(cfg, { state, home, resolveAuth, fetchBalance = globalThis.fetch }) {
+const execute = promisify(execFile);
+
+export async function reserveBalanceBudget({ budgetState, budgetPython, profile }) {
+  if (!PROFILES.includes(profile) || typeof budgetState !== "string" || !isAbsolute(budgetState)
+      || typeof budgetPython !== "string" || !isAbsolute(budgetPython)) return { status: "budget_unconfigured" };
+  try {
+    const { stdout } = await execute(budgetPython, [fileURLToPath(new URL("./monitor-http-budget.py", import.meta.url)),
+      "reserve", "--state", budgetState, "--category", "balance", "--profile", profile], {
+      timeout: 5000, maxBuffer: 16384,
+      env: { PATH: "/usr/bin:/bin", PYTHONNOUSERSITE: "1", PYTHONDONTWRITEBYTECODE: "1" },
+    });
+    const result = JSON.parse(stdout);
+    if (result.status === "reserved" && typeof result.reservationId === "string"
+        && /^[a-f0-9-]{36}$/.test(result.reservationId) && Number.isFinite(result.reservedAt)) return result;
+    if (result.status === "budget_exhausted" && Number.isFinite(result.retryAt)) {
+      return { status: result.status, retryAt: result.retryAt };
+    }
+    if (result.status === "budget_unavailable") return { status: result.status };
+  } catch { /* No permit means no HTTP. Never auto-init or reset. */ }
+  return { status: "budget_unavailable" };
+}
+
+export async function checkBalance(cfg, { state, home, resolveAuth, reserveBudget, fetchBalance = globalThis.fetch }) {
+  const agents = configuredAgents(cfg);
+  if (typeof reserveBudget !== "function") return { status: "budget_unconfigured" };
   const expand = value => typeof value === "string" ? value.replace(/^~\//, home + "/") : undefined;
   let apiKey;
-  for (const [id, agent] of configuredAgents(cfg)) {
+  for (const [id, agent] of agents) {
     try {
       const auth = await resolveAuth({ provider: "deepseek", cfg,
         agentDir: expand(agent.agentDir) || join(state, "agents", id, "agent"),
@@ -41,6 +67,13 @@ export async function checkBalance(cfg, { state, home, resolveAuth, fetchBalance
     } catch { /* A later configured specialist may own the existing credential. */ }
   }
   if (!apiKey) return { status: "credential_unavailable" };
+  let permit;
+  try { permit = await reserveBudget(); } catch { return { status: "budget_unavailable" }; }
+  if (permit?.status !== "reserved") {
+    if (permit?.status === "budget_exhausted" && Number.isFinite(permit.retryAt)) return { status: "budget_exhausted", retryAt: permit.retryAt };
+    return { status: permit?.status === "budget_unconfigured" ? "budget_unconfigured" : "budget_unavailable" };
+  }
+  // One physical attempt; failures consume permits too. No retry loop.
   const response = await fetchBalance("https://api.deepseek.com/user/balance", {
     headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(10000), redirect: "error",
   });
@@ -57,11 +90,15 @@ export async function checkBalance(cfg, { state, home, resolveAuth, fetchBalance
 }
 
 async function main() {
-  const [profile, flag, sdk, ...extra] = process.argv.slice(2);
+  const [profile, flag, sdk, budgetFlag, budgetState, pythonFlag, budgetPython, ...extra] = process.argv.slice(2);
   const emit = value => process.stdout.write(JSON.stringify(value) + "\n");
   if (!PROFILES.includes(profile)) { emit({ status: "invalid_profile" }); process.exitCode = 2; return; }
-  if (flag !== "--sdk-root" || !sdk || !isAbsolute(sdk) || extra.length) {
+  if (flag !== "--sdk-root" || !sdk || !isAbsolute(sdk)) {
     emit({ status: "runtime_unconfigured" }); return;
+  }
+  if (budgetFlag !== "--budget-state" || !budgetState || !isAbsolute(budgetState)
+      || pythonFlag !== "--budget-python" || !budgetPython || !isAbsolute(budgetPython) || extra.length) {
+    emit({ status: "budget_unconfigured" }); return;
   }
   const state = join(homedir(), `.openclaw-${profile}`);
   process.env.OPENCLAW_PROFILE = profile;
@@ -74,7 +111,8 @@ async function main() {
     if (JSON.parse(readFileSync(join(root, "package.json"), "utf8")).name !== "openclaw") throw new Error("invalid_runtime");
     const { resolveApiKeyForProvider } = await import(pathToFileURL(join(root, "dist/plugin-sdk/provider-auth-runtime.js")).href);
     const cfg = JSON.parse(readFileSync(process.env.OPENCLAW_CONFIG_PATH, "utf8"));
-    emit(await checkBalance(cfg, { state, home: homedir(), resolveAuth: resolveApiKeyForProvider }));
+    emit(await checkBalance(cfg, { state, home: homedir(), resolveAuth: resolveApiKeyForProvider,
+      reserveBudget: () => reserveBalanceBudget({ budgetState, budgetPython, profile }) }));
   } catch {
     emit({ status: "check_failed" });
   }
