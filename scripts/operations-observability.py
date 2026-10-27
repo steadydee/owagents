@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import time
+from zoneinfo import ZoneInfo
 
 PROFILES = ("owlswatch", "hotel", "bailey-finance")
 PAUSED_PROFILES = ("nomina",)
@@ -272,12 +273,33 @@ def preserve_task_alerts(previous):
             and any(marker in code for marker in (":task_pending_review:", ":agent_blocked:", ":agent_unfinished:", ":run_unfinished:"))]
 
 
-def transition_alerts(previous, current, now):
+def transition_alerts(previous, current, now, correo=None):
     before = set(previous)
     after = set(current)
-    return ([{"at": now, "state": "opened", "code": code} for code in sorted(after - before)]
-            + [{"at": now, "state": "monitoring_paused" if code.split(":", 1)[0] in PAUSED_PROFILES else "resolved", "code": code}
-               for code in sorted(before - after)])
+    events = [{"at": now, "state": "opened", "code": code} for code in sorted(after - before)]
+    for code in sorted(before - after):
+        state = "monitoring_paused" if code.split(":", 1)[0] in PAUSED_PROFILES else "resolved"
+        digest = re.fullmatch(r"owlswatch:correo_schedule:(daily_summary|unanswered_7d):(\d{4}-\d{2}-\d{2}):[a-z_]+", code)
+        if digest:
+            mode, day = digest.groups()
+            row = (correo or {}).get("digests", {}).get(mode, {})
+            if row.get("expectedDay") != day:
+                state = "schedule_window_elapsed" if row.get("expectedDay") else "evidence_unavailable"
+            elif row.get("state") != "delivered":
+                state = "evidence_changed"  # A new status is not a delivery receipt.
+        elif code.startswith("owlswatch:correo_schedule:"):
+            positive = False
+            if correo:
+                suffix = code.removeprefix("owlswatch:correo_schedule:")
+                if suffix.startswith("poll_"):
+                    positive = correo.get("polling", {}).get("state") == "attempt_completed"
+                elif suffix.startswith("checkpoint_"):
+                    positive = correo.get("polling", {}).get("checkpoint", {}).get("state") == "current"
+                elif suffix in {"disabled", "enablement_unverified"}:
+                    positive = correo.get("enablement", {}).get("state") in {"enabled_by_marker", "enabled_observed"}
+            state = "resolved" if positive else "evidence_changed" if correo else "evidence_unavailable"
+        events.append({"at": now, "state": state, "code": code})
+    return events
 
 
 def recovery_status(directory, now):
@@ -294,6 +316,271 @@ def recovery_status(directory, now):
     return {"status": "fresh" if now - latest["at"] <= 36 * 3600 else "stale", "lastVerifiedAt": latest["at"],
             "verifiedFiles": health.count(latest.get("verifiedFiles")), "profiles": latest.get("profiles", []),
             "offDeviceRecoveryKeyVerified": False}
+
+
+# Fixed local paths, bounded reads, and positive receipts only. Schedule evidence
+# deliberately does not change gateway availability or resolve task incidents.
+CORREO_INTERVAL = 1800
+CORREO_GRACE = 900  # Includes the 660-second bounded intake run and monitor tick.
+CORREO_DIGESTS = {"daily_summary": (8, 0), "unanswered_7d": (8, 15)}
+CORREO_STATUSES = {"running", "completed", "unchanged", "incomplete", "failed", "disabled", "before_schedule"}
+CORREO_DELIVERY = {"preparing", "sending", "delivered", "failed_not_sent", "outcome_unknown",
+                   "already_recorded", "attempt_limit", "retry_wait", "unavailable"}
+CORREO_ERRORS = {"runtime_missing", "config_missing", "config_invalid", "invalid_input", "http_error",
+                 "telegram_error", "digest_outcome_unknown", "notification_not_confirmed", "internal_error"}
+
+
+def schedule_path_safe(path, home):
+    try:
+        path.relative_to(home)
+        while path != home:
+            if path.is_symlink():
+                return False
+            path = path.parent
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def local_schedule_json(path, home):
+    """Never read message/task archives or echo file content in diagnostics."""
+    try:
+        if not schedule_path_safe(path, home):
+            return {}, "unavailable"
+        if not path.is_file() or path.stat().st_size > 262144:
+            return {}, "unavailable" if path.exists() or path.is_symlink() else "missing"
+        value = json.loads(path.read_text())
+        return (value, "present") if isinstance(value, dict) else ({}, "invalid")
+    except (OSError, ValueError, UnicodeError):
+        return {}, "unavailable"
+
+
+def schedule_time(value, now):
+    at = health.timestamp(value)
+    return at if at is not None and 0 <= at <= now + 60 else None
+
+
+def schedule_error(value):
+    code = value.get("code") if isinstance(value, dict) else None
+    return code if isinstance(code, str) and code in CORREO_ERRORS else "recorded_error"
+
+
+def schedule_record(value, mode, now):
+    if value.get("mode") != mode or (not isinstance(value.get("status"), str) or value["status"] not in CORREO_STATUSES):
+        return None
+    started = schedule_time(value.get("startedAt"), now)
+    observed = schedule_time(value.get("observedAt", value.get("completedAt", value.get("failedAt", value.get("startedAt")))), now)
+    if started is None or observed is None or observed < started:
+        return None
+    result = {"status": value["status"], "startedAt": health.iso(started), "observedAt": health.iso(observed),
+              "ageSeconds": max(0, int(now - observed))}
+    for field in ("completedAt", "failedAt"):
+        if field in value:
+            at = schedule_time(value[field], now)
+            if at is None or not started <= at <= observed:
+                return None
+            result[field] = health.iso(at)
+    if isinstance(value.get("intakeStatus"), str) and value["intakeStatus"] in CORREO_STATUSES | {"not_started", "not_requested", "skipped"}:
+        result["intakeStatus"] = value["intakeStatus"]
+    if isinstance(value.get("enabled"), bool):
+        result["enabled"] = value["enabled"]
+    if isinstance(value.get("enabledSource"), str) and value["enabledSource"] in {"marker", "environment", "force", "direct", "none"}:
+        result["enabledSource"] = value["enabledSource"]
+    if isinstance(value.get("pendingCount"), int) and not isinstance(value["pendingCount"], bool) and value["pendingCount"] >= 0:
+        result["pendingCount"] = value["pendingCount"]
+    if value.get("error"):
+        result["errorCode"] = schedule_error(value["error"])
+    digests = value.get("digests")
+    if isinstance(digests, dict):
+        result["digests"] = {key: {"status": entry["status"]} for key, entry in digests.items()
+                             if key in CORREO_DIGESTS and isinstance(entry, dict) and isinstance(entry.get("status"), str) and entry["status"] in CORREO_DELIVERY}
+    return result
+
+
+def correo_schedule(home, now):
+    """Summarize the default Correo schedule from a constant number of local files."""
+    home = home.resolve()
+    state = home / ".openclaw/workspace-owlswatch-correo/tasks/email_runtime"
+    profile = home / ".openclaw-owlswatch"
+    zone = ZoneInfo("America/Bogota")
+    local = dt.datetime.fromtimestamp(now, zone)
+    marker_at = None
+    try:
+        marker = profile / "email-agent.enabled"
+        marker_state = "unavailable" if not schedule_path_safe(marker, home) else "present" if marker.is_file() else "absent"
+        if marker_state == "present":
+            marker_at = marker.stat().st_mtime
+            if not 0 <= marker_at <= now + 60:
+                marker_state, marker_at = "unavailable", None
+        elif marker_state != "unavailable" and marker.exists():
+            marker_state = "unavailable"
+    except OSError:
+        marker_state = "unavailable"
+    legacy, _ = local_schedule_json(state / "schedule-status.json", home)
+    records, sources = {}, {}
+    for mode in ("polling_30m", *CORREO_DIGESTS):
+        value, source = local_schedule_json(state / f"schedule-status-{mode}.json", home)
+        if source == "missing" and legacy.get("mode") == mode:
+            value, source = legacy, "legacy_latest"
+        record = schedule_record(value, mode, now)
+        records[mode], sources[mode] = record, source if record else ("missing" if source == "missing" else "invalid")
+    fresh = [record for record in records.values() if record and record["ageSeconds"] <= CORREO_INTERVAL + CORREO_GRACE]
+    latest = max(fresh, key=lambda record: record["observedAt"]) if fresh else None
+    # A missing marker is not proof of disabled: the runner also supports an
+    # environment gate. Only its fresh explicit disabled observation says so.
+    enabled = "enabled_by_marker" if marker_state == "present" else "unknown"
+    if latest and latest.get("enabledSource") == "environment" and latest.get("enabled") is True:
+        enabled = "enabled_observed"
+    elif latest and latest["status"] == "disabled" and (marker_at is None or health.timestamp(latest["observedAt"]) > marker_at):
+        enabled = "disabled_observed"
+    startup = marker_at is not None and now - marker_at <= CORREO_INTERVAL + CORREO_GRACE
+    polling = {"state": "unknown", "intervalSeconds": CORREO_INTERVAL, "graceSeconds": CORREO_GRACE,
+               "evidence": sources["polling_30m"], "lastAttempt": records["polling_30m"]}
+    poll = records["polling_30m"]
+    if enabled == "disabled_observed":
+        polling["state"] = "disabled"
+    elif poll and poll["status"] == "disabled":
+        polling["state"] = "awaiting_attempt" if startup else "stale_disabled_observation"
+    elif poll and poll["ageSeconds"] > CORREO_INTERVAL + CORREO_GRACE:
+        polling["state"] = "awaiting_attempt" if startup else "attempt_overdue"
+    elif poll:
+        status = poll.get("intakeStatus", poll["status"])
+        if status in {"completed", "unchanged"} and "completedAt" in poll:
+            polling["state"] = "attempt_completed"
+        elif status in {"failed", "incomplete"}:
+            polling["state"] = status
+        elif poll["status"] == "running":
+            polling["state"] = "running" if now - health.timestamp(poll["startedAt"]) <= CORREO_GRACE else "attempt_stale"
+    elif startup:
+        polling["state"] = "awaiting_attempt"
+    elif enabled == "enabled_by_marker" and sources["polling_30m"] == "missing":
+        polling["state"] = "attempt_overdue"
+    checkpoint, checkpoint_source = local_schedule_json(state / "checkpoint.json", home)
+    acknowledged = schedule_time(checkpoint.get("lastAcknowledgedAt"), now)
+    polling["checkpoint"] = {"state": "unknown", "evidence": checkpoint_source}
+    if acknowledged is not None:
+        polling["checkpoint"].update(state="current" if now - acknowledged <= CORREO_INTERVAL + CORREO_GRACE else "stale",
+                                      lastAcknowledgedAt=health.iso(acknowledged), ageSeconds=max(0, int(now - acknowledged)))
+    digests = {}
+    for mode, (hour, minute) in CORREO_DIGESTS.items():
+        today_due = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        due = today_due if local >= today_due else today_due - dt.timedelta(days=1)
+        day = due.date().isoformat()
+        row = {"state": "unknown", "expectedDay": day, "scheduledAt": due.isoformat(),
+               "nextScheduledAt": (today_due + dt.timedelta(days=int(local >= today_due))).isoformat(),
+               "graceSeconds": CORREO_GRACE, "lastScheduleObservation": records[mode]}
+        receipt, receipt_source = local_schedule_json(state / f"{mode}-{day}.json", home)
+        delivered = schedule_time(receipt.get("completedAt"), now)
+        notification = receipt.get("notification")
+        message_id = notification.get("message_id") if isinstance(notification, dict) else None
+        confirmed = (delivered is not None and dt.datetime.fromtimestamp(delivered, zone).date().isoformat() == day
+                     and isinstance(notification, dict) and notification.get("ok") is True
+                     and isinstance(message_id, int) and not isinstance(message_id, bool) and message_id > 0)
+        row["receiptEvidence"] = receipt_source
+        if confirmed:
+            row.update(state="delivered", completedAt=health.iso(delivered))
+        elif receipt_source != "missing":
+            row["state"] = "delivery_unverified"
+        else:
+            old_name = "correo-daily-summary" if mode == "daily_summary" else "correo-unanswered"
+            old_stamp = profile / "schedule-stamps" / f"{old_name}-{day}.stamp"
+            try:
+                legacy_exists = not schedule_path_safe(old_stamp, home) or old_stamp.exists()
+            except OSError:
+                legacy_exists = True  # Unreadable historical evidence cannot prove a miss.
+            attempt, attempt_source = local_schedule_json(state / "digest-attempts" / f"{mode}-{day}.json", home)
+            at = schedule_time(attempt.get("startedAt"), now)
+            status = attempt.get("status")
+            valid_attempt = (attempt.get("mode") == mode and attempt.get("day") == day and at is not None
+                             and dt.datetime.fromtimestamp(at, zone).date().isoformat() == day and isinstance(status, str) and status in CORREO_DELIVERY)
+            if legacy_exists:
+                row["state"] = "legacy_stamp_unverified"
+            elif valid_attempt:
+                row["lastAttempt"] = {"status": status, "startedAt": health.iso(at)}
+                attempts = attempt.get("attempts")
+                if isinstance(attempts, int) and not isinstance(attempts, bool) and attempts >= 0:
+                    row["lastAttempt"]["attempts"] = attempts
+                if attempt.get("error"):
+                    row["lastAttempt"]["errorCode"] = schedule_error(attempt["error"])
+                retry = health.timestamp(attempt.get("nextRetryAt"))
+                if retry is not None and at <= retry <= at + 86400:
+                    row["lastAttempt"]["nextRetryAt"] = health.iso(retry)
+                row["state"] = ("delivery_unknown" if status in {"sending", "outcome_unknown", "delivered"} else
+                                "attempt_in_progress" if status == "preparing" and now - at <= CORREO_GRACE else
+                                "attempt_stale" if status == "preparing" else
+                                "retry_wait" if status == "failed_not_sent" and retry is not None and now < retry else
+                                "failed_not_sent" if status == "failed_not_sent" else "delivery_unverified")
+            elif attempt_source != "missing":
+                row["state"] = "unknown"
+            else:
+                observations = [record for record in records.values() if record
+                                and health.timestamp(record["startedAt"]) >= due.timestamp()
+                                and mode in record.get("digests", {})]
+                observed = max(observations, key=lambda record: record["observedAt"]) if observations else None
+                if observed and observed["digests"][mode]["status"] == "unavailable":
+                    row["state"] = "failed"
+                    row["lastAttempt"] = {"status": "unavailable", "startedAt": observed["startedAt"]}
+                elif enabled == "disabled_observed":
+                    row["state"] = "disabled"
+                elif startup or now <= due.timestamp() + CORREO_GRACE:
+                    row["state"] = "awaiting_receipt"
+                elif enabled in {"enabled_by_marker", "enabled_observed"}:
+                    row["state"] = "overdue"
+        digests[mode] = row
+    return {"evidenceScope": "Default local Correo paths only; no remote checks or launchd ownership verification.",
+            "timeZone": "America/Bogota", "enablement": {"state": enabled, "marker": marker_state,
+            "lastObservation": {key: latest[key] for key in ("observedAt", "enabled", "enabledSource") if key in latest} if latest else None},
+            "polling": polling, "digests": digests,
+            "coverage": "Attempt completion is not mailbox completeness. Checkpoint age and digest delivery are independent; a delivered digest does not complete intake."}
+
+
+def correo_schedule_alerts(schedule):
+    """Local operational advisories only; never business-task resolutions."""
+    prefix = "owlswatch:correo_schedule:"
+    codes = []
+    enabled = schedule["enablement"]["state"]
+    if enabled == "disabled_observed":
+        codes.append(prefix + "disabled")
+    elif enabled == "unknown":
+        codes.append(prefix + "enablement_unverified")
+    polling = schedule["polling"]
+    poll_code = {"unknown": "poll_unverified", "failed": "poll_failed", "incomplete": "poll_incomplete",
+                 "attempt_overdue": "poll_overdue", "attempt_stale": "poll_stale",
+                 "stale_disabled_observation": "poll_unverified"}.get(polling["state"])
+    if poll_code:
+        codes.append(prefix + poll_code)
+    if polling["checkpoint"]["state"] in {"stale", "unknown"}:
+        codes.append(prefix + "checkpoint_" + ("stale" if polling["checkpoint"]["state"] == "stale" else "unverified"))
+    for mode, row in schedule["digests"].items():
+        if row["state"] not in {"delivered", "awaiting_receipt", "attempt_in_progress"}:
+            codes.append(prefix + mode + ":" + row["expectedDay"] + ":" + row["state"])
+    return codes
+
+
+def correo_schedule_html(schedule):
+    if not schedule:
+        return ""
+    rows = []
+    polling = schedule["polling"]
+    checkpoint = polling["checkpoint"]
+    evidence = polling.get("lastAttempt") or {}
+    rows.append(("Mailbox polling (every 30 minutes)", polling["state"], evidence.get("observedAt", "Unknown"),
+                 "Checkpoint: " + checkpoint["state"] + "; last acknowledged: " + checkpoint.get("lastAcknowledgedAt", "Unknown")))
+    for mode, row in schedule["digests"].items():
+        detail = "Expected " + row["scheduledAt"] + "; next " + row["nextScheduledAt"]
+        attempt = row.get("lastAttempt") or {}
+        if attempt.get("errorCode"):
+            detail += "; error: " + attempt["errorCode"]
+        if attempt.get("nextRetryAt"):
+            detail += "; retry eligible: " + attempt["nextRetryAt"]
+        rows.append(("Morning summary (08:00)" if mode == "daily_summary" else "Follow-up summary (08:15)",
+                     row["state"], row.get("completedAt", attempt.get("startedAt", "Unknown")), detail))
+    table = "".join("<tr>" + "".join("<td>" + html.escape(str(cell)) + "</td>" for cell in row) + "</tr>" for row in rows)
+    return ("<h2>Correo schedule · Bogotá</h2><p>Enablement: " + html.escape(schedule["enablement"]["state"])
+            + "; marker: " + html.escape(schedule["enablement"]["marker"]) + ".</p>"
+            + "<table><tr><th>Job</th><th>Local status</th><th>Latest evidence (UTC)</th><th>Timing / evidence</th></tr>" + table + "</table>"
+            + "<p>" + html.escape(schedule["coverage"]) + " Disabled, overdue, stale, or unknown schedule evidence does not establish a gateway outage. "
+            + "Legacy stamps do not verify delivery. Date-scoped digest alerts that age out are marked schedule_window_elapsed, never resolved without a matching receipt. " + html.escape(schedule["evidenceScope"]) + "</p>")
 
 
 def html_report(report):
@@ -317,6 +604,7 @@ def html_report(report):
 <h1>Agent operations</h1><p>Updated """ + html.escape(report["at"]) + """</p><h2>Active local alerts</h2><pre>""" + html.escape("\n".join(report["activeAlerts"]) or "No active recorded alerts") + """</pre>
 <h2>Availability and unfinished work</h2><table><tr><th>Profile</th><th>Availability</th><th>Task status</th><th>Unresolved evidence</th></tr>""" + "".join(health_rows) + """</table>
 <p>Old channel snapshots are unverified, not a current outage. A recovered service or successful test does not finish an earlier employee request. Task completion and delivery require their own matching evidence.</p>
+""" + correo_schedule_html(report.get("correoSchedule")) + """
 <table><tr><th>Agent</th><th>Completed responses</th><th>Failed runs</th><th>Verified outcomes</th><th>P95 seconds</th><th>Estimated USD / outcome</th></tr>""" + "".join(rows) + """</table>
 <p>Completed responses require observed assistant text from a successful run; this does not prove channel delivery. Older runs lack this observation. Verified outcomes are explicit tool receipts, not final human approval or delivery. Costs require full known-rate coverage. Unknown is not zero. Human review time is not yet recorded. Retained journals may cover less than the requested period.</p>
 <h2>Monitoring HTTP budget</h2><pre>""" + html.escape(json.dumps(report.get("monitorBudget", {"status": "unknown"}), indent=2)) + """</pre><p>This budget limits diagnostics only. Customer work continues when diagnostic permits are exhausted.</p>
@@ -404,7 +692,10 @@ def main():
         report = {"at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(), "profiles": profiles, "balances": balances,
                   "recovery": recovery, "monitorBudget": monitor_budget, "profileScope": list(selected_profiles),
                   "pausedProfiles": list(PAUSED_PROFILES), "activeAlerts": sorted(set(alerts))}
-        events = transition_alerts(state.get("activeAlerts", []), report["activeAlerts"], now)
+        if "owlswatch" in selected_profiles:
+            report["correoSchedule"] = correo_schedule(Path.home(), now)
+            report["activeAlerts"] = sorted(set(report["activeAlerts"] + correo_schedule_alerts(report["correoSchedule"])))
+        events = transition_alerts(state.get("activeAlerts", []), report["activeAlerts"], now, report.get("correoSchedule"))
         history = health.load_json(args.output_dir / "alerts.json", [])
         atomic_json(args.output_dir / "alerts.json", (history + events)[-2000:])
         atomic_json(args.output_dir / "report.json", report)

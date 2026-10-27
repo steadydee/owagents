@@ -36,8 +36,8 @@ Correo creates Gmail drafts only. Humans review, edit, and send in Gmail.
 
 ## Incremental schedules and recovery
 
-`run.py` is the deterministic scheduler entry point. It reads Gmail history and
-starts Correo only for changed external messages, with at most four candidates
+`run.py` is the deterministic scheduler entry point. The 30-minute poll reads
+Gmail history and starts Correo only for changed external messages, with at most four candidates
 per model turn (normally under 32 tools). Provider discovery pages are capped at
 20 records and persisted before body retrieval. The remainder is processed on
 subsequent runs; the watermark is not moved past unacknowledged work. Bootstrap
@@ -62,12 +62,42 @@ from their unresolved handoff state.
 
 State is written atomically under `tasks/email_runtime/`: `checkpoint.json`,
 `active.json`, `processed.json`, per-scan `runs/`, `schedule-status.json`, and
-`schedule_runs/`. The scan and scheduler use process locks. Gmail drafts use an
+`schedule_runs/`. Each mode also updates `schedule-status-<mode>.json`, including
+an explicit `disabled` or `before_schedule` observation when it does no work.
+An intentional pause exits zero but never claims a successful mailbox check.
+The scan and scheduler use process locks. Gmail drafts use an
 operation journal keyed by mailbox/thread/source-message, with a deterministic
 RFC Message-ID. Repeated requests reuse the confirmed draft; ambiguous outcomes
 search Gmail for that operation and fail closed if no match is confirmed.
 Never delete an unknown operation to force retry; inspect Gmail first. Existing
 human edits to a confirmed draft are preserved.
+
+Daily summary (08:00 Bogotá) and follow-up (08:15) are local metadata digests;
+they do not invoke Gmail or a model. Their mode/day locks are separate from
+intake, so an incomplete or still-running batch cannot suppress them. Each
+summary states that it has not freshly verified the mailbox, shows the last
+completed intake batch and any stale/incomplete state, and labels saved records
+as recovery history rather than confirmed unanswered email. This is not evidence
+that the backlog is cleared.
+
+The existing 30-minute poll also checks today's due digests before intake. It
+attempts at most one due mode per invocation and never replays older days.
+Confirmed-not-sent failures may retry at 30-minute intervals, up to four attempts
+per mode/day. `digest-attempts/<mode>-<Bogotá-date>.json` distinguishes `preparing`,
+`sending`, `failed_not_sent`, `outcome_unknown`, and `delivered`, with attempt
+counts, timestamps and sanitized error codes. A timeout or lost connection after
+send may have delivered; it is **not** automatically retried. A later poll can
+reconcile the send tool's exact fixed-destination receipt without sending again.
+An uncertain daily summary does not prevent the separately due follow-up.
+
+A successful `<mode>-<date>.json` stamp requires `notification.ok: true` and a
+positive Telegram `notification.message_id` matching the send tool's durable
+receipt for the configured destination and topic. A suppressed result also needs
+the original matching receipt before it counts as delivery. Existing same-day
+legacy stamps prevent upgrade replays but do not prove delivery. `--force`
+bypasses enable/time gates only; it never resends a recorded digest or clears
+an uncertain outcome. Disabled observations do not change digest attempts or
+receipts. Neither daily job sends a pile of per-thread recovery alerts.
 
 Open tasks include all waiting states. The operator sets the default reviewer
 in runtime `review-policy.json` (fallback: `OWLSWATCH_EMAIL_REVIEW_OWNER`, then
