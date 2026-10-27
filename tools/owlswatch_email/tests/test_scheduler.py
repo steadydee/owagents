@@ -431,6 +431,8 @@ class SchedulerTests(unittest.TestCase):
             server.tool_email_upsert_task({"task": payload})
         saved = server.read_task(server.TASK_DIR / "digest-fixture.json")
         self.assertEqual(saved["updatedAt"], server.now_iso())
+        self.assertIsNotNone(run.digest.eligible(server, saved, self.state, server.load_config(), self.now),
+                             "quiet must come from the receipt, not missing eligibility evidence")
         self.assertEqual(self.choose(), [])
         self.assertEqual(self.call("daily_summary"), 0)
         self.assertFalse(self.sent)
