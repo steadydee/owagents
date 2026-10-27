@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -103,11 +104,12 @@ class ObservabilityTests(unittest.TestCase):
             _, record = self.runtime_fixture(home)
             def run(command, **options):
                 self.assertEqual(command[0], record["nodePath"])
-                self.assertEqual(command[2:], ["hotel", "--sdk-root", record["openclawPackage"]])
+                self.assertEqual(command[2:], ["hotel", "--sdk-root", record["openclawPackage"],
+                    "--budget-state", str(monitor.default_budget_state(home)), "--budget-python", sys.executable])
                 self.assertEqual(options["env"]["HOME"], str(home))
                 self.assertNotIn("NODE_OPTIONS", options["env"])
                 self.assertNotIn("NODE_PATH", options["env"])
-                self.assertEqual(options["timeout"], 15)
+                self.assertEqual(options["timeout"], 20)
                 return subprocess.CompletedProcess(command, 0, '{"status":"credential_unavailable"}')
             with patch.dict(os.environ, {"NODE_OPTIONS": "untrusted hook", "NODE_PATH": "other SDK"}):
                 result = monitor.check_balance("hotel", {}, 100, run, home)
@@ -126,8 +128,8 @@ class ObservabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory).resolve()
             path, record = self.runtime_fixture(home)
-            other_path, other = self.runtime_fixture(home, "nomina")
-            cases = [{**record, "profile": "nomina"}, {**record, "nodePath": other["nodePath"]},
+            other_path, other = self.runtime_fixture(home, "owlswatch")
+            cases = [{**record, "profile": "owlswatch"}, {**record, "nodePath": other["nodePath"]},
                      {**record, "openclawPackage": other["openclawPackage"]},
                      {**record, "nodePath": "node"}, {**record, "schemaVersion": 2}]
             for candidate in cases:
@@ -169,6 +171,121 @@ class ObservabilityTests(unittest.TestCase):
         self.assertEqual(monitor.transition_alerts(["x"], ["x"], 123), [])
         self.assertEqual(monitor.transition_alerts(["x"], ["y"], 123), [
             {"at": 123, "state": "opened", "code": "y"}, {"at": 123, "state": "resolved", "code": "x"}])
+
+    def test_budget_exhaustion_is_local_monitor_state_not_provider_failure(self):
+        for status in ("budget_exhausted", "budget_unavailable", "budget_unconfigured"):
+            with self.subTest(status=status):
+                self.assertEqual(monitor.balance_alert("hotel", {"status": status}), "monitor:" + status)
+        self.assertEqual(monitor.balance_alert("hotel", {"status": "provider_error"}), "hotel:balance_unverified")
+        self.assertEqual(monitor.balance_alert("hotel", {"status": "ok", "available": False}), "hotel:provider_balance_low")
+        self.assertIsNone(monitor.balance_alert("hotel", {"status": "ok", "available": True}))
+
+    def test_budget_failure_is_preserved_and_cached_without_more_http(self):
+        calls = []
+        def blocked(command, **options):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, '{"status":"budget_exhausted"}')
+        with patch.object(monitor, "balance_runtime", return_value={"nodePath": "/fixture/node", "openclawPackage": "/fixture/sdk"}):
+            result = monitor.check_balance("hotel", {}, 100, blocked, budget_state=Path('/fixture/shared.sqlite3'))
+            cached = monitor.check_balance("hotel", {"balances": {"hotel": result}}, 101, blocked)
+        self.assertEqual(result["status"], "budget_exhausted")
+        self.assertEqual(cached, result)
+        self.assertEqual(len(calls), 1)
+        self.assertIn('/fixture/shared.sqlite3', calls[0])
+
+    def test_corrupt_outcome_ledger_is_not_treated_as_empty_or_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); output = home / 'report'; output.mkdir()
+            ledger = output / 'outcomes.json'; ledger.write_text('{interrupted')
+            old_alert = 'hotel:task_pending_review:hotel'
+            (output / 'state.json').write_text(json.dumps({'activeAlerts': [old_alert]}))
+            def inspect(*args, **kwargs):
+                return {'reasons': [], 'instrumented': True, 'outcomeEvidence': [], 'taskHealth': {'state': 'unknown'}}
+            with patch.object(Path, 'home', return_value=home), patch.object(monitor.health, 'inspect_runtime', side_effect=inspect), \
+                 patch.object(sys, 'argv', ['monitor', '--profile', 'hotel', '--output-dir', str(output)]):
+                monitor.main()
+            self.assertEqual(ledger.read_text(), '{interrupted')
+            result = json.loads((output / 'report.json').read_text())
+            self.assertIn('monitor:outcome_state_unavailable', result['activeAlerts'])
+            self.assertIn(old_alert, result['activeAlerts'])
+            transitions = json.loads((output / 'alerts.json').read_text())
+            self.assertFalse(any(e['code'] == old_alert and e['state'] == 'resolved' for e in transitions))
+            self.assertEqual(result['profiles']['hotel']['health']['taskHealth']['persistence'], 'unavailable')
+
+    def test_local_report_preserves_outcomes_between_runs_and_profile_filters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); output = home / 'report'; output.mkdir()
+            at = '2026-10-17T10:00:00+00:00'
+            def evidence(agent, key):
+                return {'evidenceId': monitor.health.evidence_id(agent, at, 'provider_timeout', key), 'agent': agent,
+                        'kind': 'failed_run', 'at': at, 'observedAt': at, 'runKey': key, 'revision': 0,
+                        'code': 'provider_timeout', 'state': 'pending_review'}
+            old = {'outcomeEvidence': [evidence('hotel', 'a' * 24)]}
+            retained = {'hotel': old, 'bailey-finance': {'outcomeEvidence': [evidence('ledger', 'b' * 24)]}}
+            (output / 'outcomes.json').write_text(json.dumps({'schemaVersion': 1, 'profiles': retained}))
+            ledger_alert = 'bailey-finance:task_pending_review:ledger'
+            (output / 'state.json').write_text(json.dumps({'activeAlerts': [ledger_alert]}))
+            def inspect(*args, **kwargs):
+                self.assertEqual(kwargs['previous'], old)
+                return {'reasons': [], 'instrumented': True, 'outcomeEvidence': old['outcomeEvidence'], 'taskHealth': {'state': 'pending_review'}}
+            with patch.object(Path, 'home', return_value=home), patch.object(monitor.health, 'inspect_runtime', side_effect=inspect), \
+                 patch.object(sys, 'argv', ['monitor', '--profile', 'hotel', '--output-dir', str(output)]):
+                monitor.main()
+            saved = json.loads((output / 'outcomes.json').read_text())
+            self.assertEqual(saved['profiles']['bailey-finance'], retained['bailey-finance'])
+            self.assertEqual(saved['profiles']['hotel']['outcomeEvidence'], old['outcomeEvidence'])
+            self.assertEqual((output / 'outcomes.json').stat().st_mode & 0o777, 0o600)
+            report = json.loads((output / 'report.json').read_text())
+            self.assertIn(ledger_alert, report['activeAlerts'])
+            transitions = json.loads((output / 'alerts.json').read_text())
+            self.assertFalse(any(e['code'] == ledger_alert and e['state'] == 'resolved' for e in transitions))
+
+    def test_health_html_does_not_conflate_service_and_task_status(self):
+        report = {'at': 'fixture', 'activeAlerts': [], 'profiles': {'hotel': {'agents': {}, 'health': {
+            'availability': {'hotel': {'state': 'response_observed'}}, 'taskHealth': {'state': 'pending_review'},
+            'outcomeReasons': ['original task needs review']}}}, 'balances': {}, 'recovery': {}}
+        rendered = monitor.html_report(report)
+        self.assertIn('response_observed', rendered)
+        self.assertIn('pending_review', rendered)
+        self.assertIn('original task needs review', rendered)
+
+    def test_json_valid_but_malformed_outcomes_are_preserved_as_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'outcomes.json'
+            for entries in ([None], [{'runKey': 'a' * 24}], ['not evidence']):
+                text = json.dumps({'schemaVersion': 1, 'profiles': {'hotel': {'outcomeEvidence': entries}}})
+                path.write_text(text)
+                self.assertEqual(monitor.load_outcome_state(path), ({}, False))
+                self.assertEqual(path.read_text(), text)
+
+    def test_daily_balance_waits_for_lock_but_local_report_skips_contention(self):
+        with patch.object(monitor.fcntl, 'flock', side_effect=[BlockingIOError(), None]) as lock, \
+             patch.object(monitor.time, 'sleep') as sleep:
+            self.assertTrue(monitor.acquire_monitor_lock('fixture', True, clock=lambda: 100, sleep=sleep))
+            sleep.assert_called_once_with(.1)
+            self.assertEqual(lock.call_count, 2)
+        with patch.object(monitor.fcntl, 'flock', side_effect=BlockingIOError()), \
+             patch.object(monitor.time, 'sleep') as sleep:
+            self.assertFalse(monitor.acquire_monitor_lock('fixture', False, clock=lambda: 100, sleep=sleep))
+            sleep.assert_not_called()
+            times = iter([100, 161])
+            self.assertFalse(monitor.acquire_monitor_lock('fixture', True, clock=lambda: next(times), sleep=sleep))
+
+    def test_budget_status_failure_never_becomes_zero_usage(self):
+        def invalid(*args, **kwargs):
+            return subprocess.CompletedProcess(args, 0, '{invalid')
+        self.assertEqual(monitor.budget_status(Path('/fixture/no-budget'), invalid), {'status': 'budget_unavailable'})
+
+    def test_paused_nomina_is_not_checked_or_falsely_resolved(self):
+        self.assertNotIn('nomina', monitor.PROFILES)
+        with self.assertRaises(ValueError):
+            monitor.balance_runtime('nomina')
+        old = 'nomina:task_pending_review:nomina'
+        self.assertEqual(monitor.transition_alerts([old], [], 123), [{'at': 123, 'state': 'monitoring_paused', 'code': old}])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'outcomes.json'
+            path.write_text(json.dumps({'schemaVersion': 1, 'profiles': {'nomina': {'outcomeEvidence': []}}}))
+            self.assertEqual(monitor.load_outcome_state(path), ({'nomina': {'outcomeEvidence': []}}, True))
 
 
 if __name__ == "__main__":

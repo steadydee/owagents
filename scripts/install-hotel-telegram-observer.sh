@@ -33,6 +33,16 @@ if [ "$ACTION" != "install" ]; then
   exit 2
 fi
 
+if [ "$PROFILE" = "finca" ]; then
+  echo "Finca is retired; observer installation cannot reactivate it." >&2
+  exit 2
+fi
+
+if launchctl print "system/$LABEL" >/dev/null 2>&1; then
+  echo "System observer is still active; no files changed. For Hotel, run install-headless-hotel-services.sh quiet-observer as administrator first." >&2
+  exit 1
+fi
+
 mkdir -p "$PROFILE_DIR/monitor" "$PROFILE_DIR/logs" "$PLIST_DIR"
 install -m 700 "$ROOT/scripts/observe-telegram-channel.py" "$RUNTIME_SCRIPT"
 install -m 700 "$ROOT/scripts/agent-health.py" "$(dirname "$RUNTIME_SCRIPT")/agent-health.py"
@@ -51,6 +61,7 @@ cat > "$PLIST" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
+  <key>Disabled</key><true/>
   <key>ProgramArguments</key>
   <array>
     <string>$RUNTIME_SCRIPT</string>
@@ -73,16 +84,8 @@ PLIST
 
 plutil -lint "$PLIST" >/dev/null
 unload
-if launchctl print "system/$LABEL" >/dev/null 2>&1; then
-  # The headless installer owns this observer. Never start a competing copy.
-  launchctl disable "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
-  echo "Existing boot-level observer retained; refresh its plist through install-headless-hotel-services.sh."
-else
-  launchctl enable "gui/$(id -u)/$LABEL"
-  launchctl bootstrap "gui/$(id -u)" "$PLIST"
-fi
-
-echo "Installed $PROFILE Telegram observer (read-only, every 120 seconds)"
+launchctl disable "gui/$(id -u)/$LABEL"
+echo "Installed $PROFILE observer files with automatic probes and notices disabled."
 echo "Health journal: $PROFILE_DIR/logs/telegram-health.jsonl"
 echo "Ingress journal: $PROFILE_DIR/logs/telegram-ingress-journal.jsonl"
 echo "Gateway stderr: $PROFILE_DIR/logs/gateway.error.log"
