@@ -104,7 +104,8 @@ class RecoveryTests(unittest.TestCase):
     def test_unchanged_poll_skips_model(self):
         scan = recovery.preflight(server); self.ack_ignored(scan); recovery.finalize(server, scan["scanId"])
         def must_not_invoke(*a, **kw): self.fail("model invoked for no new email")
-        self.assertEqual(run.run("polling_30m", invoke=must_not_invoke), 0)
+        with patch.object(run, "due_digests", return_value={}):
+            self.assertEqual(run.run("polling_30m", invoke=must_not_invoke), 0)
     def test_provider_failure_retains_discovery(self):
         self.gmail.fail_get = True
         with self.assertRaises(RuntimeError): recovery.preflight(server)

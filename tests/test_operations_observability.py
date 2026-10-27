@@ -288,5 +288,284 @@ class ObservabilityTests(unittest.TestCase):
             self.assertEqual(monitor.load_outcome_state(path), ({'nomina': {'outcomeEvidence': []}}, True))
 
 
+class CorreoScheduleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name)
+        self.state = self.home / ".openclaw/workspace-owlswatch-correo/tasks/email_runtime"
+        self.state.mkdir(parents=True)
+        self.profile = self.home / ".openclaw-owlswatch"
+        self.profile.mkdir()
+        self.now = monitor.health.timestamp("2026-10-27T15:00:00Z")  # 10:00 Bogotá.
+
+    def put(self, path, value):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value))
+
+    def enable(self, ago=7200):
+        marker = self.profile / "email-agent.enabled"
+        marker.touch()
+        os.utime(marker, (self.now - ago, self.now - ago))
+
+    def record(self, mode="polling_30m", status="completed", ago=60, **extra):
+        at = monitor.health.iso(self.now - ago)
+        value = {"mode": mode, "status": status, "startedAt": at, "observedAt": at,
+                 "enabled": True, "enabledSource": "marker"}
+        if status in {"completed", "unchanged"}:
+            value["completedAt"] = at
+        value.update(extra)
+        self.put(self.state / f"schedule-status-{mode}.json", value)
+        return value
+
+    def receipt(self, mode="daily_summary", day="2026-10-27", at="2026-10-27T13:00:05Z", **extra):
+        value = {"completedAt": at, "notification": {"ok": True, "message_id": 123, "suppressed": False}}
+        value.update(extra)
+        self.put(self.state / f"{mode}-{day}.json", value)
+
+    def digest_attempt(self, status, **extra):
+        value = {"mode": "daily_summary", "day": "2026-10-27", "startedAt": monitor.health.iso(self.now - 120),
+                 "status": status, "attempts": 1}
+        value.update(extra)
+        self.put(self.state / "digest-attempts/daily_summary-2026-10-27.json", value)
+
+    def report(self):
+        return monitor.correo_schedule(self.home, self.now)
+
+    def test_disabled_is_separate_from_missing_evidence_and_marker_override(self):
+        unknown = self.report()
+        self.assertEqual(unknown["enablement"]["state"], "unknown")
+        self.assertEqual(unknown["polling"]["state"], "unknown")
+        self.record(status="disabled", enabled=False, enabledSource="none")
+        disabled = self.report()
+        self.assertEqual(disabled["enablement"]["state"], "disabled_observed")
+        self.assertEqual(disabled["polling"]["state"], "disabled")
+        self.assertEqual(disabled["digests"]["daily_summary"]["state"], "disabled")
+        # Removing the marker does not disprove the runner's environment gate.
+        self.record(status="unchanged", enabledSource="environment")
+        self.assertEqual(self.report()["enablement"]["state"], "enabled_observed")
+
+    def test_reenabled_marker_gets_one_poll_period_plus_execution_grace(self):
+        self.record(status="disabled", enabled=False, enabledSource="none", ago=120)
+        self.enable(ago=30)
+        self.assertEqual(self.report()["polling"]["state"], "awaiting_attempt")
+        self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "awaiting_receipt")
+        self.now += 2800
+        self.assertEqual(self.report()["polling"]["state"], "stale_disabled_observation")
+        self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "overdue")
+
+    def test_poll_completion_checkpoint_and_digest_delivery_are_independent(self):
+        self.enable()
+        self.record(status="incomplete", intakeStatus="unchanged")
+        # An independent digest can fail after a successful empty mailbox batch.
+        self.record(status="incomplete", intakeStatus="unchanged", completedAt=monitor.health.iso(self.now - 60))
+        self.put(self.state / "checkpoint.json", {"lastAcknowledgedAt": monitor.health.iso(self.now - 7200),
+                                                  "historyId": "DO_NOT_OUTPUT_PRIVATE_SOURCE_ID"})
+        self.receipt()
+        result = self.report()
+        self.assertEqual(result["polling"]["state"], "attempt_completed")
+        self.assertEqual(result["polling"]["checkpoint"]["state"], "stale")
+        self.assertEqual(result["digests"]["daily_summary"]["state"], "delivered")
+        self.assertNotIn("DO_NOT_OUTPUT", json.dumps(result))
+
+    def test_failed_or_incomplete_poll_never_turns_healthy_when_stale(self):
+        self.enable()
+        for status in ("failed", "incomplete"):
+            self.record(status=status, intakeStatus=status, pendingCount=3, error={"code": "http_error", "message": "PRIVATE_BODY"})
+            result = self.report()
+            self.assertEqual(result["polling"]["state"], status)
+            self.assertEqual(result["polling"]["lastAttempt"]["pendingCount"], 3)
+            self.assertNotIn("PRIVATE_BODY", json.dumps(result))
+            self.record(status=status, ago=2800)
+            result = self.report()
+            self.assertEqual(result["polling"]["state"], "attempt_overdue")
+            self.assertEqual(result["polling"]["lastAttempt"]["status"], status)
+
+    def test_running_attempt_has_shorter_timeout_than_poll_interval(self):
+        self.enable()
+        self.record(status="running", ago=500)
+        self.assertEqual(self.report()["polling"]["state"], "running")
+        self.record(status="running", ago=1000)
+        self.assertEqual(self.report()["polling"]["state"], "attempt_stale")
+
+    def test_bogota_due_dates_and_grace_cross_midnight_and_morning_boundaries(self):
+        self.enable(ago=86400)
+        self.now = monitor.health.timestamp("2026-10-28T00:05:00Z")  # Still Oct27 Bogotá.
+        self.assertEqual(self.report()["digests"]["daily_summary"]["expectedDay"], "2026-10-27")
+        self.now = monitor.health.timestamp("2026-10-27T12:59:00Z")
+        self.assertEqual(self.report()["digests"]["daily_summary"]["expectedDay"], "2026-10-26")
+        self.now = monitor.health.timestamp("2026-10-27T13:05:00Z")
+        result = self.report()["digests"]
+        self.assertEqual(result["daily_summary"]["state"], "awaiting_receipt")
+        self.assertEqual(result["daily_summary"]["expectedDay"], "2026-10-27")
+        self.assertEqual(result["unanswered_7d"]["expectedDay"], "2026-10-26")
+        self.now = monitor.health.timestamp("2026-10-27T13:16:00Z")
+        result = self.report()["digests"]
+        self.assertEqual(result["daily_summary"]["state"], "overdue")
+        self.assertEqual(result["unanswered_7d"]["state"], "awaiting_receipt")
+
+    def test_only_same_day_confirmed_message_receipt_proves_delivery(self):
+        self.enable()
+        for notification in ({"ok": True}, {"ok": True, "message_id": True}, {"ok": True, "message_id": 0},
+                             {"ok": False, "message_id": 123}, {"ok": True, "suppressed": True}):
+            self.receipt(notification=notification)
+            self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "delivery_unverified")
+        self.receipt(at="2026-10-26T13:00:00Z")
+        self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "delivery_unverified")
+        self.receipt(notification={"ok": True, "message_id": 123, "suppressed": True})
+        self.digest_attempt("outcome_unknown")
+        self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "delivered")
+
+    def test_legacy_stamp_is_unverified_without_reading_its_text(self):
+        self.enable()
+        stamp = self.profile / "schedule-stamps/correo-daily-summary-2026-10-27.stamp"
+        stamp.parent.mkdir()
+        stamp.write_text("PRIVATE_MODEL_TEXT")
+        result = self.report()
+        self.assertEqual(result["digests"]["daily_summary"]["state"], "legacy_stamp_unverified")
+        self.assertNotIn("PRIVATE_MODEL_TEXT", json.dumps(result))
+
+    def test_retry_wait_unknown_outcome_and_prejournal_failure_remain_visible(self):
+        self.enable()
+        self.digest_attempt("failed_not_sent", nextRetryAt=monitor.health.iso(self.now + 60), error={"code": "telegram_error"})
+        result = self.report()["digests"]["daily_summary"]
+        self.assertEqual(result["state"], "retry_wait")
+        self.assertEqual(result["lastAttempt"]["errorCode"], "telegram_error")
+        self.now += 61
+        self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "failed_not_sent")
+        for status in ("sending", "outcome_unknown", "delivered"):
+            self.digest_attempt(status)
+            self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "delivery_unknown")
+        (self.state / "digest-attempts/daily_summary-2026-10-27.json").unlink()
+        self.record(status="incomplete", digests={"daily_summary": {"status": "unavailable"}})
+        self.assertEqual(self.report()["digests"]["daily_summary"]["state"], "failed")
+
+    def test_per_mode_records_survive_unrelated_latest_status_and_never_scan_archive(self):
+        self.enable()
+        self.record(status="failed")
+        self.put(self.state / "schedule-status.json", {"mode": "daily_summary", "status": "completed",
+                 "startedAt": monitor.health.iso(self.now - 5), "completedAt": monitor.health.iso(self.now - 5)})
+        with patch.object(Path, "glob", side_effect=AssertionError("Must not scan archives")), \
+             patch.object(subprocess, "run", side_effect=AssertionError("Local evidence cannot launch checks")):
+            result = self.report()
+        self.assertEqual(result["polling"]["state"], "failed")
+        self.assertEqual(result["digests"]["daily_summary"]["lastScheduleObservation"]["status"], "completed")
+        self.assertEqual(result["digests"]["daily_summary"]["state"], "overdue")
+
+    def test_corrupt_future_large_and_wrong_mode_records_are_unknown(self):
+        self.enable()
+        path = self.state / "schedule-status-polling_30m.json"
+        records = [{"mode": "polling_30m", "status": []}, {"mode": "other", "status": "completed"},
+                   {"mode": "polling_30m", "status": "completed", "startedAt": "2026-10-28T15:00:00Z"}]
+        for value in records:
+            self.put(path, value)
+            self.assertEqual(self.report()["polling"]["state"], "unknown")
+        path.write_text("x" * 262145)
+        self.assertEqual(self.report()["polling"]["state"], "unknown")
+        path.write_text("{broken")
+        self.assertEqual(self.report()["polling"]["state"], "unknown")
+
+    def test_html_explains_schedule_status_without_claiming_gateway_outage(self):
+        self.record(status="disabled", enabled=False, enabledSource="none")
+        rendered = monitor.correo_schedule_html(self.report())
+        self.assertIn("disabled", rendered)
+        self.assertIn("Bogotá", rendered)
+        self.assertIn("08:00", rendered)
+        self.assertIn("08:15", rendered)
+        self.assertIn("does not establish a gateway outage", rendered)
+        self.assertIn("does not complete intake", rendered)
+
+    def test_aggregate_codes_surface_schedule_gaps_without_gateway_or_task_claims(self):
+        self.record(status="disabled", enabled=False, enabledSource="none")
+        codes = monitor.correo_schedule_alerts(self.report())
+        self.assertIn("owlswatch:correo_schedule:disabled", codes)
+        self.assertIn("owlswatch:correo_schedule:checkpoint_unverified", codes)
+        self.enable(ago=120)
+        self.record(status="failed", ago=60)
+        self.receipt()
+        codes = monitor.correo_schedule_alerts(self.report())
+        self.assertIn("owlswatch:correo_schedule:poll_failed", codes)
+        self.assertFalse(any(":daily_summary:" in code for code in codes))
+        self.assertFalse(any("agent_blocked" in code or "task_pending_review" in code for code in codes))
+        self.now += 3000
+        self.assertIn("owlswatch:correo_schedule:poll_overdue", monitor.correo_schedule_alerts(self.report()))
+
+    def test_digest_alert_transition_needs_matching_receipt_to_resolve(self):
+        code = "owlswatch:correo_schedule:daily_summary:2026-10-27:delivery_unknown"
+        scope = lambda day, state: {"digests": {"daily_summary": {"expectedDay": day, "state": state}}}
+        cases = [("2026-10-27", "delivered", "resolved"),
+                 ("2026-10-28", "delivered", "schedule_window_elapsed"),
+                 ("2026-10-27", "awaiting_receipt", "evidence_changed"),
+                 ("2026-10-27", "disabled", "evidence_changed")]
+        for day, state, expected in cases:
+            event = monitor.transition_alerts([code], [], self.now, scope(day, state))
+            self.assertEqual(event, [{"at": self.now, "state": expected, "code": code}])
+        self.assertEqual(monitor.transition_alerts([code], [], self.now)[0]["state"], "evidence_unavailable")
+
+    def test_poll_failure_does_not_resolve_when_its_evidence_becomes_stale(self):
+        code = "owlswatch:correo_schedule:poll_failed"
+        for status in ("attempt_overdue", "unknown", "disabled", "awaiting_attempt"):
+            scope = {"polling": {"state": status}}
+            current = ["owlswatch:correo_schedule:poll_overdue"] if status == "attempt_overdue" else []
+            events = monitor.transition_alerts([code], current, self.now, scope)
+            self.assertEqual(next(event for event in events if event["code"] == code)["state"], "evidence_changed")
+        scope = {"polling": {"state": "attempt_completed"}}
+        self.assertEqual(monitor.transition_alerts([code], [], self.now, scope)[0]["state"], "resolved")
+
+    def test_each_non_digest_schedule_code_needs_its_own_positive_evidence(self):
+        codes = ["owlswatch:correo_schedule:checkpoint_stale", "owlswatch:correo_schedule:disabled"]
+        for code in codes:
+            self.assertEqual(monitor.transition_alerts([code], [], self.now)[0]["state"], "evidence_unavailable")
+            scope = {"polling": {"state": "attempt_completed", "checkpoint": {"state": "unknown"}},
+                     "enablement": {"state": "unknown"}}
+            self.assertEqual(monitor.transition_alerts([code], [], self.now, scope)[0]["state"], "evidence_changed")
+        scope = {"polling": {"checkpoint": {"state": "current"}}, "enablement": {"state": "enabled_by_marker"}}
+        self.assertTrue(all(event["state"] == "resolved" for event in monitor.transition_alerts(codes, [], self.now, scope)))
+
+    def test_symlinked_workspace_metadata_is_not_followed(self):
+        original = self.state.parent.parent
+        moved = self.home / "other-workspace"
+        original.rename(moved)
+        original.symlink_to(moved, target_is_directory=True)
+        with patch.object(Path, "read_text", side_effect=AssertionError("Do not follow foreign state")):
+            result = self.report()
+        self.assertEqual(result["polling"]["state"], "unknown")
+        self.assertEqual(result["polling"]["evidence"], "invalid")
+
+    def test_aggregate_includes_correo_codes_and_preserves_business_incident(self):
+        self.record(status="disabled", enabled=False, enabledSource="none")
+        incident = "owlswatch:task_pending_review:correo"
+        with patch.object(Path, "home", return_value=self.home), \
+             patch.object(monitor.time, "time", return_value=self.now), \
+             patch.object(monitor, "budget_status", return_value={"status": "ok"}), \
+             patch.object(monitor, "report_profile", return_value={"health": {"instrumented": True,
+                 "outcomeReasons": ["task_pending_review:correo"]}, "agents": {}}), \
+             patch.object(sys, "argv", ["monitor", "--profile", "owlswatch", "--output-dir", str(self.home / "report")]):
+            monitor.main()
+        report = json.loads((self.home / "report/report.json").read_text())
+        self.assertIn("owlswatch:correo_schedule:disabled", report["activeAlerts"])
+        self.assertIn(incident, report["activeAlerts"])
+        self.assertEqual(report["correoSchedule"]["polling"]["state"], "disabled")
+
+    def test_filtered_report_does_not_inspect_correo_or_paused_profiles(self):
+        output = self.home / "report"
+        self.put(output / "state.json", {"activeAlerts": ["owlswatch:correo_schedule:poll_failed"]})
+        with patch.object(Path, "home", return_value=self.home), \
+             patch.object(monitor, "correo_schedule", side_effect=AssertionError("Correo not selected")), \
+             patch.object(monitor, "budget_status", return_value={"status": "ok"}), \
+             patch.object(monitor, "report_profile", return_value={"health": {"instrumented": True}, "agents": {}}) as inspect, \
+             patch.object(sys, "argv", ["monitor", "--profile", "hotel", "--output-dir", str(self.home / "report")]):
+            monitor.main()
+        self.assertEqual(inspect.call_count, 1)
+        self.assertEqual(inspect.call_args.args[0], self.home / ".openclaw-hotel")
+        report = json.loads((self.home / "report/report.json").read_text())
+        self.assertNotIn("correoSchedule", report)
+        self.assertIn("owlswatch:correo_schedule:poll_failed", report["activeAlerts"])
+        transitions = json.loads((output / "alerts.json").read_text())
+        self.assertFalse(any(event["code"] == "owlswatch:correo_schedule:poll_failed" for event in transitions))
+        self.assertNotIn("nomina", monitor.PROFILES)
+        self.assertNotIn("finca", monitor.PROFILES)
+
+
 if __name__ == "__main__":
     unittest.main()
