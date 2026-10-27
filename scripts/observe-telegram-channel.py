@@ -439,6 +439,7 @@ def health_transition(state: Dict[str, Any], reasons: List[str], now: float, *, 
     outage_reasons = state.get("outageReasons", state.get("lastReasons", []))
     outage_reasons = list(outage_reasons) if isinstance(outage_reasons, list) else []
     consecutive_failures = int(state.get("consecutiveFailures", 0))
+    failure_streak_started_at = 0
     healthy_samples = 0
     alert_kind = None
     resolved_reasons = []
@@ -453,8 +454,14 @@ def health_transition(state: Dict[str, Any], reasons: List[str], now: float, *, 
             outage_alert_sent = False
             outage_reasons = []
         outage_reasons = sorted(set(outage_reasons + reasons))
+        gap = now - float(state.get("lastCheckedAtEpoch", 0) or 0)
+        if consecutive_failures and 0 <= gap <= RECOVERY_SAMPLE_MAX_GAP_SECONDS:
+            failure_streak_started_at = float(state.get("failureStreakStartedAtEpoch", 0) or now)
+        else:
+            consecutive_failures = 0
+            failure_streak_started_at = now
         consecutive_failures += 1
-        current_health = "unhealthy" if now - outage_started_at >= FAILURE_ALERT_AFTER_SECONDS else "suspect"
+        current_health = "unhealthy" if outage_alert_sent or now - failure_streak_started_at >= FAILURE_ALERT_AFTER_SECONDS else "suspect"
         if current_health == "unhealthy" and not outage_alert_sent and (
             previous_health != "unhealthy" or now - last_alert_at >= REPEAT_ALERT_SECONDS
         ):
@@ -474,6 +481,7 @@ def health_transition(state: Dict[str, Any], reasons: List[str], now: float, *, 
         else:
             current_health = "healthy"
     return {"health": current_health, "consecutiveFailures": consecutive_failures,
+            "failureStreakStartedAtEpoch": failure_streak_started_at,
             "consecutiveHealthy": healthy_samples, "lastCheckedAtEpoch": now,
             "outageStartedAtEpoch": outage_started_at, "outageAlertSent": outage_alert_sent,
             "outageReasons": outage_reasons, "alertKind": alert_kind, "resolvedReasons": resolved_reasons}

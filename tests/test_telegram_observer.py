@@ -251,6 +251,19 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(result["validUntil"], "2026-10-25T23:03:00+00:00")
         self.assertEqual(result["validUntil"], result["channelChecks"]["validUntil"])
 
+    def test_unknown_gap_does_not_count_toward_first_failure_notice(self):
+        reason = ["telegram_probe_failed"]
+        state = observer.health_transition({}, reason, self.NOW)
+        original_incident = state["outageStartedAtEpoch"]
+        state.update(observer.health_transition(state, ["status_evidence_stale"], self.NOW + 120, evidence_known=False))
+        for offset in (3600, 3720, 3840, 3960, 4080):
+            state.update(observer.health_transition(state, reason, self.NOW + offset))
+            self.assertIsNone(state["alertKind"])
+            self.assertEqual(state["health"], "suspect")
+        self.assertEqual(state["outageStartedAtEpoch"], original_incident)
+        state.update(observer.health_transition(state, reason, self.NOW + 4200))
+        self.assertEqual(state["alertKind"], "failure")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -78,6 +78,7 @@ path, age = sys.argv[1], float(sys.argv[2])
 with open(path, encoding="utf-8") as handle:
     state = json.load(handle)
 state["outageStartedAtEpoch"] = time.time() - age
+state["failureStreakStartedAtEpoch"] = time.time() - age
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(state, handle)
     handle.write("\n")
