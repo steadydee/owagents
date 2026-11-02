@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from durable_state import StateError, atomic_json
 import reservation_guard
 import submission_journal
+from reservation_reporting import with_booking_groups
 
 WORKSPACE = Path(os.environ.get("HOTEL_PMS_WORKSPACE", "~/.openclaw/workspace-hotel-ops")).expanduser()
 CONFIG_PATH = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw-hotel/openclaw.json")).expanduser()
@@ -1862,7 +1863,10 @@ def safe_reservation_summary(row: dict[str, Any]) -> dict[str, Any]:
         "unitSummary",
         "unitAllocations",
     )
-    return {key: row.get(key) for key in allowed if key in row}
+    summary = {key: row.get(key) for key in allowed if key in row}
+    if not summary.get("reservationId") and row.get("id"):
+        summary["reservationId"] = row["id"]
+    return summary
 
 
 def safe_context_bundle(context: dict[str, Any] | None) -> dict[str, Any]:
@@ -2034,6 +2038,7 @@ def normalize_reservation(row: dict[str, Any], detail: dict[str, Any], context: 
     return {
         "reservationId": reservation.get("reservationId") or reservation.get("id") or row.get("reservationId"),
         "movement": movement,
+        "status": classification.get("status"),
         "guestName": reservation.get("guestName") or row.get("guestName"),
         "guestCount": count,
         "partyPhrase": f"party of {count}" if count else "party",
@@ -2077,7 +2082,7 @@ def tool_hotel_pms_get_tomorrow_arrivals(args: dict[str, Any]) -> dict[str, Any]
     date = validate_date("date", args.get("date")) or local_date(config, 1)
     rows = pms_tool(config, "list_arrivals", {"date": date}) or []
     arrivals = enrich_reservations(config, rows, "arrival", date)
-    return {"ok": True, "date": date, "timezone": cfg_env(config, "HOTEL_TIMEZONE") or DEFAULT_TIMEZONE, "arrivals": arrivals}
+    return with_booking_groups({"ok": True, "date": date, "timezone": cfg_env(config, "HOTEL_TIMEZONE") or DEFAULT_TIMEZONE, "arrivals": arrivals}, "arrivals")
 
 
 def tool_hotel_pms_get_tomorrow_summary(args: dict[str, Any]) -> dict[str, Any]:
@@ -2096,35 +2101,35 @@ def tool_hotel_pms_get_tomorrow_summary(args: dict[str, Any]) -> dict[str, Any]:
         and date_part(row.get("arrivalDate")) < date
         and date_part(row.get("departureDate")) > date
     ]
-    return {
+    return with_booking_groups({
         "ok": True,
         "date": date,
         "timezone": cfg_env(config, "HOTEL_TIMEZONE") or DEFAULT_TIMEZONE,
         "arrivals": enrich_reservations(config, arrivals_raw, "arrival", date),
         "departures": enrich_reservations(config, departures_raw, "departure", date),
         "stayovers": enrich_reservations(config, stayover_raw, "stayover", date),
-    }
+    }, "arrivals", "departures", "stayovers")
 
 
 def tool_hotel_pms_list_arrivals(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
     rows = pms_tool(config, "list_arrivals", {"date": date}) or []
-    return {"ok": True, "date": date, "arrivals": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
+    return with_booking_groups({"ok": True, "date": date, "arrivals": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}, "arrivals")
 
 
 def tool_hotel_pms_list_departures(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
     rows = filter_lodging_movements(pms_tool(config, "list_departures", {"date": date}) or [])
-    return {"ok": True, "date": date, "departures": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
+    return with_booking_groups({"ok": True, "date": date, "departures": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}, "departures")
 
 
 def tool_hotel_pms_list_in_house(args: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     date = validate_date("date", args.get("date")) or local_date(config, 0)
     rows = filter_lodging_movements(pms_tool(config, "list_in_house_guests", {"date": date}) or [])
-    return {"ok": True, "date": date, "inHouse": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
+    return with_booking_groups({"ok": True, "date": date, "inHouse": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}, "inHouse")
 
 
 def tool_hotel_pms_list_reservations(args: dict[str, Any]) -> dict[str, Any]:
@@ -2145,7 +2150,7 @@ def tool_hotel_pms_list_reservations(args: dict[str, Any]) -> dict[str, Any]:
             payload[key] = validate_text(key, value, max_len=300) if value is not None else None
     payload = {key: value for key, value in payload.items() if value not in (None, "")}
     rows = pms_tool(config, "list_reservations", payload) or []
-    return {"ok": True, "filters": payload, "reservations": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
+    return with_booking_groups({"ok": True, "filters": payload, "reservations": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}, "reservations")
 
 
 def tool_hotel_pms_find_reservation(args: dict[str, Any]) -> dict[str, Any]:
@@ -2153,7 +2158,7 @@ def tool_hotel_pms_find_reservation(args: dict[str, Any]) -> dict[str, Any]:
     allowed = {"guestName", "email", "sourceReference", "status"}
     payload = {k: validate_text(k, v, max_len=300) for k, v in args.items() if k in allowed}
     rows = pms_tool(config, "find_reservation", payload) or []
-    return {"ok": True, "matches": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}
+    return with_booking_groups({"ok": True, "matches": [safe_reservation_summary(row) for row in rows if isinstance(row, dict)]}, "matches")
 
 
 def tool_hotel_pms_get_reservation_context(args: dict[str, Any]) -> dict[str, Any]:

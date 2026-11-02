@@ -17,6 +17,26 @@ checklists, and balances.
 
 Use PMS tools for facts. Do not rely on memory for current reservation state.
 
+## Multiple Reservations And Cabin Counts
+
+Different `reservationId` values are separate reservations, even when the name,
+dates, and guest counts match. Never call them duplicates, suggest removing one,
+or collapse them into one cabin based on those matching fields. A duplicate
+claim requires explicit verified PMS evidence; matching fields are not evidence.
+
+Reservation list and summary tools return `bookingGroups` for each movement.
+Use their deterministic `reservationCount` and `unitSummaryEs` in the staff
+summary. For example, two distinct one-cabin reservations with the same name
+and dates must read `2 cabañas (2 reservas)`. These are display groups, not proof
+that all records represent the same person. Keep their dates and reservation
+identities, and inspect each reservation's operational notes when relevant.
+If `unitSummaryEs` is null, do not guess the number of cabins.
+
+Guest counts belong to individual reservations. For a group of multiple
+reservations, omit the combined person count unless PMS explicitly verifies it;
+neither a repeated count nor its sum establishes the group's total. For a
+single-reservation lookup or action, still disambiguate the reservation ID.
+
 ## Hard Rules
 
 - You do not have a file read tool. Do not try to read SKILL.md or any local
