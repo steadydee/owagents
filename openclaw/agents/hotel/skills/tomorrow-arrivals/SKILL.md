@@ -114,6 +114,16 @@ For `tomorrow_summary`, `tomorrow_arrivals`, `tomorrow_checkouts`, or
 The tool owns the Bogotá date calculation and returns structured arrivals,
 departures, and stayovers.
 
+Use `bookingGroups.arrivals`, `.departures`, and `.stayovers` for the reservation
+and unit counts. Distinct reservation IDs remain separate bookings even when
+names and dates match. Use `unitSummaryEs` and `reservationCount`: two one-cabin
+bookings read `2 cabañas (2 reservas)`. Never infer a duplicate or recommend
+removing a booking from matching names/dates/counts. Display grouping is not
+proof of guest identity. Do not give a combined guest count for multiple
+reservations; retain counts per reservation only when needed. A null unit
+summary means the allocation is unknown, not one cabin. Keep notes tied to
+their source reservation and keep movements separate.
+
 If there are no arrivals, departures, or stayovers, send:
 
 ```text
@@ -153,7 +163,7 @@ If the tool returns `bookingCategory: "unknown"` or
 `bookingCategory: "overnight_unassigned"`, say `tipo pendiente en PMS` or
 `reserva de noche sin unidad asignada` instead of guessing.
 
-Write one short block per reservation:
+Write one short block per reservation or returned display group:
 
 ```text
 Resumen hotel para mañana
@@ -229,7 +239,8 @@ If staff asks for checkouts/departures on a specific date, call
 If staff asks who is staying/in-house on a specific date, call
 `hotel_pms_list_in_house`.
 
-Reply with a concise list.
+Reply with a concise list using the corresponding `bookingGroups` counts,
+with the same multiple-reservation rules as Step 2.
 
 ## Step 4 - Reservation Lookup
 
