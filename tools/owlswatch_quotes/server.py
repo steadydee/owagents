@@ -31,7 +31,7 @@ MOCK_QUOTES_DIR = WORKSPACE / "mock" / "quotes"
 MOCK_DRIVE_DIR = WORKSPACE / "mock" / "drive"
 QUOTE_LOGO_PATH = WORKSPACE / "assets" / "WATERMARK FULL LOGO.png"
 DEFAULT_API_BASE_URL = "https://operations.owlswatch.com"
-QUOTE_RULE_VERSION = "2027-default-cabin-meals-v1"
+QUOTE_RULE_VERSION = "guide-lodging-commission-v2"
 QUOTE_RATES = {
     2026: {
         "pricebook_version": "2026-operators",
@@ -90,6 +90,14 @@ KNOWN_OPERATOR_ALIASES = {
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/+\\-]{1,220}$")
 TEXT_RE = re.compile(r"^[\s\S]{0,20000}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+GUIDE_LODGING_RE = re.compile(
+    r"\bguide(?:['’]s)?\s+(?:room|cabin)\b"
+    r"|\b(?:room|cabin)\s+for\s+(?:the\s+)?guide\b"
+    r"|\b(?:habitaci[oó]n|hab\.?|caba[ñn]a)(?:\s+(?:single|sencill[ao]|individual))?"
+    r"\s+(?:(?:para|de)\s+(?:(?:el|la)\s+)?|del\s+)?gu[ií]a\b"
+    r"|\bgu[ií]a\s+(?:(?:con|en)\s+(?:(?:una?|la)\s+)?)?(?:habitaci[oó]n|hab\.?|caba[ñn]a)\b",
+    re.I,
+)
 
 
 class ToolError(Exception):
@@ -622,7 +630,7 @@ def staff_role_label(payload: dict[str, Any]) -> str:
 
 
 def has_guide_room_item(items: list[dict[str, Any]]) -> bool:
-    return any("guide room" in line_text(item) or "habitaci" in line_text(item) and "gu" in line_text(item) for item in items)
+    return any(is_guide_room_item(item) for item in items)
 
 
 def requests_guide_room(payload: dict[str, Any], summary: str) -> bool:
@@ -631,7 +639,7 @@ def requests_guide_room(payload: dict[str, Any], summary: str) -> bool:
         return True
     if coerce_int(lodging.get("guideRoomCount"), None) or coerce_int(lodging.get("guide_room_count"), None):
         return True
-    return bool(re.search(r"\bguide room\b|\bhab(?:\.|itaci[oó]n)?\b.{0,40}\bgu[ií]a\b|\bgu[ií]a\b.{0,40}\bhab(?:\.|itaci[oó]n)?\b", summary, re.I))
+    return bool(GUIDE_LODGING_RE.search(summary))
 
 
 def lodging_breakfast_days(payload: dict[str, Any], summary: str) -> int:
@@ -1014,7 +1022,9 @@ def infer_transport_requested(payload: dict[str, Any], summary: str) -> bool:
 
 def infer_bilingual_guide(payload: dict[str, Any], summary: str) -> str:
     birding_payload = object_value(payload, "birding")
-    raw = birding_payload.get("bilingualGuide") or birding_payload.get("bilingual_guide") or first_value(payload, "bilingualGuide", "bilingual_guide")
+    raw = first_value(birding_payload, "bilingualGuide", "bilingual_guide")
+    if raw is None:
+        raw = first_value(payload, "bilingualGuide", "bilingual_guide")
     if isinstance(raw, bool):
         return "half_day" if raw else "none"
     if isinstance(raw, str):
@@ -1025,6 +1035,16 @@ def infer_bilingual_guide(payload: dict[str, Any], summary: str) -> str:
             return "full_day"
         if lowered in {"none", "no", "local", "local_spanish", "spanish", "español", "espanol"}:
             return "none"
+    if re.search(
+        r"\b(?:no|without)\s+(?:(?:a|an)\s+)?bilingual(?:\s+guide)?\b"
+        r"|\bbilingual(?:\s+guide)?\s+(?:is\s+)?not\s+(?:needed|required|requested|included)\b"
+        r"|\b(?:sin|no)\s+(?:un(?:a)?\s+)?(?:gu[ií]a\s+)?biling[uü]e\b"
+        r"|\bno\s+(?:se\s+)?(?:requiere|necesita)\s+(?:un(?:a)?\s+)?(?:gu[ií]a\s+)?biling[uü]e\b"
+        r"|\b(?:gu[ií]a\s+)?biling[uü]e\s+no\s+(?:(?:es|est[aá])\s+)?(?:necesari[oa]|requerid[oa]|incluid[oa])\b",
+        summary,
+        re.I,
+    ):
+        return "none"
     if re.search(r"\b(bilingual|biling[uü]e)\b", summary, re.I):
         return "half_day"
     return "none"
@@ -2977,17 +2997,18 @@ def is_guide_room_item(item: dict[str, Any]) -> bool:
     text = item_identity_text(item)
     return (
         "guide_room" in text
-        or "guide room" in text
-        or ("habitaci" in text and "gu" in text)
+        or bool(GUIDE_LODGING_RE.search(text))
     )
 
 
 def is_cabin_item(item: dict[str, Any]) -> bool:
+    if is_guide_room_item(item):
+        return False
     text = item_identity_text(item)
     return (
         "cabin" in text
         or "caba" in text
-        or (item.get("category") == "lodging" and not is_guide_room_item(item))
+        or item.get("category") == "lodging"
     )
 
 

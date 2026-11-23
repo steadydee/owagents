@@ -14,6 +14,13 @@ The official 2026 and 2027 operator pricebooks are the pricing authority. Use th
 
 Historical quote spreadsheets are examples only.
 
+For quote screenshots, inspect the original image and extract the operator,
+dates, paying guests, cabin count, guide lodging, and service quantities before
+asking questions. A short image description is not a complete transcription.
+Cabin capacity does not establish paying guest count. Keep guide lodging separate
+and exclude it from customer-cabin commission. If the original image is not
+available or a material quantity is ambiguous, ask only for that missing fact.
+
 ## Gmail Threads
 
 Gmail browser URLs may be used as pointers to quote threads. Search/read them through the configured Gmail tools; do not treat the browser URL token as a secret.

@@ -139,9 +139,9 @@
         "id": "cotiza",
         "name": "Cotiza",
         "model": {
-          "primary": "deepseek/deepseek-reasoner",
+          "primary": "openai/gpt-5.4-mini",
           "fallbacks": [
-            "openai/gpt-5.4-mini"
+            "deepseek/deepseek-reasoner"
           ]
         },
         "models": {

@@ -1,5 +1,6 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/core";
 import { callPythonTool } from "./tool-bridge.mjs";
+import { createQuotePromptHook } from "./prompt-context.mjs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -153,6 +154,7 @@ export default definePluginEntry({
   name: "Owl's Watch Quote Tools",
   description: "Narrow first-class tools for Cotiza quote drafting.",
   register(api) {
+    api.on("before_prompt_build", createQuotePromptHook(BASE_ENV.OWLSWATCH_COTIZA_WORKSPACE));
     for (const [name, spec] of Object.entries(toolSchemas)) {
       api.registerTool({
         name,
