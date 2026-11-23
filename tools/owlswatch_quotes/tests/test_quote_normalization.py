@@ -53,6 +53,94 @@ def test_rate_year_uses_quote_dates():
     assert normalized["year"] == 2027
 
 
+def test_explicit_bilingual_guide_negations_do_not_add_a_surcharge():
+    for wording in (
+        "No bilingual guide.",
+        "Without a bilingual guide.",
+        "Bilingual guide is not required.",
+        "Sin guía bilingüe.",
+        "No guia bilingue.",
+        "No se requiere guía bilingüe.",
+        "Guía bilingüe no incluido.",
+    ):
+        payload = juan_manuel_payload()
+        payload["requestSummary"] += " " + wording
+        normalized = server.normalize_calculate_payload(payload)
+        assert normalized["birding"]["bilingualGuide"] == "none", wording
+
+    payload = juan_manuel_payload()
+    payload["requestSummary"] += " Bilingual guide mentioned in the source."
+    payload["birding"] = {"bilingualGuide": False}
+    assert server.normalize_calculate_payload(payload)["birding"]["bilingualGuide"] == "none"
+
+
+def test_unrelated_negations_preserve_requested_bilingual_guides():
+    for wording in ("No transport. Bilingual guide needed.", "Sin transporte. Guía bilingüe."):
+        payload = juan_manuel_payload()
+        payload["requestSummary"] += " " + wording
+        assert server.normalize_calculate_payload(payload)["birding"]["bilingualGuide"] == "half_day", wording
+
+
+def test_guide_cabin_aliases_retain_separate_guide_lodging():
+    for wording in (
+        "guide cabin", "guide's cabin", "cabin for the guide", "cabaña para el guía",
+        "cabaña del guía", "hab. para guía", "habitacion single para Guia", "guía con una habitación",
+    ):
+        normalized = server.normalize_calculate_payload({
+            "quoteType": "operator",
+            "arrivalDate": "2026-09-12",
+            "departureDate": "2026-09-14",
+            "guestCount": 2,
+            "requestSummary": f"One client cabin and one {wording}.",
+        })
+        assert normalized["lodging"]["cabinCount"] == 1, wording
+        assert normalized["lodging"]["guideRoomCount"] == 1, wording
+
+
+def test_separate_guide_mentions_do_not_add_guide_lodging():
+    for summary in (
+        "Una cabaña para dos clientes. Sin guía bilingüe.",
+        "Una cabaña para dos clientes. Guía bilingüe solicitado.",
+        "Una habitación para dos clientes. Guía bilingüe solicitado.",
+        "Una cabaña para clientes con guía local durante el tour.",
+        "Guía bilingüe para el tour y una cabaña para los clientes.",
+        "One client cabin. Local guide for the bird tour. No bilingual guide.",
+    ):
+        normalized = server.normalize_calculate_payload({
+            "quoteType": "operator",
+            "arrivalDate": "2026-09-12",
+            "departureDate": "2026-09-14",
+            "guestCount": 2,
+            "requestSummary": summary,
+        })
+        assert normalized["lodging"].get("guideRoomCount", 0) == 0, summary
+        assert not server.is_guide_room_item({"description": summary, "category": "lodging"}), summary
+
+
+def test_guide_cabin_labels_never_receive_customer_cabin_commission():
+    for guide_line in (
+        {"serviceCode": "guide_room", "description": "Guide room"},
+        {"description": "Guide cabin"},
+        {"serviceCode": "guide_room", "description": "Guide cabin"},
+        {"description": "Cabaña para el guía"},
+    ):
+        guide_line = {**guide_line, "category": "lodging", "unitPriceCop": 316000, "quantity": 2, "totalCop": 632000}
+        result = server.apply_operator_discount_policy({"quoteType": "operator"}, {
+            "lineItems": [
+                {"serviceCode": "forest_cabin", "description": "Cabin", "unitPriceCop": 756000, "quantity": 2, "totalCop": 1512000},
+                guide_line,
+            ],
+            "subtotalCop": 2144000,
+            "discountCop": 0,
+            "totalCop": 2144000,
+        })
+        assert result["discountCop"] == 168000, guide_line
+        assert result["subtotalCop"] == 2312000, guide_line
+        assert result["totalCop"] == 2144000, guide_line
+        assert result["lineItems"][1] == guide_line
+        assert server.has_guide_room_item([guide_line])
+
+
 def test_cabin_full_board_excludes_checkout_lunch_by_default():
     normalized = server.normalize_calculate_payload(
         {

@@ -85,6 +85,12 @@ Forbidden:
 
 ## Cotiza
 
+The quote plugin injects only the fixed deployed `quote-draft/SKILL.md` through
+`before_prompt_build` when `agentId` is `cotiza`. This supplies the workflow
+without granting a filesystem tool. Cotiza uses its configured OpenAI mini API
+model for native image input, with DeepSeek as fallback; screenshots remain
+untrusted source data, and pricing still comes from deterministic quote tools.
+
 The shared `owlswatch_telegram_send_message` tool is granted only to Cotiza.
 Its Python implementation resolves exactly one enabled Cotiza forum topic from
 the trusted profile configuration, pins that group/topic, and rejects a

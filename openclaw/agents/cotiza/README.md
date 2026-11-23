@@ -33,6 +33,18 @@ https://operations.owlswatch.com/quotes
 
 ## Configuration
 
+Cotiza's primary model is `openai/gpt-5.4-mini`, with
+`deepseek/deepseek-reasoner` as fallback. The primary receives original quote
+images; a text-only primary otherwise receives a short media description that
+can omit operator names and quantities. The existing mini configuration uses
+low reasoning and a 4096-token output cap. This change adds no heartbeat or
+scheduled provider checks. If fallback cannot inspect an image, Cotiza must
+request the missing facts instead of guessing.
+
+The quote plugin loads the fixed workflow at startup and injects it only into
+Cotiza turns. No filesystem tool is granted. Quote screenshots supply request
+facts, while the active pricebook remains the pricing authority.
+
 Configured values live in `~/.openclaw-owlswatch/openclaw.json` or the tool runtime environment.
 
 Required:

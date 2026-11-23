@@ -39,6 +39,29 @@ def assert_ready(result: dict) -> None:
     assert result["status"] == "ready_preview"
 
 
+def test_one_customer_cabin_plus_guide_cabin_commissions_only_customer_lodging():
+    result = prepare(
+        "Operator Sample Travel. Sep 12-14 2026. 2 guests. "
+        "1 client cabin and 1 guide cabin for 2 nights. Full board. "
+        "Commission on the client cabin only. No bilingual guide. No transport."
+    )
+
+    assert_ready(result)
+    canonical = result["canonicalPayload"]
+    assert canonical["lodging"]["cabinCount"] == 1
+    assert canonical["lodging"]["guideRoomCount"] == 1
+    assert canonical["birding"]["bilingualGuide"] == "none"
+    cabins = [item for item in line_items(result) if server.is_cabin_item(item)]
+    guide_rooms = [item for item in line_items(result) if server.is_guide_room_item(item)]
+    assert len(cabins) == len(guide_rooms) == 1
+    assert cabins[0]["quantity"] == 2
+    assert cabins[0]["totalCop"] == 1680000
+    assert guide_rooms[0]["quantity"] == 2
+    assert guide_rooms[0]["unitPriceCop"] == 316000
+    assert guide_rooms[0]["totalCop"] == 632000
+    assert result["calculation"]["discountCop"] == 168000
+
+
 def test_operator_day_trip_no_client_with_guide_breakfast_lunch():
     result = prepare(
         "February 05/2026\n"
